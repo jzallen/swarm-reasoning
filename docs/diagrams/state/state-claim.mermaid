@@ -1,0 +1,55 @@
+---
+title: Claim Run State Machine
+---
+stateDiagram-v2
+    [*] --> INGESTED : POST /claims\naccepted by API
+
+    INGESTED --> ANALYZING : check_worthy_score >= 0.4\ningestion + detection + entity\nextraction complete
+
+    INGESTED --> CANCELLED : check_worthy_score < 0.4\nclaim not check-worthy
+
+    ANALYZING --> ANALYZING : one or more agents\nstill pending terminal OBX\n(F or X status)
+
+    ANALYZING --> SYNTHESIZED : all 10 agents emitted\nterminal OBX status\nAND synthesizer emitted\nVERDICT F-status
+
+    SYNTHESIZED --> PUBLISHED : edge adapter serialized\nHL7v2 → JSON\nConsumer API persisted verdict
+
+    SYNTHESIZED --> SYNTHESIZED : edge adapter schema\nvalidation failed —\nawaiting investigation
+
+    PUBLISHED --> [*] : terminal state\naudit log retained
+
+    CANCELLED --> [*] : terminal state\naudit log retained
+
+    note right of INGESTED
+        ^RUN(run_id, "status") = "INGESTED"
+        Run record created.
+        Ingestion agent dispatched.
+    end note
+
+    note right of ANALYZING
+        ^RUN(run_id, "status") = "ANALYZING"
+        Orchestrator monitors completion register.
+        Parallel fan-out active during this state.
+        terminal_obx_count increments per ACK.
+    end note
+
+    note right of SYNTHESIZED
+        ^RUN(run_id, "status") = "SYNTHESIZED"
+        All OBX rows written to YottaDB.
+        HL7v2 finalized message complete.
+        Edge serialization in progress.
+    end note
+
+    note right of PUBLISHED
+        ^RUN(run_id, "status") = "PUBLISHED"
+        JSON verdict available via Consumer API.
+        HL7v2 audit log retained in YottaDB.
+        audit_log_ref accessible to consumers.
+    end note
+
+    note right of CANCELLED
+        ^RUN(run_id, "status") = "CANCELLED"
+        Reason recorded in OBX_ROW.
+        No agents dispatched beyond
+        claim-detector.
+    end note

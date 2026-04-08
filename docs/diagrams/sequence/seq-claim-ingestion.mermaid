@@ -1,0 +1,72 @@
+---
+title: Claim Ingestion — Phase 1 (Ingestion → Detection → Entity Extraction)
+---
+sequenceDiagram
+    autonumber
+
+    participant USER as Operator
+    participant API as Consumer API
+    participant ORC as Orchestrator
+    participant OYDB as Orchestrator<br/>YottaDB
+    participant ING as ingestion-agent<br/>(MCP Server)
+    participant ING_YDB as ingestion-agent<br/>YottaDB
+    participant ING_MIRTH as ingestion-agent<br/>Mirth
+    participant DET as claim-detector<br/>(MCP Server)
+    participant DET_YDB as claim-detector<br/>YottaDB
+    participant ENT as entity-extractor<br/>(MCP Server)
+    participant ENT_YDB as entity-extractor<br/>YottaDB
+    participant OMIRTH as Orchestrator<br/>Mirth
+
+    USER->>API: POST /claims<br/>{claim_text, source_url, source_date}
+
+    API->>API: validate input<br/>sanitize PII<br/>assign claim_id + run_id
+
+    API->>ORC: initiate_run({<br/>  run_id: "RUN-20260406-a3f7",<br/>  claim_id: "CLAIM-20260406-001",<br/>  claim_text: "...",<br/>  source_url: "...",<br/>  source_date: "20211104"<br/>})
+
+    ORC->>OYDB: create run record<br/>^RUN(run_id, "status") = "INGESTED"<br/>^RUN(run_id, "expected_agent_count") = 10
+
+    API-->>USER: 202 Accepted<br/>{run_id, status: "INGESTED",<br/>poll_url: "/runs/RUN-..."}
+
+    Note over ORC,ING: Phase 1a — Ingestion
+
+    ORC->>ING: MCP invoke_task({<br/>  run_id, claim_id,<br/>  claim_text, source_url, source_date<br/>})
+
+    ING->>ING_YDB: tool: create_message()<br/>tool: set_entity()<br/>tool: add_observation(CLAIM_TEXT, F)<br/>tool: add_observation(CLAIM_SOURCE_URL, F)<br/>tool: add_observation(CLAIM_SOURCE_DATE, F)<br/>tool: add_observation(CLAIM_DOMAIN, F)
+
+    ING->>ING_MIRTH: send HL7v2 ACK message
+
+    ING_MIRTH->>OMIRTH: MLLP ACK AA
+
+    ORC->>OYDB: mark ingestion-agent COMPLETE<br/>^RUN(run_id, "terminal_obx_count") = 1
+
+    Note over ORC,DET: Phase 1b — Claim Detection
+
+    ORC->>DET: MCP invoke_task({<br/>  run_id, claim_text<br/>})
+
+    DET->>DET: score check-worthiness<br/>normalize claim text
+
+    DET->>DET_YDB: tool: add_observation(CHECK_WORTHY_SCORE, F)<br/>tool: add_observation(CLAIM_NORMALIZED, F)
+
+    DET->>OMIRTH: MLLP ACK via Mirth
+
+    ORC->>ORC: evaluate CHECK_WORTHY_SCORE<br/>if score < 0.4 → transition to CANCELLED
+
+    alt check_worthy_score >= 0.4
+        ORC->>OYDB: status = "ANALYZING"
+        Note over ORC,ENT: Phase 1c — Entity Extraction
+
+        ORC->>ENT: MCP invoke_task({run_id, claim_text})
+
+        ENT->>ENT: extract persons, orgs,<br/>dates, locations, statistics
+
+        ENT->>ENT_YDB: tool: add_observation(ENTITY_PERSON, F) ×N<br/>tool: add_observation(ENTITY_ORG, F) ×N<br/>tool: add_observation(ENTITY_DATE, F) ×N<br/>tool: add_observation(ENTITY_LOCATION, F) ×N<br/>tool: add_observation(ENTITY_STATISTIC, F) ×N
+
+        ENT->>OMIRTH: MLLP ACK via Mirth
+
+        ORC->>ORC: Phase 1 complete<br/>dispatch Phase 2 fan-out
+
+    else check_worthy_score < 0.4
+        ORC->>OYDB: status = "CANCELLED"
+        ORC-->>API: run_status = CANCELLED<br/>reason = "Check-worthy score below threshold"
+        API-->>USER: GET /runs/RUN-... → CANCELLED
+    end

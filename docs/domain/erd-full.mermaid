@@ -1,0 +1,148 @@
+---
+title: YottaDB Global Key Schema — hl7-agent-factchecker
+---
+erDiagram
+
+  %% ============================================================
+  %% Global: ^RUN
+  %% Tracks the lifecycle of a single fact-checking run.
+  %% Key: ^RUN(run_id, field)
+  %% ============================================================
+
+  RUN {
+    string run_id PK "UUID. e.g. RUN-20260406-a3f7"
+    string claim_id FK "References CLAIM.claim_id"
+    string status "INGESTED|ANALYZING|SYNTHESIZED|PUBLISHED|CANCELLED"
+    string created_at "UTC timestamp YYYYMMDDHHMMSS"
+    string updated_at "UTC timestamp YYYYMMDDHHMMSS"
+    string orchestrator_version "Orchestrator build version"
+    number expected_agent_count "How many agents must emit terminal OBX"
+    number terminal_obx_count "How many agents have emitted F or X"
+  }
+
+  %% ============================================================
+  %% Global: ^CLAIM
+  %% The claim under investigation. One record per unique claim text.
+  %% Key: ^CLAIM(claim_id, field)
+  %% ============================================================
+
+  CLAIM {
+    string claim_id PK "UUID. e.g. CLAIM-20260406-001"
+    string claim_text "Raw submitted claim text"
+    string claim_slug "URL-safe slug. e.g. biden-vaccine-mandate"
+    string source_url "Origin article URL"
+    string source_date "Publication date YYYYMMDD"
+    string domain "HEALTHCARE|ECONOMICS|POLICY|SCIENCE|ELECTION|CRIME|OTHER"
+    string ingested_at "UTC timestamp"
+    string normalized_text "Normalized form from claim-detector agent"
+    number check_worthy_score "0.0-1.0 from claim-detector agent"
+  }
+
+  %% ============================================================
+  %% Global: ^MSG
+  %% The HL7v2 message for a run. Append-only OBX log.
+  %% Key: ^MSG(run_id, "MSH"|"PID"|"OBX"|"NTE", seq, field)
+  %% ============================================================
+
+  MSG_HEADER {
+    string run_id FK "References RUN.run_id"
+    string segment "MSH"
+    string sending_app "Agent bundle name"
+    string receiving_app "Destination bundle or orchestrator"
+    string message_control_id "run_id + MSG + seq"
+    string datetime "UTC timestamp"
+  }
+
+  MSG_PID {
+    string run_id FK "References RUN.run_id"
+    string segment "PID"
+    string claim_id FK "References CLAIM.claim_id"
+    string claim_slug "From CLAIM"
+    string claim_description "Short human-readable description"
+    string claim_date "Source publication date"
+  }
+
+  OBX_ROW {
+    string run_id FK "References RUN.run_id"
+    number seq PK "Sequential integer 1..N. Never reused"
+    string value_type "ST|NM|CWE|TX"
+    string obs_code FK "References OBX_CODE.code"
+    string obs_coding_system "FCK"
+    string value "Typed observation value"
+    string units "Unit string or empty"
+    string reference_range "low-high or empty"
+    string result_status "P|F|C|X"
+    string obs_datetime "UTC timestamp"
+    string responsible_observer "Agent bundle name"
+    string observation_method "MCP tool name"
+  }
+
+  NTE_ROW {
+    string run_id FK "References RUN.run_id"
+    number seq PK "Sequential integer, scoped to parent OBX"
+    number parent_obx_seq FK "References OBX_ROW.seq"
+    string comment "Free text, UTF-8, max 512 chars"
+  }
+
+  %% ============================================================
+  %% Global: ^OBX_CODE
+  %% Registry of valid observation codes. Read-only at runtime.
+  %% Key: ^OBX_CODE(code, field)
+  %% Source of truth is obx-code-registry.json — this global is
+  %% populated at startup from that file.
+  %% ============================================================
+
+  OBX_CODE {
+    string code PK "e.g. CONFIDENCE_SCORE"
+    string display "Human-readable name"
+    string owner_agent "Agent bundle authorized to write this code"
+    string value_type "ST|NM|CWE|TX"
+    string units "Expected unit string or null"
+    string reference_range "Expected range or null"
+    string description "Documentation string"
+  }
+
+  %% ============================================================
+  %% Global: ^AGENT
+  %% Registry of agent bundles participating in a run.
+  %% Key: ^AGENT(agent_name, field)
+  %% ============================================================
+
+  AGENT {
+    string agent_name PK "Bundle name. e.g. coverage-left"
+    string mcp_endpoint "MCP server address for this bundle"
+    string mirth_channel "Inbound Mirth channel name"
+    string status "IDLE|ACTIVE|COMPLETE|ERROR"
+    string last_heartbeat "UTC timestamp of last MCP ping"
+    string owned_codes "Comma-separated OBX codes this agent may write"
+  }
+
+  %% ============================================================
+  %% Global: ^ACK_LOG
+  %% Append-only log of Mirth ACK/NACK events.
+  %% Key: ^ACK_LOG(run_id, seq, field)
+  %% ============================================================
+
+  ACK_LOG {
+    string run_id FK "References RUN.run_id"
+    number seq PK "Sequential integer"
+    string message_control_id "Echoes MSG.message_control_id"
+    string ack_code "AA|AE|AR"
+    string ack_datetime "UTC timestamp"
+    string sending_agent FK "References AGENT.agent_name"
+    string detail "MSA.3 text detail"
+  }
+
+  %% ============================================================
+  %% Relationships
+  %% ============================================================
+
+  RUN ||--|| CLAIM : "investigates"
+  RUN ||--o{ OBX_ROW : "accumulates"
+  RUN ||--|| MSG_HEADER : "has header"
+  RUN ||--|| MSG_PID : "has identity"
+  OBX_ROW ||--o{ NTE_ROW : "annotated by"
+  OBX_ROW }o--|| OBX_CODE : "typed by"
+  OBX_ROW }o--|| AGENT : "written by"
+  ACK_LOG }o--|| RUN : "acknowledges"
+  ACK_LOG }o--|| AGENT : "sent by"

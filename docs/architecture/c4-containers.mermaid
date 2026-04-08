@@ -1,0 +1,189 @@
+---
+title: C4 Container Diagram — hl7-agent-factchecker
+---
+graph TB
+
+  %% ============================================================
+  %% External Systems
+  %% ============================================================
+
+  subgraph EXT["External Systems"]
+    direction TB
+    NEWSAPI["NewsAPI / GNews\n─────────────\nArticle retrieval\nREST API"]
+    GFCT["Google Fact Check Tools API\n─────────────\nClaimReview index\nREST API"]
+    MBFC["Media Bias Fact Check\n─────────────\nSource credibility ratings\nWeb / CSV"]
+    PRIMARY["Primary Sources\n─────────────\nCDC · SEC · WHO\nCourt records\nHTTPS"]
+  end
+
+  %% ============================================================
+  %% Consumer
+  %% ============================================================
+
+  subgraph CONSUMER["Consumer Boundary"]
+    DASHBOARD["Verdict Dashboard\n─────────────\nJSON REST consumer\nBrowser / API client"]
+  end
+
+  %% ============================================================
+  %% Orchestrator Bundle
+  %% ============================================================
+
+  subgraph ORCH_BUNDLE["Orchestrator Bundle  [Docker Compose service]"]
+    direction TB
+    ORCH["Orchestrator\n─────────────\nLangChain / LangGraph\nMCP client hub\nDAG manager\nRun state register\nPython"]
+    ORCH_MIRTH["Mirth Connect\n─────────────\nInbound ACK receiver\nOutbound message router\nEdge serialization channel\nPort 6661"]
+  end
+
+  %% ============================================================
+  %% Agent Bundles — Sequential Phase
+  %% ============================================================
+
+  subgraph SEQ_PHASE["Sequential Phase  [Agents 1–3]"]
+    direction LR
+
+    subgraph INGEST_B["Ingestion Bundle"]
+      INGEST["Ingestion Agent\n─────────────\nAccepts raw claim\nEmits MSH + PID\nPython / LangChain"]
+      INGEST_YDB["YottaDB\n─────────────\n^CLAIM ^MSG\n^RUN globals"]
+      INGEST_MIRTH["Mirth\nPort 6662"]
+    end
+
+    subgraph DETECT_B["Claim Detector Bundle"]
+      DETECT["Claim Detector\n─────────────\nCheck-worthiness scoring\nClaim normalisation\nPython / LangChain"]
+      DETECT_YDB["YottaDB\n─────────────\n^MSG OBX rows\nCHECK_WORTHY\nCLAIM_NORMALIZED"]
+      DETECT_MIRTH["Mirth\nPort 6663"]
+    end
+
+    subgraph ENTITY_B["Entity Extractor Bundle"]
+      ENTITY["Entity Extractor\n─────────────\nNER: persons orgs\ndates locations\nstatistics\nPython / LangChain"]
+      ENTITY_YDB["YottaDB\n─────────────\n^MSG OBX rows\nENTITY_* codes"]
+      ENTITY_MIRTH["Mirth\nPort 6664"]
+    end
+  end
+
+  %% ============================================================
+  %% Agent Bundles — Parallel Phase
+  %% ============================================================
+
+  subgraph PAR_PHASE["Parallel Phase  [Agents 4–7, 9]"]
+    direction LR
+
+    subgraph CR_B["ClaimReview Bundle"]
+      CR["ClaimReview Matcher\n─────────────\nGoogle Fact Check Tools\nSemantic matching\nPython / LangChain"]
+      CR_YDB["YottaDB\n─────────────\nCLAIMREVIEW_* codes"]
+      CR_MIRTH["Mirth\nPort 6665"]
+    end
+
+    subgraph COV_L_B["Coverage Left Bundle"]
+      COV_L["Coverage Agent — Left\n─────────────\nLeft-spectrum sources\nArticle retrieval\nFraming analysis"]
+      COV_L_YDB["YottaDB\n─────────────\nCOVERAGE_* codes\nOBX.16=coverage-left"]
+      COV_L_MIRTH["Mirth\nPort 6666"]
+    end
+
+    subgraph COV_C_B["Coverage Center Bundle"]
+      COV_C["Coverage Agent — Center\n─────────────\nCenter-spectrum sources\nArticle retrieval\nFraming analysis"]
+      COV_C_YDB["YottaDB\n─────────────\nCOVERAGE_* codes\nOBX.16=coverage-center"]
+      COV_C_MIRTH["Mirth\nPort 6667"]
+    end
+
+    subgraph COV_R_B["Coverage Right Bundle"]
+      COV_R["Coverage Agent — Right\n─────────────\nRight-spectrum sources\nArticle retrieval\nFraming analysis"]
+      COV_R_YDB["YottaDB\n─────────────\nCOVERAGE_* codes\nOBX.16=coverage-right"]
+      COV_R_MIRTH["Mirth\nPort 6668"]
+    end
+
+    subgraph DOM_B["Domain Evidence Bundle"]
+      DOM["Domain Evidence Agent\n─────────────\nCDC · SEC · WHO\nCourt records\nPrimary source alignment"]
+      DOM_YDB["YottaDB\n─────────────\nDOMAIN_* codes"]
+      DOM_MIRTH["Mirth\nPort 6669"]
+    end
+  end
+
+  %% ============================================================
+  %% Agent Bundles — Aggregation Phase
+  %% ============================================================
+
+  subgraph AGG_PHASE["Aggregation Phase  [Agents 8, 10]"]
+    direction LR
+
+    subgraph BLIND_B["Blindspot Detector Bundle"]
+      BLIND["Blindspot Detector\n─────────────\nReads coverage agents\nComputes asymmetry\nFlags absent spectrum"]
+      BLIND_YDB["YottaDB\n─────────────\nBLINDSPOT_* codes\nCROSS_SPECTRUM\nCORROBORATION"]
+      BLIND_MIRTH["Mirth\nPort 6670"]
+    end
+
+    subgraph SYNTH_B["Synthesizer Bundle"]
+      SYNTH["Synthesizer Agent\n─────────────\nReads full OBX log\nResolves F/C rows\nEmits VERDICT\nCONFIDENCE_SCORE"]
+      SYNTH_YDB["YottaDB\n─────────────\nVERDICT\nCONFIDENCE_SCORE\nVERDICT_NARRATIVE"]
+      SYNTH_MIRTH["Mirth\nPort 6671"]
+    end
+  end
+
+  %% ============================================================
+  %% MCP Control Plane (dashed)
+  %% ============================================================
+
+  ORCH -->|"MCP tool calls\ncontrol plane"| INGEST
+  ORCH -->|"MCP tool calls"| DETECT
+  ORCH -->|"MCP tool calls"| ENTITY
+  ORCH -->|"MCP tool calls"| CR
+  ORCH -->|"MCP tool calls"| COV_L
+  ORCH -->|"MCP tool calls"| COV_C
+  ORCH -->|"MCP tool calls"| COV_R
+  ORCH -->|"MCP tool calls"| DOM
+  ORCH -->|"MCP tool calls"| BLIND
+  ORCH -->|"MCP tool calls"| SYNTH
+
+  %% ============================================================
+  %% Mirth HL7v2 Data Plane
+  %% ============================================================
+
+  INGEST_MIRTH -->|"HL7v2 ORU^R01"| ORCH_MIRTH
+  DETECT_MIRTH -->|"HL7v2 ORU^R01"| ORCH_MIRTH
+  ENTITY_MIRTH -->|"HL7v2 ORU^R01"| ORCH_MIRTH
+  ORCH_MIRTH -->|"HL7v2 route"| CR_MIRTH
+  ORCH_MIRTH -->|"HL7v2 route"| COV_L_MIRTH
+  ORCH_MIRTH -->|"HL7v2 route"| COV_C_MIRTH
+  ORCH_MIRTH -->|"HL7v2 route"| COV_R_MIRTH
+  ORCH_MIRTH -->|"HL7v2 route"| DOM_MIRTH
+  CR_MIRTH -->|"ACK + ORU^R01"| ORCH_MIRTH
+  COV_L_MIRTH -->|"ACK + ORU^R01"| ORCH_MIRTH
+  COV_C_MIRTH -->|"ACK + ORU^R01"| ORCH_MIRTH
+  COV_R_MIRTH -->|"ACK + ORU^R01"| ORCH_MIRTH
+  DOM_MIRTH -->|"ACK + ORU^R01"| ORCH_MIRTH
+  ORCH_MIRTH -->|"HL7v2 route"| BLIND_MIRTH
+  BLIND_MIRTH -->|"ACK + ORU^R01"| ORCH_MIRTH
+  ORCH_MIRTH -->|"HL7v2 route"| SYNTH_MIRTH
+  SYNTH_MIRTH -->|"ACK + ORU^R01"| ORCH_MIRTH
+
+  %% ============================================================
+  %% External API calls
+  %% ============================================================
+
+  CR -->|"HTTPS ClaimReview query"| GFCT
+  COV_L -->|"HTTPS article retrieval"| NEWSAPI
+  COV_C -->|"HTTPS article retrieval"| NEWSAPI
+  COV_R -->|"HTTPS article retrieval"| NEWSAPI
+  DOM -->|"HTTPS primary source fetch"| PRIMARY
+
+  %% ============================================================
+  %% Edge serialization
+  %% ============================================================
+
+  ORCH_MIRTH -->|"JSON POST\nedge serialization"| DASHBOARD
+
+  %% ============================================================
+  %% Styling
+  %% ============================================================
+
+  classDef external fill:#f5f5f5,stroke:#999,color:#333
+  classDef agent fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+  classDef ydb fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  classDef mirth fill:#dcfce7,stroke:#16a34a,color:#14532d
+  classDef orch fill:#ede9fe,stroke:#7c3aed,color:#2e1065
+  classDef consumer fill:#fff7ed,stroke:#ea580c,color:#431407
+
+  class NEWSAPI,GFCT,MBFC,PRIMARY external
+  class INGEST,DETECT,ENTITY,CR,COV_L,COV_C,COV_R,DOM,BLIND,SYNTH agent
+  class INGEST_YDB,DETECT_YDB,ENTITY_YDB,CR_YDB,COV_L_YDB,COV_C_YDB,COV_R_YDB,DOM_YDB,BLIND_YDB,SYNTH_YDB ydb
+  class INGEST_MIRTH,DETECT_MIRTH,ENTITY_MIRTH,CR_MIRTH,COV_L_MIRTH,COV_C_MIRTH,COV_R_MIRTH,DOM_MIRTH,BLIND_MIRTH,SYNTH_MIRTH,ORCH_MIRTH mirth
+  class ORCH orch
+  class DASHBOARD consumer

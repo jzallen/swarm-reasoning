@@ -1,0 +1,49 @@
+---
+title: Orchestrator Pull Pattern — subagent requests data via orchestrator
+---
+sequenceDiagram
+    autonumber
+
+    participant ORC as Orchestrator
+    participant BS as blindspot-detector<br/>(MCP Server)
+    participant BS_YDB as blindspot-detector<br/>YottaDB
+    participant BS_MIRTH as blindspot-detector<br/>Mirth
+    participant CL_MCP as coverage-left<br/>(MCP Server)
+    participant CC_MCP as coverage-center<br/>(MCP Server)
+    participant CR_MCP as coverage-right<br/>(MCP Server)
+    participant OMIRTH as Orchestrator<br/>Mirth
+
+    Note over ORC,OMIRTH: Precondition: coverage-left, coverage-center,<br/>coverage-right have all emitted F-status OBX rows
+
+    ORC->>BS: MCP invoke_task({<br/>  run_id: "RUN-...",<br/>  task: "analyze_blindspot"<br/>})
+
+    BS-->>ORC: MCP tool_request({<br/>  tool: "get_observations",<br/>  params: {run_id, code: "COVERAGE_*"}<br/>})
+
+    Note over ORC: Orchestrator resolves the data request.<br/>No direct BS→coverage-* connection exists.
+
+    ORC->>CL_MCP: MCP get_observations({<br/>  run_id, code: "COVERAGE_*"<br/>})
+    CL_MCP-->>ORC: OBX rows [COVERAGE_ARTICLE_COUNT,<br/>COVERAGE_FRAMING, COVERAGE_TOP_SOURCE]
+
+    ORC->>CC_MCP: MCP get_observations({<br/>  run_id, code: "COVERAGE_*"<br/>})
+    CC_MCP-->>ORC: OBX rows
+
+    ORC->>CR_MCP: MCP get_observations({<br/>  run_id, code: "COVERAGE_*"<br/>})
+    CR_MCP-->>ORC: OBX rows
+
+    ORC-->>BS: MCP tool_response({<br/>  observations: [<br/>    {agent: "coverage-left", rows: [...]},<br/>    {agent: "coverage-center", rows: [...]},<br/>    {agent: "coverage-right", rows: [...]}<br/>  ]<br/>})
+
+    Note over BS: Agent reasons over consolidated<br/>coverage data. Calls tool layer<br/>to write BLINDSPOT_* OBX rows.
+
+    BS->>BS_YDB: write OBX rows<br/>BLINDSPOT_SCORE = 0.78 (P)<br/>BLINDSPOT_DIRECTION = RIGHT (P)
+
+    BS->>BS_YDB: update OBX status to F<br/>BLINDSPOT_SCORE (F)<br/>BLINDSPOT_DIRECTION (F)<br/>CROSS_SPECTRUM_CORROBORATION (F)
+
+    BS->>BS_MIRTH: send finalized HL7v2<br/>OBX rows with F status
+
+    BS_MIRTH->>OMIRTH: MLLP HL7v2 message<br/>MSH + PID + OBX[blindspot rows]
+
+    OMIRTH-->>BS_MIRTH: ACK AA
+
+    Note over ORC: Orchestrator receives ACK,<br/>marks blindspot-detector complete<br/>in completion register.
+
+    ORC->>ORC: update completion register<br/>blindspot-detector = COMPLETE

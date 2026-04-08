@@ -1,0 +1,85 @@
+---
+title: Agent Fan-Out — Phase 2 (Parallel Execution)
+---
+sequenceDiagram
+    autonumber
+
+    participant ORC as Orchestrator
+    participant OMIRTH as Orchestrator<br/>Mirth
+    participant CR as claimreview-matcher
+    participant CL as coverage-left
+    participant CC as coverage-center
+    participant CRR as coverage-right
+    participant DE as domain-evidence
+    participant GFCT as Google Fact Check<br/>Tools API
+    participant NEWS as NewsAPI / GNews
+    participant MBFC as Media Bias<br/>Fact Check
+    participant PRIMARY as CDC / WHO /<br/>SEC / Courts
+
+    Note over ORC,PRIMARY: Precondition: entity-extractor has emitted F-status.<br/>Orchestrator dispatches all five agents simultaneously.
+
+    par Parallel MCP dispatch
+        ORC->>CR: MCP invoke_task({run_id, claim_normalized, entities})
+    and
+        ORC->>CL: MCP invoke_task({run_id, claim_text, entities, reply_channel: "ORCH_ACK"})
+    and
+        ORC->>CC: MCP invoke_task({run_id, claim_text, entities, reply_channel: "ORCH_ACK"})
+    and
+        ORC->>CRR: MCP invoke_task({run_id, claim_text, entities, reply_channel: "ORCH_ACK"})
+    and
+        ORC->>DE: MCP invoke_task({run_id, claim_text, entities, domain, reply_channel: "ORCH_ACK"})
+    end
+
+    Note over CR,GFCT: ClaimReview Matcher (independent)
+
+    CR->>GFCT: GET /factcheck/v1alpha1/claims:search<br/>?query=claim_normalized
+    GFCT-->>CR: ClaimReview results[]
+
+    CR->>CR: compute semantic match score<br/>select best match if score >= 0.75
+
+    CR->>CR: tool: add_observation(CLAIMREVIEW_MATCH, F)<br/>tool: add_observation(CLAIMREVIEW_VERDICT, F)<br/>tool: add_observation(CLAIMREVIEW_SOURCE, F)<br/>tool: add_observation(CLAIMREVIEW_MATCH_SCORE, F)
+
+    CR->>OMIRTH: MLLP ACK
+
+    Note over CL,MBFC: Coverage Left (independent — same pattern for Center + Right)
+
+    CL->>NEWS: GET articles?q=entities&from=source_date<br/>filter: left-spectrum outlets
+    NEWS-->>CL: articles[]
+
+    CL->>MBFC: GET bias ratings for outlet names
+    MBFC-->>CL: bias_scores[]
+
+    CL->>CL: analyze framing across article set<br/>select top credibility source
+
+    CL->>CL: tool: add_observation(COVERAGE_ARTICLE_COUNT, F)<br/>tool: add_observation(COVERAGE_FRAMING, F)<br/>tool: add_observation(COVERAGE_TOP_SOURCE, F)<br/>tool: add_observation(COVERAGE_TOP_SOURCE_URL, F)
+
+    CL->>OMIRTH: MLLP ACK
+
+    Note over CC: Coverage Center — same flow as Coverage Left
+
+    CC->>NEWS: article search (center outlets)
+    CC->>MBFC: bias ratings
+    CC->>CC: analyze + write OBX
+    CC->>OMIRTH: MLLP ACK
+
+    Note over CRR: Coverage Right — same flow as Coverage Left
+
+    CRR->>NEWS: article search (right outlets)
+    CRR->>MBFC: bias ratings
+    CRR->>CRR: analyze + write OBX
+    CRR->>OMIRTH: MLLP ACK
+
+    Note over DE,PRIMARY: Domain Evidence (independent)
+
+    DE->>DE: determine relevant primary source<br/>from CLAIM_DOMAIN and entities
+
+    DE->>PRIMARY: fetch authoritative source document
+    PRIMARY-->>DE: source content
+
+    DE->>DE: evaluate alignment between<br/>source content and claim
+
+    DE->>DE: tool: add_observation(DOMAIN_SOURCE_NAME, F)<br/>tool: add_observation(DOMAIN_SOURCE_URL, F)<br/>tool: add_observation(DOMAIN_EVIDENCE_ALIGNMENT, F)<br/>tool: add_observation(DOMAIN_CONFIDENCE, F)
+
+    DE->>OMIRTH: MLLP ACK
+
+    Note over ORC: Orchestrator receives 5 ACKs.<br/>completion register: 5/5 parallel agents complete.<br/>Dispatches blindspot-detector (Phase 3a).

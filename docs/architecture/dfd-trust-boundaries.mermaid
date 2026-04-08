@@ -1,0 +1,110 @@
+---
+title: Data Flow Diagram — Trust Boundaries — hl7-agent-factchecker
+---
+flowchart TD
+
+  %% ============================================================
+  %% Trust Zone: Public Internet
+  %% ============================================================
+
+  subgraph INTERNET["☁ Public Internet  [untrusted]"]
+    direction LR
+    USER(["Analyst / API Client\nSubmits claim URL\nor claim text"])
+    NEWSAPI_EXT["NewsAPI / GNews\nArticle content\nPublicly licensed"]
+    GFCT_EXT["Google Fact Check\nTools API\nClaimReview index"]
+    PRIMARY_EXT["CDC · SEC · WHO\nCourt records\nAuthoritative public data"]
+  end
+
+  %% ============================================================
+  %% Trust Zone: DMZ — API Gateway
+  %% ============================================================
+
+  subgraph DMZ["⬡ DMZ  [semi-trusted — TLS termination + rate limiting]"]
+    GATEWAY["API Gateway\n─────────────\nTLS termination\nRate limiting\nClaim text sanitisation\nPII scrubbing before ingestion"]
+  end
+
+  %% ============================================================
+  %% Trust Zone: Internal Agent Mesh
+  %% ============================================================
+
+  subgraph INTERNAL["■ Internal Agent Mesh  [trusted — Docker internal network]"]
+    direction TB
+
+    subgraph ORCH_ZONE["Orchestrator Zone"]
+      ORCH_PROC["Orchestrator\nMCP client hub\nDAG manager"]
+      ORCH_MIRTH_PROC["Orchestrator Mirth\nACK receiver\nMessage router\nEdge serialiser"]
+    end
+
+    subgraph AGENT_ZONE["Agent Bundle Zone  [one subnet per bundle]"]
+      direction LR
+      AG_SEQ["Sequential agents\n① Ingestion\n② Claim Detector\n③ Entity Extractor\n\nYottaDB instances\nMirth instances"]
+      AG_PAR["Parallel agents\n④ ClaimReview\n⑤⑥⑦ Coverage L/C/R\n⑨ Domain Evidence\n\nYottaDB instances\nMirth instances"]
+      AG_AGG["Aggregation agents\n⑧ Blindspot Detector\n⑩ Synthesizer\n\nYottaDB instances\nMirth instances"]
+    end
+
+    subgraph DATA_ZONE["Data Zone"]
+      OBX_LOG[("Append-only\nHL7v2 OBX Log\nYottaDB globals\n^MSG ^CLAIM ^RUN\n^ACK_LOG ^AGENT")]
+    end
+  end
+
+  %% ============================================================
+  %% Trust Zone: Consumer
+  %% ============================================================
+
+  subgraph CONSUMER_ZONE["◈ Consumer Zone  [semi-trusted — authenticated read-only]"]
+    DASHBOARD_PROC["Verdict Dashboard\nJSON REST consumer\nRead-only access"]
+  end
+
+  %% ============================================================
+  %% Data flows with sensitivity labels
+  %% ============================================================
+
+  USER -->|"HTTPS POST\nclaim_text or url\n[PUBLIC DATA]"| GATEWAY
+  GATEWAY -->|"sanitised claim\nPII scrubbed\n[INTERNAL]"| ORCH_PROC
+
+  ORCH_PROC -->|"MCP tool calls\n[INTERNAL CONTROL]"| AG_SEQ
+  AG_SEQ -->|"HL7v2 ORU^R01\n[INTERNAL DATA]"| ORCH_MIRTH_PROC
+  ORCH_MIRTH_PROC -->|"HL7v2 routed\n[INTERNAL DATA]"| AG_PAR
+  AG_PAR -->|"HL7v2 ORU^R01\n+ ACK\n[INTERNAL DATA]"| ORCH_MIRTH_PROC
+  ORCH_MIRTH_PROC -->|"HL7v2 routed\n[INTERNAL DATA]"| AG_AGG
+  AG_AGG -->|"HL7v2 ORU^R01\n+ ACK\n[INTERNAL DATA]"| ORCH_MIRTH_PROC
+
+  AG_SEQ <-->|"OBX read/write\n[INTERNAL DATA]"| OBX_LOG
+  AG_PAR <-->|"OBX read/write\n[INTERNAL DATA]"| OBX_LOG
+  AG_AGG <-->|"OBX read/write\n[INTERNAL DATA]"| OBX_LOG
+
+  AG_PAR -->|"HTTPS\narticle retrieval\n[PUBLIC DATA]"| NEWSAPI_EXT
+  AG_PAR -->|"HTTPS\nClaimReview query\n[PUBLIC DATA]"| GFCT_EXT
+  AG_PAR -->|"HTTPS\nprimary source fetch\n[PUBLIC DATA]"| PRIMARY_EXT
+
+  ORCH_MIRTH_PROC -->|"JSON POST\nverdict + audit trail\n[INTERNAL — read-only export]"| DASHBOARD_PROC
+
+  %% ============================================================
+  %% Trust boundary crossing annotations
+  %% ============================================================
+
+  TB1["BOUNDARY CROSSING RULES\n══════════════════════════════════\nInternet → DMZ:\n  TLS required · rate limited\n  claim text sanitised\n  no raw URLs passed to agents\n\nDMZ → Internal:\n  PII scrubbed before ingestion\n  claim_id assigned at gateway\n  original URL stored, not forwarded\n\nInternal → External APIs:\n  no claim_id or internal IDs sent\n  only normalised claim text or\n  entity strings used as query params\n  API keys in Docker secrets\n\nInternal → Consumer:\n  read-only JSON export\n  no YottaDB globals exposed\n  no raw HL7v2 in consumer response\n  audit trail included in payload"]
+
+  %% ============================================================
+  %% Data classification legend
+  %% ============================================================
+
+  DC["DATA CLASSIFICATION\n══════════════════════════════════\n[PUBLIC DATA]     Sourced from public web\n[INTERNAL]        Claim text post-sanitisation\n[INTERNAL DATA]   HL7v2 OBX reasoning state\n[INTERNAL CONTROL] MCP tool calls + responses\n[INTERNAL — read-only export] Final verdict JSON"]
+
+  %% ============================================================
+  %% Styling
+  %% ============================================================
+
+  classDef untrusted fill:#fef2f2,stroke:#ef4444,color:#7f1d1d
+  classDef dmz fill:#fff7ed,stroke:#f97316,color:#431407
+  classDef internal fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+  classDef consumer fill:#f0fdf4,stroke:#22c55e,color:#14532d
+  classDef store fill:#fef9c3,stroke:#ca8a04,color:#713f12
+  classDef note fill:#fafafa,stroke:#d1d5db,color:#374151
+
+  class USER,NEWSAPI_EXT,GFCT_EXT,PRIMARY_EXT untrusted
+  class GATEWAY dmz
+  class ORCH_PROC,ORCH_MIRTH_PROC,AG_SEQ,AG_PAR,AG_AGG internal
+  class OBX_LOG store
+  class DASHBOARD_PROC consumer
+  class TB1,DC note

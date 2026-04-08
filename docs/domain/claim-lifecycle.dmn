@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
+             xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/"
+             xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/"
+             id="ClaimLifecycle"
+             name="Claim Lifecycle Decisions"
+             namespace="http://factchecker.hl7agent/dmn">
+
+  <!-- ============================================================
+       DECISION 1: DetermineClaimTransition
+       Inputs:  current_status, check_worthy_score, terminal_obx_count,
+                expected_agent_count, claimreview_match, synthesis_complete
+       Output:  next_status
+       ============================================================ -->
+
+  <decision id="DetermineClaimTransition" name="DetermineClaimTransition">
+    <decisionTable id="dt_claim_transition"
+                   hitPolicy="FIRST"
+                   preferredOrientation="Rule-as-Row">
+
+      <input id="i_current_status" label="current_status">
+        <inputExpression typeRef="string">
+          <text>current_status</text>
+        </inputExpression>
+        <inputValues>
+          <text>"INGESTED","ANALYZING","SYNTHESIZED","PUBLISHED","CANCELLED"</text>
+        </inputValues>
+      </input>
+
+      <input id="i_check_worthy" label="check_worthy_score">
+        <inputExpression typeRef="number">
+          <text>check_worthy_score</text>
+        </inputExpression>
+      </input>
+
+      <input id="i_terminal_obx" label="terminal_obx_count">
+        <inputExpression typeRef="number">
+          <text>terminal_obx_count</text>
+        </inputExpression>
+      </input>
+
+      <input id="i_expected_agents" label="expected_agent_count">
+        <inputExpression typeRef="number">
+          <text>expected_agent_count</text>
+        </inputExpression>
+      </input>
+
+      <input id="i_synthesis_complete" label="synthesis_complete">
+        <inputExpression typeRef="boolean">
+          <text>synthesis_complete</text>
+        </inputExpression>
+      </input>
+
+      <output id="o_next_status" label="next_status" typeRef="string">
+        <outputValues>
+          <text>"INGESTED","ANALYZING","SYNTHESIZED","PUBLISHED","CANCELLED"</text>
+        </outputValues>
+      </output>
+
+      <output id="o_reason" label="transition_reason" typeRef="string"/>
+
+      <!-- Rule 1: Claim not check-worthy — cancel immediately -->
+      <rule id="r1">
+        <inputEntry id="r1_i1"><text>"INGESTED"</text></inputEntry>
+        <inputEntry id="r1_i2"><text>&lt; 0.4</text></inputEntry>
+        <inputEntry id="r1_i3"><text>-</text></inputEntry>
+        <inputEntry id="r1_i4"><text>-</text></inputEntry>
+        <inputEntry id="r1_i5"><text>-</text></inputEntry>
+        <outputEntry id="r1_o1"><text>"CANCELLED"</text></outputEntry>
+        <outputEntry id="r1_o2"><text>"Check-worthy score below threshold (0.4)"</text></outputEntry>
+      </rule>
+
+      <!-- Rule 2: Claim is check-worthy — begin analysis -->
+      <rule id="r2">
+        <inputEntry id="r2_i1"><text>"INGESTED"</text></inputEntry>
+        <inputEntry id="r2_i2"><text>&gt;= 0.4</text></inputEntry>
+        <inputEntry id="r2_i3"><text>-</text></inputEntry>
+        <inputEntry id="r2_i4"><text>-</text></inputEntry>
+        <inputEntry id="r2_i5"><text>-</text></inputEntry>
+        <outputEntry id="r2_o1"><text>"ANALYZING"</text></outputEntry>
+        <outputEntry id="r2_o2"><text>"Claim check-worthy, agents dispatched"</text></outputEntry>
+      </rule>
+
+      <!-- Rule 3: Analyzing — not all agents complete yet -->
+      <rule id="r3">
+        <inputEntry id="r3_i1"><text>"ANALYZING"</text></inputEntry>
+        <inputEntry id="r3_i2"><text>-</text></inputEntry>
+        <inputEntry id="r3_i3"><text>&lt; expected_agent_count</text></inputEntry>
+        <inputEntry id="r3_i4"><text>-</text></inputEntry>
+        <inputEntry id="r3_i5"><text>-</text></inputEntry>
+        <outputEntry id="r3_o1"><text>"ANALYZING"</text></outputEntry>
+        <outputEntry id="r3_o2"><text>"Awaiting terminal OBX from remaining agents"</text></outputEntry>
+      </rule>
+
+      <!-- Rule 4: Analyzing — all agents complete, synthesis not yet done -->
+      <rule id="r4">
+        <inputEntry id="r4_i1"><text>"ANALYZING"</text></inputEntry>
+        <inputEntry id="r4_i2"><text>-</text></inputEntry>
+        <inputEntry id="r4_i3"><text>&gt;= expected_agent_count</text></inputEntry>
+        <inputEntry id="r4_i4"><text>-</text></inputEntry>
+        <inputEntry id="r4_i5"><text>false</text></inputEntry>
+        <outputEntry id="r4_o1"><text>"ANALYZING"</text></outputEntry>
+        <outputEntry id="r4_o2"><text>"All agents complete, awaiting synthesizer"</text></outputEntry>
+      </rule>
+
+      <!-- Rule 5: Analyzing — all agents complete and synthesis done -->
+      <rule id="r5">
+        <inputEntry id="r5_i1"><text>"ANALYZING"</text></inputEntry>
+        <inputEntry id="r5_i2"><text>-</text></inputEntry>
+        <inputEntry id="r5_i3"><text>&gt;= expected_agent_count</text></inputEntry>
+        <inputEntry id="r5_i4"><text>-</text></inputEntry>
+        <inputEntry id="r5_i5"><text>true</text></inputEntry>
+        <outputEntry id="r5_o1"><text>"SYNTHESIZED"</text></outputEntry>
+        <outputEntry id="r5_o2"><text>"Synthesis complete, verdict emitted"</text></outputEntry>
+      </rule>
+
+      <!-- Rule 6: Synthesized — promote to published -->
+      <rule id="r6">
+        <inputEntry id="r6_i1"><text>"SYNTHESIZED"</text></inputEntry>
+        <inputEntry id="r6_i2"><text>-</text></inputEntry>
+        <inputEntry id="r6_i3"><text>-</text></inputEntry>
+        <inputEntry id="r6_i4"><text>-</text></inputEntry>
+        <inputEntry id="r6_i5"><text>-</text></inputEntry>
+        <outputEntry id="r6_o1"><text>"PUBLISHED"</text></outputEntry>
+        <outputEntry id="r6_o2"><text>"Edge serialization complete, JSON delivered to consumer"</text></outputEntry>
+      </rule>
+
+      <!-- Rule 7: Terminal states — no transition -->
+      <rule id="r7">
+        <inputEntry id="r7_i1"><text>"PUBLISHED","CANCELLED"</text></inputEntry>
+        <inputEntry id="r7_i2"><text>-</text></inputEntry>
+        <inputEntry id="r7_i3"><text>-</text></inputEntry>
+        <inputEntry id="r7_i4"><text>-</text></inputEntry>
+        <inputEntry id="r7_i5"><text>-</text></inputEntry>
+        <outputEntry id="r7_o1"><text>current_status</text></outputEntry>
+        <outputEntry id="r7_o2"><text>"Terminal state — no transition permitted"</text></outputEntry>
+      </rule>
+
+    </decisionTable>
+  </decision>
+
+  <!-- ============================================================
+       DECISION 2: DetermineOBXResolution
+       Inputs:  obx_code, obx_rows (count of F/C rows for this code)
+       Output:  authoritative_row_index (the OBX.1 sequence of the
+                authoritative row), resolution_method
+       ============================================================ -->
+
+  <decision id="DetermineOBXResolution" name="DetermineOBXResolution">
+    <decisionTable id="dt_obx_resolution"
+                   hitPolicy="FIRST"
+                   preferredOrientation="Rule-as-Row">
+
+      <input id="j_f_count" label="f_status_count">
+        <inputExpression typeRef="number">
+          <text>f_status_count</text>
+        </inputExpression>
+      </input>
+
+      <input id="j_c_count" label="c_status_count">
+        <inputExpression typeRef="number">
+          <text>c_status_count</text>
+        </inputExpression>
+      </input>
+
+      <input id="j_x_count" label="x_status_count">
+        <inputExpression typeRef="number">
+          <text>x_status_count</text>
+        </inputExpression>
+      </input>
+
+      <output id="k_method" label="resolution_method" typeRef="string">
+        <outputValues>
+          <text>"LATEST_C","LATEST_F","CANCELLED","PENDING","CONFLICTED"</text>
+        </outputValues>
+      </output>
+
+      <output id="k_note" label="resolution_note" typeRef="string"/>
+
+      <!-- Rule A: Correction exists — use latest C row -->
+      <rule id="rA">
+        <inputEntry id="rA_i1"><text>-</text></inputEntry>
+        <inputEntry id="rA_i2"><text>&gt;= 1</text></inputEntry>
+        <inputEntry id="rA_i3"><text>-</text></inputEntry>
+        <outputEntry id="rA_o1"><text>"LATEST_C"</text></outputEntry>
+        <outputEntry id="rA_o2"><text>"One or more corrections present; use highest OBX.1 C row"</text></outputEntry>
+      </rule>
+
+      <!-- Rule B: No corrections, one or more finals — use latest F -->
+      <rule id="rB">
+        <inputEntry id="rB_i1"><text>&gt;= 1</text></inputEntry>
+        <inputEntry id="rB_i2"><text>0</text></inputEntry>
+        <inputEntry id="rB_i3"><text>-</text></inputEntry>
+        <outputEntry id="rB_o1"><text>"LATEST_F"</text></outputEntry>
+        <outputEntry id="rB_o2"><text>"No corrections; use highest OBX.1 F row"</text></outputEntry>
+      </rule>
+
+      <!-- Rule C: Only X status — observation cancelled -->
+      <rule id="rC">
+        <inputEntry id="rC_i1"><text>0</text></inputEntry>
+        <inputEntry id="rC_i2"><text>0</text></inputEntry>
+        <inputEntry id="rC_i3"><text>&gt;= 1</text></inputEntry>
+        <outputEntry id="rC_o1"><text>"CANCELLED"</text></outputEntry>
+        <outputEntry id="rC_o2"><text>"Observation cancelled by owning agent; exclude from synthesis"</text></outputEntry>
+      </rule>
+
+      <!-- Rule D: Only P rows — still pending -->
+      <rule id="rD">
+        <inputEntry id="rD_i1"><text>0</text></inputEntry>
+        <inputEntry id="rD_i2"><text>0</text></inputEntry>
+        <inputEntry id="rD_i3"><text>0</text></inputEntry>
+        <outputEntry id="rD_o1"><text>"PENDING"</text></outputEntry>
+        <outputEntry id="rD_o2"><text>"Only preliminary rows; agent has not yet emitted terminal status"</text></outputEntry>
+      </rule>
+
+    </decisionTable>
+  </decision>
+
+</definitions>

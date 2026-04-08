@@ -1,0 +1,132 @@
+---
+title: MCP Control Plane Topology — hl7-agent-factchecker
+---
+graph TB
+
+  %% ============================================================
+  %% Orchestrator — sole MCP client
+  %% ============================================================
+
+  subgraph ORCH_BOX["Orchestrator  [sole MCP client]"]
+    direction TB
+    ORCH_LLM["Orchestrator LLM\nLangGraph ReAct agent"]
+    DAG["DAG Manager\nAgent execution order\nCompletion register\nRun state"]
+    MCP_CLIENT["MCP Client Hub\n10 persistent connections\none per agent bundle"]
+    ORCH_LLM <--> DAG
+    DAG <--> MCP_CLIENT
+  end
+
+  %% ============================================================
+  %% MCP Servers — one per agent bundle
+  %% ============================================================
+
+  subgraph MCP_SERVERS["Agent Bundles  [MCP servers — no peer connections]"]
+    direction LR
+
+    subgraph S1["Ingestion\nMCP Server"]
+      T1A["tool: ingest_claim\n(url, text)"]
+      T1B["tool: get_observations\n(claim_id, code?)"]
+      T1C["tool: get_terminal_status\n(claim_id)"]
+    end
+
+    subgraph S2["Claim Detector\nMCP Server"]
+      T2A["tool: detect_claims\n(claim_id)"]
+      T2B["tool: get_observations\n(claim_id, code?)"]
+      T2C["tool: get_terminal_status\n(claim_id)"]
+    end
+
+    subgraph S3["Entity Extractor\nMCP Server"]
+      T3A["tool: extract_entities\n(claim_id)"]
+      T3B["tool: get_observations\n(claim_id, code?)"]
+      T3C["tool: get_terminal_status\n(claim_id)"]
+    end
+
+    subgraph S4["ClaimReview\nMCP Server"]
+      T4A["tool: match_claimreview\n(claim_id, channel)"]
+      T4B["tool: get_observations\n(claim_id, code?)"]
+      T4C["tool: get_terminal_status\n(claim_id)"]
+    end
+
+    subgraph S5["Coverage Left\nMCP Server"]
+      T5A["tool: analyze_coverage\n(claim_id, channel)"]
+      T5B["tool: get_observations\n(claim_id, code?)"]
+      T5C["tool: get_terminal_status\n(claim_id)"]
+    end
+
+    subgraph S6["Coverage Center\nMCP Server"]
+      T6A["tool: analyze_coverage\n(claim_id, channel)"]
+      T6B["tool: get_observations\n(claim_id, code?)"]
+      T6C["tool: get_terminal_status\n(claim_id)"]
+    end
+
+    subgraph S7["Coverage Right\nMCP Server"]
+      T7A["tool: analyze_coverage\n(claim_id, channel)"]
+      T7B["tool: get_observations\n(claim_id, code?)"]
+      T7C["tool: get_terminal_status\n(claim_id)"]
+    end
+
+    subgraph S8["Blindspot Detector\nMCP Server"]
+      T8A["tool: detect_blindspot\n(claim_id, channel)"]
+      T8B["tool: get_observations\n(claim_id, code?)"]
+      T8C["tool: get_terminal_status\n(claim_id)"]
+    end
+
+    subgraph S9["Domain Evidence\nMCP Server"]
+      T9A["tool: lookup_domain_evidence\n(claim_id, channel)"]
+      T9B["tool: get_observations\n(claim_id, code?)"]
+      T9C["tool: get_terminal_status\n(claim_id)"]
+    end
+
+    subgraph S10["Synthesizer\nMCP Server"]
+      T10A["tool: synthesize\n(claim_id, channel)"]
+      T10B["tool: get_observations\n(claim_id, code?)"]
+      T10C["tool: get_terminal_status\n(claim_id)"]
+    end
+  end
+
+  %% ============================================================
+  %% MCP connections — orchestrator to all agents
+  %% No agent-to-agent connections exist
+  %% ============================================================
+
+  MCP_CLIENT -->|"MCP"| S1
+  MCP_CLIENT -->|"MCP"| S2
+  MCP_CLIENT -->|"MCP"| S3
+  MCP_CLIENT -->|"MCP"| S4
+  MCP_CLIENT -->|"MCP"| S5
+  MCP_CLIENT -->|"MCP"| S6
+  MCP_CLIENT -->|"MCP"| S7
+  MCP_CLIENT -->|"MCP"| S8
+  MCP_CLIENT -->|"MCP"| S9
+  MCP_CLIENT -->|"MCP"| S10
+
+  %% ============================================================
+  %% Pull pattern annotation
+  %% ============================================================
+
+  PULL_NOTE["PULL PATTERN\n──────────────────────────────\n1. Orchestrator calls tool: analyze_coverage\n2. Agent inspects YottaDB, needs entity data\n3. Agent returns: fetch ^MSG(id,'OBX',*,'ENTITY_PERSON')\n4. Orchestrator calls get_observations on entity agent\n5. Orchestrator passes result back to coverage agent\n6. Agent completes, writes OBX, Mirth delivers"]
+
+  PUSH_NOTE["PUSH PATTERN\n──────────────────────────────\n1. Orchestrator calls tool: synthesize(claim_id, 'SYNTH_IN')\n2. Agent reasons over full OBX log via get_observations\n3. Agent writes VERDICT OBX rows to YottaDB\n4. Agent's Mirth delivers HL7v2 to SYNTH_IN channel\n5. Orchestrator monitors SYNTH_IN for ACK\n6. ACK received → run transitions to SYNTHESIZED"]
+
+  ORCH_BOX -.->|"illustrates"| PULL_NOTE
+  ORCH_BOX -.->|"illustrates"| PUSH_NOTE
+
+  %% ============================================================
+  %% Common MCP tools on every agent
+  %% ============================================================
+
+  COMMON_NOTE["Every agent MCP server exposes:\n• get_observations(claim_id, code?) → OBX rows\n• get_terminal_status(claim_id) → bool\nOrchestrator uses these to read state\nwithout maintaining its own copy (ADR-010)"]
+
+  %% ============================================================
+  %% Styling
+  %% ============================================================
+
+  classDef orch fill:#ede9fe,stroke:#7c3aed,color:#2e1065
+  classDef server fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+  classDef tool fill:#f0f9ff,stroke:#7dd3fc,color:#0c4a6e,font-size:11px
+  classDef note fill:#fafafa,stroke:#d1d5db,color:#374151,text-align:left
+
+  class ORCH_LLM,DAG,MCP_CLIENT orch
+  class S1,S2,S3,S4,S5,S6,S7,S8,S9,S10 server
+  class T1A,T1B,T1C,T2A,T2B,T2C,T3A,T3B,T3C,T4A,T4B,T4C,T5A,T5B,T5C,T6A,T6B,T6C,T7A,T7B,T7C,T8A,T8B,T8C,T9A,T9B,T9C,T10A,T10B,T10C tool
+  class PULL_NOTE,PUSH_NOTE,COMMON_NOTE note

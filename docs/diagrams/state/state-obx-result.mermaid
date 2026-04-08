@@ -1,0 +1,55 @@
+---
+title: OBX Result Status State Machine
+---
+stateDiagram-v2
+    [*] --> P : agent emits preliminary\nobservation during reasoning\ntool: add_observation(..., status="P")
+
+    P --> F : agent confirms finding\nis settled\ntool: add_observation(..., status="F")
+
+    P --> X : agent determines observation\nis not applicable or retracted\ntool: add_observation(..., status="X")
+
+    F --> C : later agent (or same agent)\ncorrects a prior F observation\nnew OBX row appended —\noriginal F row retained
+
+    C --> C : further correction appended\neach correction is a new OBX row\nwith incrementing OBX.1 seq
+
+    F --> [*] : synthesizer uses F row\nas authoritative input
+
+    C --> [*] : synthesizer uses latest C row\nas authoritative input\n(supersedes all prior F rows\nfor same code)
+
+    X --> [*] : excluded from synthesis\nretained in log for audit
+
+    note right of P
+        Preliminary rows are informational.
+        Synthesizer does not use P rows
+        as authoritative inputs.
+        An agent may emit multiple P rows
+        for the same code during reasoning.
+    end note
+
+    note right of F
+        Final status is a commitment.
+        The owning agent considers
+        this finding settled.
+        Downstream agents may correct
+        via C status but cannot delete.
+    end note
+
+    note right of C
+        Correction is append-only.
+        The original F row is never
+        modified or deleted.
+        OBX.1 sequence identifies
+        temporal order.
+        DetermineOBXResolution selects
+        highest OBX.1 C row.
+    end note
+
+    note right of X
+        Cancelled observations are
+        excluded from synthesis but
+        retained in the audit log.
+        Used when claim is determined
+        not check-worthy after initial
+        detection, or when a finding
+        is fully retracted.
+    end note

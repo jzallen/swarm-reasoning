@@ -1,0 +1,646 @@
+name: hl7-agent-factchecker
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+# All containers communicate on the internal bridge network.
+# Only the consumer-api and mirth-orchestrator-admin ports are exposed
+# to the host. Agent MCP servers and YottaDB instances are internal-only.
+# ---------------------------------------------------------------------------
+
+networks:
+  internal:
+    driver: bridge
+  external:
+    driver: bridge
+
+# ---------------------------------------------------------------------------
+# Volumes
+# ---------------------------------------------------------------------------
+# Each YottaDB instance gets a named volume for persistence across restarts.
+# Mirth configuration is mounted from ./mirth-config/ per instance.
+# ---------------------------------------------------------------------------
+
+volumes:
+  ydb-orchestrator:
+  ydb-ingestion:
+  ydb-detector:
+  ydb-entity:
+  ydb-claimreview:
+  ydb-coverage-left:
+  ydb-coverage-center:
+  ydb-coverage-right:
+  ydb-blindspot:
+  ydb-domain:
+  ydb-synthesizer:
+  mirth-orchestrator-appdata:
+  mirth-orchestrator-db:
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+
+services:
+
+  # -------------------------------------------------------------------------
+  # Orchestrator Bundle
+  # -------------------------------------------------------------------------
+
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
+    container_name: orchestrator
+    networks:
+      - internal
+    environment:
+      - YOTTADB_HOST=ydb-orchestrator
+      - YOTTADB_PORT=9080
+      - MIRTH_HOST=mirth-orchestrator
+      - MIRTH_PORT=6661
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - AGENT_HEARTBEAT_INTERVAL=15
+      - AGENT_HEARTBEAT_TIMEOUT=30
+    depends_on:
+      ydb-orchestrator:
+        condition: service_healthy
+      mirth-orchestrator:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ydb-orchestrator:
+    image: yottadb/yottadb:latest
+    container_name: ydb-orchestrator
+    networks:
+      - internal
+    volumes:
+      - ydb-orchestrator:/data
+    environment:
+      - ydb_dir=/data
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-orchestrator:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-orchestrator
+    networks:
+      - internal
+      - external
+    ports:
+      - "8443:8443"   # Mirth admin console — exposed to host for dev only
+    volumes:
+      - ./mirth-config/orchestrator:/opt/connect/appdata/channel-definitions:ro
+      - mirth-orchestrator-appdata:/opt/connect/appdata
+      - mirth-orchestrator-db:/opt/connect/mirthdb
+    environment:
+      - DATABASE=derby
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Consumer API
+  # -------------------------------------------------------------------------
+
+  consumer-api:
+    build:
+      context: ./services/consumer-api
+      dockerfile: Dockerfile
+    container_name: consumer-api
+    networks:
+      - internal
+      - external
+    ports:
+      - "8000:8000"   # REST API — exposed to host
+    environment:
+      - ORCHESTRATOR_HOST=orchestrator
+      - ORCHESTRATOR_PORT=8080
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # -------------------------------------------------------------------------
+  # Agent Bundle Template
+  # Each agent follows the same three-container pattern:
+  #   agent process + YottaDB + Mirth
+  # MLLP ports are internal-only. MCP ports are internal-only.
+  # -------------------------------------------------------------------------
+
+  # --- Ingestion Agent ---
+
+  ingestion-agent:
+    build:
+      context: ./services/agents/ingestion
+      dockerfile: Dockerfile
+    container_name: ingestion-agent
+    networks:
+      - internal
+    environment:
+      - AGENT_NAME=ingestion-agent
+      - YOTTADB_HOST=ydb-ingestion
+      - MIRTH_HOST=mirth-ingestion
+      - MIRTH_PORT=6661
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ORCHESTRATOR_MIRTH_PORT=6661
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_PORT=9001
+    depends_on:
+      ydb-ingestion:
+        condition: service_healthy
+      mirth-ingestion:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-ingestion:
+    image: yottadb/yottadb:latest
+    container_name: ydb-ingestion
+    networks: [internal]
+    volumes:
+      - ydb-ingestion:/data
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-ingestion:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-ingestion
+    networks: [internal]
+    volumes:
+      - ./mirth-config/ingestion:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Claim Detector ---
+
+  claim-detector:
+    build:
+      context: ./services/agents/claim-detector
+      dockerfile: Dockerfile
+    container_name: claim-detector
+    networks: [internal]
+    environment:
+      - AGENT_NAME=claim-detector
+      - YOTTADB_HOST=ydb-detector
+      - MIRTH_HOST=mirth-detector
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_PORT=9002
+      - CHECK_WORTHY_THRESHOLD=0.4
+    depends_on:
+      ydb-detector:
+        condition: service_healthy
+      mirth-detector:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-detector:
+    image: yottadb/yottadb:latest
+    container_name: ydb-detector
+    networks: [internal]
+    volumes: [ydb-detector:/data]
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-detector:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-detector
+    networks: [internal]
+    volumes:
+      - ./mirth-config/claim-detector:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Entity Extractor ---
+
+  entity-extractor:
+    build:
+      context: ./services/agents/entity-extractor
+      dockerfile: Dockerfile
+    container_name: entity-extractor
+    networks: [internal]
+    environment:
+      - AGENT_NAME=entity-extractor
+      - YOTTADB_HOST=ydb-entity
+      - MIRTH_HOST=mirth-entity
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_PORT=9003
+    depends_on:
+      ydb-entity:
+        condition: service_healthy
+      mirth-entity:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-entity:
+    image: yottadb/yottadb:latest
+    container_name: ydb-entity
+    networks: [internal]
+    volumes: [ydb-entity:/data]
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-entity:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-entity
+    networks: [internal]
+    volumes:
+      - ./mirth-config/entity-extractor:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # --- ClaimReview Matcher ---
+
+  claimreview-matcher:
+    build:
+      context: ./services/agents/claimreview-matcher
+      dockerfile: Dockerfile
+    container_name: claimreview-matcher
+    networks: [internal]
+    environment:
+      - AGENT_NAME=claimreview-matcher
+      - YOTTADB_HOST=ydb-claimreview
+      - MIRTH_HOST=mirth-claimreview
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_FACTCHECK_API_KEY=${GOOGLE_FACTCHECK_API_KEY}
+      - MCP_PORT=9004
+      - MATCH_SCORE_THRESHOLD=0.75
+    depends_on:
+      ydb-claimreview:
+        condition: service_healthy
+      mirth-claimreview:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-claimreview:
+    image: yottadb/yottadb:latest
+    container_name: ydb-claimreview
+    networks: [internal]
+    volumes: [ydb-claimreview:/data]
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-claimreview:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-claimreview
+    networks: [internal]
+    volumes:
+      - ./mirth-config/claimreview-matcher:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Coverage Agents (Left / Center / Right share build context) ---
+
+  coverage-left:
+    build:
+      context: ./services/agents/coverage
+      dockerfile: Dockerfile
+    container_name: coverage-left
+    networks: [internal]
+    environment:
+      - AGENT_NAME=coverage-left
+      - SPECTRUM=left
+      - YOTTADB_HOST=ydb-coverage-left
+      - MIRTH_HOST=mirth-coverage-left
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NEWSAPI_KEY=${NEWSAPI_KEY}
+      - MCP_PORT=9005
+    depends_on:
+      ydb-coverage-left:
+        condition: service_healthy
+      mirth-coverage-left:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-coverage-left:
+    image: yottadb/yottadb:latest
+    container_name: ydb-coverage-left
+    networks: [internal]
+    volumes: [ydb-coverage-left:/data]
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-coverage-left:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-coverage-left
+    networks: [internal]
+    volumes:
+      - ./mirth-config/coverage:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  coverage-center:
+    build:
+      context: ./services/agents/coverage
+      dockerfile: Dockerfile
+    container_name: coverage-center
+    networks: [internal]
+    environment:
+      - AGENT_NAME=coverage-center
+      - SPECTRUM=center
+      - YOTTADB_HOST=ydb-coverage-center
+      - MIRTH_HOST=mirth-coverage-center
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NEWSAPI_KEY=${NEWSAPI_KEY}
+      - MCP_PORT=9006
+    depends_on:
+      ydb-coverage-center:
+        condition: service_healthy
+      mirth-coverage-center:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-coverage-center:
+    image: yottadb/yottadb:latest
+    container_name: ydb-coverage-center
+    networks: [internal]
+    volumes: [ydb-coverage-center:/data]
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-coverage-center:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-coverage-center
+    networks: [internal]
+    volumes:
+      - ./mirth-config/coverage:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  coverage-right:
+    build:
+      context: ./services/agents/coverage
+      dockerfile: Dockerfile
+    container_name: coverage-right
+    networks: [internal]
+    environment:
+      - AGENT_NAME=coverage-right
+      - SPECTRUM=right
+      - YOTTADB_HOST=ydb-coverage-right
+      - MIRTH_HOST=mirth-coverage-right
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NEWSAPI_KEY=${NEWSAPI_KEY}
+      - MCP_PORT=9007
+    depends_on:
+      ydb-coverage-right:
+        condition: service_healthy
+      mirth-coverage-right:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-coverage-right:
+    image: yottadb/yottadb:latest
+    container_name: ydb-coverage-right
+    networks: [internal]
+    volumes: [ydb-coverage-right:/data]
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-coverage-right:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-coverage-right
+    networks: [internal]
+    volumes:
+      - ./mirth-config/coverage:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Blindspot Detector ---
+
+  blindspot-detector:
+    build:
+      context: ./services/agents/blindspot-detector
+      dockerfile: Dockerfile
+    container_name: blindspot-detector
+    networks: [internal]
+    environment:
+      - AGENT_NAME=blindspot-detector
+      - YOTTADB_HOST=ydb-blindspot
+      - MIRTH_HOST=mirth-blindspot
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_PORT=9008
+    depends_on:
+      ydb-blindspot:
+        condition: service_healthy
+      mirth-blindspot:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-blindspot:
+    image: yottadb/yottadb:latest
+    container_name: ydb-blindspot
+    networks: [internal]
+    volumes: [ydb-blindspot:/data]
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-blindspot:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-blindspot
+    networks: [internal]
+    volumes:
+      - ./mirth-config/blindspot-detector:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Domain Evidence ---
+
+  domain-evidence:
+    build:
+      context: ./services/agents/domain-evidence
+      dockerfile: Dockerfile
+    container_name: domain-evidence
+    networks: [internal]
+    environment:
+      - AGENT_NAME=domain-evidence
+      - YOTTADB_HOST=ydb-domain
+      - MIRTH_HOST=mirth-domain
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_PORT=9009
+    depends_on:
+      ydb-domain:
+        condition: service_healthy
+      mirth-domain:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-domain:
+    image: yottadb/yottadb:latest
+    container_name: ydb-domain
+    networks: [internal]
+    volumes: [ydb-domain:/data]
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-domain:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-domain
+    networks: [internal]
+    volumes:
+      - ./mirth-config/domain-evidence:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Synthesizer ---
+
+  synthesizer:
+    build:
+      context: ./services/agents/synthesizer
+      dockerfile: Dockerfile
+    container_name: synthesizer
+    networks: [internal]
+    environment:
+      - AGENT_NAME=synthesizer
+      - YOTTADB_HOST=ydb-synthesizer
+      - MIRTH_HOST=mirth-synthesizer
+      - ORCHESTRATOR_MIRTH_HOST=mirth-orchestrator
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MCP_PORT=9010
+    depends_on:
+      ydb-synthesizer:
+        condition: service_healthy
+      mirth-synthesizer:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ydb-synthesizer:
+    image: yottadb/yottadb:latest
+    container_name: ydb-synthesizer
+    networks: [internal]
+    volumes: [ydb-synthesizer:/data]
+    environment: [ydb_dir=/data]
+    healthcheck:
+      test: ["CMD", "ydb", "-run", "WRITE 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mirth-synthesizer:
+    image: nextgenhealthcare/connect:latest
+    container_name: mirth-synthesizer
+    networks: [internal]
+    volumes:
+      - ./mirth-config/synthesizer:/opt/connect/appdata/channel-definitions:ro
+    environment: [DATABASE=derby]
+    healthcheck:
+      test: ["CMD", "curl", "-k", "-f", "https://localhost:8443/api/server/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped

@@ -1,0 +1,46 @@
+---
+title: Orchestrator Push Pattern — orchestrator directs subagent output destination
+---
+sequenceDiagram
+    autonumber
+
+    participant ORC as Orchestrator
+    participant CL as coverage-left<br/>(MCP Server)
+    participant CL_YDB as coverage-left<br/>YottaDB
+    participant CL_MIRTH as coverage-left<br/>Mirth
+    participant OMIRTH as Orchestrator<br/>Mirth
+    participant OYDB as Orchestrator<br/>YottaDB
+
+    Note over ORC,OYDB: Precondition: entity-extractor has emitted<br/>F-status OBX rows. Parallel fan-out begins.<br/>Same pattern runs concurrently for<br/>coverage-center, coverage-right, domain-evidence.
+
+    ORC->>CL: MCP invoke_task({<br/>  run_id: "RUN-...",<br/>  task: "analyze_left_coverage",<br/>  claim_text: "Biden issued...",<br/>  entities: [{type: "PERSON", value: "Biden"}, ...],<br/>  reply_channel: "ORCH_ACK"<br/>})
+
+    CL-->>ORC: MCP task_accepted({<br/>  run_id: "RUN-...",<br/>  agent: "coverage-left"<br/>})
+
+    Note over CL: Agent queries NewsAPI and MBFC<br/>independently. No MCP calls back<br/>to orchestrator during execution.
+
+    CL->>CL: query NewsAPI for left-spectrum<br/>sources covering claim entities
+
+    CL->>CL: query MBFC for source<br/>bias ratings
+
+    CL->>CL: reason over article set,<br/>determine framing and credibility
+
+    CL->>CL_YDB: write preliminary OBX rows<br/>COVERAGE_ARTICLE_COUNT = 12 (P)<br/>COVERAGE_FRAMING = SUPPORTIVE (P)
+
+    CL->>CL_YDB: finalize OBX rows<br/>COVERAGE_ARTICLE_COUNT = 12 (F)<br/>COVERAGE_FRAMING = SUPPORTIVE (F)<br/>COVERAGE_TOP_SOURCE = "DailyKos" (F)<br/>COVERAGE_TOP_SOURCE_URL = "https://..." (F)
+
+    Note over CL: Tool layer constructs HL7v2 message<br/>from YottaDB OBX rows and routes<br/>to orchestrator-specified channel.
+
+    CL->>CL_MIRTH: send HL7v2 to ORCH_ACK channel<br/>MSH (sending: coverage-left)<br/>PID (claim identity)<br/>OBX[1..4] F-status coverage rows
+
+    CL_MIRTH->>OMIRTH: MLLP HL7v2 message<br/>delivered to ORCH_ACK channel
+
+    OMIRTH-->>CL_MIRTH: ACK AA
+
+    OMIRTH->>OYDB: log ACK event<br/>^ACK_LOG(run_id, seq, ...)
+
+    Note over ORC: Orchestrator receives ACK from Mirth,<br/>updates completion register.<br/>Does not read coverage-left YottaDB directly.
+
+    ORC->>ORC: update completion register<br/>coverage-left = COMPLETE
+
+    Note over ORC: Orchestrator waits for coverage-center,<br/>coverage-right, claimreview-matcher,<br/>domain-evidence ACKs before<br/>dispatching blindspot-detector.

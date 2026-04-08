@@ -1,0 +1,737 @@
+openapi: 3.1.0
+
+info:
+  title: hl7-agent-factchecker Consumer API
+  version: 0.1.0
+  description: |
+    REST API for claim submission, run lifecycle management, verdict
+    retrieval, and audit log access.
+
+    All endpoints are served by the Consumer API (FastAPI). The Consumer API
+    sits in the DMZ and is the only system boundary exposed to external
+    operators and analysts. All internal orchestrator, agent, and Mirth
+    communication is not exposed via this API.
+
+    ## Authentication
+    Authentication is out of scope for the prototype. All endpoints are
+    treated as trusted-caller in local development. Production deployments
+    should add OAuth2 or API key authentication at the reverse proxy layer.
+
+  contact:
+    name: hl7-agent-factchecker
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development (Docker Compose)
+
+tags:
+  - name: Claims
+    description: Claim submission and retrieval
+  - name: Runs
+    description: Run lifecycle and status monitoring
+  - name: Verdicts
+    description: Published fact-check verdict retrieval
+  - name: Audit
+    description: Raw HL7v2 audit log access
+  - name: System
+    description: Health checks and registry inspection
+
+paths:
+
+  # ---------------------------------------------------------------------------
+  # Claims
+  # ---------------------------------------------------------------------------
+
+  /claims:
+    post:
+      tags: [Claims]
+      operationId: submitClaim
+      summary: Submit a claim for fact-checking
+      description: |
+        Accepts a claim text and source metadata. Validates input, assigns
+        a claim_id (or reuses an existing one for duplicate claim text),
+        creates a new run_id, and initiates the ingestion agent via the
+        orchestrator. Returns 202 immediately; use GET /runs/{run_id} to
+        poll status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimSubmission'
+            example:
+              claim_text: "Biden issued a federal vaccine mandate for all private employers."
+              source_url: "https://example.com/article/12345"
+              source_date: "20211104"
+      responses:
+        '202':
+          description: Claim accepted, run initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimAccepted'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '503':
+          description: Orchestrator unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceError'
+
+    get:
+      tags: [Claims]
+      operationId: listClaims
+      summary: List submitted claims
+      description: Returns a paginated list of claims, ordered by ingestion date descending.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - name: domain
+          in: query
+          schema:
+            $ref: '#/components/schemas/ClaimDomain'
+          description: Filter by claim domain
+      responses:
+        '200':
+          description: Paginated claim list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimList'
+
+  /claims/{claim_id}:
+    get:
+      tags: [Claims]
+      operationId: getClaim
+      summary: Get a claim by ID
+      parameters:
+        - $ref: '#/components/parameters/claim_id'
+      responses:
+        '200':
+          description: Claim record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Claim'
+        '404':
+          description: Claim not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+
+  /claims/{claim_id}/runs:
+    get:
+      tags: [Claims]
+      operationId: getRunsForClaim
+      summary: Get all runs for a claim
+      description: Returns all runs initiated for this claim, ordered by created_at descending.
+      parameters:
+        - $ref: '#/components/parameters/claim_id'
+      responses:
+        '200':
+          description: List of runs for this claim
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RunSummary'
+        '404':
+          description: Claim not found
+
+  # ---------------------------------------------------------------------------
+  # Runs
+  # ---------------------------------------------------------------------------
+
+  /runs:
+    get:
+      tags: [Runs]
+      operationId: listRuns
+      summary: List runs
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/RunStatus'
+          description: Filter by run status
+      responses:
+        '200':
+          description: Paginated run list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunList'
+
+  /runs/{run_id}:
+    get:
+      tags: [Runs]
+      operationId: getRun
+      summary: Get run status and completion register
+      description: |
+        Returns the current run status, completion register (which agents
+        have emitted terminal OBX status), and timestamps. Use this endpoint
+        to poll run progress after submitting a claim.
+      parameters:
+        - $ref: '#/components/parameters/run_id'
+      responses:
+        '200':
+          description: Run detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunDetail'
+              example:
+                run_id: "RUN-20260406-a3f7"
+                claim_id: "CLAIM-20260406-001"
+                status: "ANALYZING"
+                created_at: "2026-04-06T12:00:00Z"
+                updated_at: "2026-04-06T12:00:45Z"
+                expected_agent_count: 10
+                terminal_obx_count: 6
+                agents:
+                  - name: "ingestion-agent"
+                    status: "COMPLETE"
+                  - name: "claim-detector"
+                    status: "COMPLETE"
+                  - name: "entity-extractor"
+                    status: "COMPLETE"
+                  - name: "claimreview-matcher"
+                    status: "COMPLETE"
+                  - name: "coverage-left"
+                    status: "COMPLETE"
+                  - name: "coverage-center"
+                    status: "ACTIVE"
+                  - name: "coverage-right"
+                    status: "ACTIVE"
+                  - name: "domain-evidence"
+                    status: "COMPLETE"
+                  - name: "blindspot-detector"
+                    status: "IDLE"
+                  - name: "synthesizer"
+                    status: "IDLE"
+        '404':
+          description: Run not found
+
+  /runs/{run_id}/hl7:
+    get:
+      tags: [Runs, Audit]
+      operationId: getRunHL7
+      summary: Retrieve the raw HL7v2 audit log for a run
+      description: |
+        Returns the raw HL7v2 message file for the run. Available at any
+        lifecycle state — partial logs are returned for runs still in
+        ANALYZING state. The response is the raw pipe-delimited HL7v2
+        content with carriage return segment terminators.
+
+        This endpoint is the primary audit and dispute resolution mechanism.
+        The HL7v2 file is the authoritative record; the JSON verdict is
+        derived from it.
+      parameters:
+        - $ref: '#/components/parameters/run_id'
+      responses:
+        '200':
+          description: Raw HL7v2 message content
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                MSH|^~\&|ingestion-agent|factchecker|orchestrator|factchecker|20260406120000||ORU^R01|RUN001-MSG001|P|2.5
+                PID|||CLAIM-20260406-001^^^factchecker||BidenVaccineMandate^OSHA vaccine mandate claim||20211104
+                OBX|1|ST|CLAIM_TEXT^^FCK||Biden issued a federal vaccine mandate for all private employers.||||||F
+        '404':
+          description: Run not found
+
+  # ---------------------------------------------------------------------------
+  # Verdicts
+  # ---------------------------------------------------------------------------
+
+  /verdicts:
+    get:
+      tags: [Verdicts]
+      operationId: listVerdicts
+      summary: List published verdicts
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - name: run_id
+          in: query
+          schema:
+            type: string
+          description: Filter by run_id
+        - name: claim_id
+          in: query
+          schema:
+            type: string
+          description: Filter by claim_id — returns all published verdicts for the claim
+        - name: verdict
+          in: query
+          schema:
+            $ref: '#/components/schemas/VerdictValue'
+          description: Filter by verdict value
+        - name: domain
+          in: query
+          schema:
+            $ref: '#/components/schemas/ClaimDomain'
+      responses:
+        '200':
+          description: Paginated verdict list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerdictList'
+
+  /verdicts/{verdict_id}:
+    get:
+      tags: [Verdicts]
+      operationId: getVerdict
+      summary: Get a published verdict by ID
+      parameters:
+        - name: verdict_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Published verdict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Verdict'
+              example:
+                verdict_id: "VRD-20260406-001"
+                run_id: "RUN-20260406-a3f7"
+                claim_id: "CLAIM-20260406-001"
+                claim_text: "Biden issued a federal vaccine mandate for all private employers."
+                verdict: "MOSTLY_FALSE"
+                confidence_score: 0.31
+                narrative: "OSHA issued an Emergency Temporary Standard requiring..."
+                coverage:
+                  left:
+                    article_count: 12
+                    framing: "SUPPORTIVE"
+                    top_source: "DailyKos"
+                  center:
+                    article_count: 8
+                    framing: "CRITICAL"
+                    top_source: "Associated Press"
+                  right:
+                    article_count: 11
+                    framing: "CRITICAL"
+                    top_source: "Fox News"
+                blindspot_score: 0.12
+                blindspot_direction: "NONE"
+                claimreview_match: true
+                claimreview_source: "PolitiFact"
+                claimreview_verdict: "MOSTLY_FALSE"
+                domain_evidence_alignment: "CONTRADICTS"
+                synthesis_signal_count: 28
+                synthesis_override_reason: ""
+                audit_log_ref: "RUN-20260406-a3f7.hl7"
+                generated_at: "2026-04-06T12:01:48Z"
+        '404':
+          description: Verdict not found
+
+  # ---------------------------------------------------------------------------
+  # System
+  # ---------------------------------------------------------------------------
+
+  /health:
+    get:
+      tags: [System]
+      operationId: healthCheck
+      summary: System health check
+      description: Returns health status of the Consumer API and connectivity to the orchestrator.
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Unhealthy
+
+  /agents:
+    get:
+      tags: [System]
+      operationId: listAgents
+      summary: List registered agent bundles and their current status
+      responses:
+        '200':
+          description: Agent registry
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentStatus'
+
+  /codes:
+    get:
+      tags: [System]
+      operationId: listObxCodes
+      summary: List the OBX code registry
+      description: Returns the full contents of the OBX code registry loaded from obx-code-registry.json.
+      responses:
+        '200':
+          description: OBX code registry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OBXCodeRegistry'
+
+# ---------------------------------------------------------------------------
+# Components
+# ---------------------------------------------------------------------------
+
+components:
+
+  parameters:
+    run_id:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "RUN-20260406-a3f7"
+    claim_id:
+      name: claim_id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "CLAIM-20260406-001"
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  schemas:
+
+    ClaimSubmission:
+      type: object
+      required: [claim_text]
+      properties:
+        claim_text:
+          type: string
+          minLength: 10
+          maxLength: 1000
+          description: The claim text to be fact-checked.
+        source_url:
+          type: string
+          format: uri
+          description: URL of the article or document the claim was taken from.
+        source_date:
+          type: string
+          pattern: '^\d{8}$'
+          description: Publication date of the source in YYYYMMDD format.
+
+    ClaimAccepted:
+      type: object
+      properties:
+        run_id:
+          type: string
+        claim_id:
+          type: string
+        status:
+          type: string
+          enum: [INGESTED]
+        poll_url:
+          type: string
+          format: uri
+
+    Claim:
+      type: object
+      properties:
+        claim_id:
+          type: string
+        claim_text:
+          type: string
+        claim_slug:
+          type: string
+        source_url:
+          type: string
+        source_date:
+          type: string
+        domain:
+          $ref: '#/components/schemas/ClaimDomain'
+        ingested_at:
+          type: string
+          format: date-time
+
+    ClaimList:
+      type: object
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Claim'
+
+    ClaimDomain:
+      type: string
+      enum: [HEALTHCARE, ECONOMICS, POLICY, SCIENCE, ELECTION, CRIME, OTHER]
+
+    RunStatus:
+      type: string
+      enum: [INGESTED, ANALYZING, SYNTHESIZED, PUBLISHED, CANCELLED]
+
+    RunSummary:
+      type: object
+      properties:
+        run_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/RunStatus'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RunDetail:
+      allOf:
+        - $ref: '#/components/schemas/RunSummary'
+        - type: object
+          properties:
+            claim_id:
+              type: string
+            expected_agent_count:
+              type: integer
+            terminal_obx_count:
+              type: integer
+            agents:
+              type: array
+              items:
+                $ref: '#/components/schemas/AgentRunStatus'
+
+    RunList:
+      type: object
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunSummary'
+
+    AgentRunStatus:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [IDLE, ACTIVE, COMPLETE, ERROR]
+
+    VerdictValue:
+      type: string
+      enum: ["TRUE", MOSTLY_TRUE, HALF_TRUE, MOSTLY_FALSE, "FALSE", PANTS_FIRE, UNVERIFIABLE]
+
+    CoverageSegment:
+      type: object
+      properties:
+        article_count:
+          type: integer
+        framing:
+          type: string
+          enum: [SUPPORTIVE, CRITICAL, NEUTRAL, ABSENT]
+        top_source:
+          type: string
+        top_source_url:
+          type: string
+          format: uri
+
+    Verdict:
+      type: object
+      properties:
+        verdict_id:
+          type: string
+        run_id:
+          type: string
+        claim_id:
+          type: string
+        claim_text:
+          type: string
+        verdict:
+          $ref: '#/components/schemas/VerdictValue'
+        confidence_score:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        narrative:
+          type: string
+        coverage:
+          type: object
+          properties:
+            left:
+              $ref: '#/components/schemas/CoverageSegment'
+            center:
+              $ref: '#/components/schemas/CoverageSegment'
+            right:
+              $ref: '#/components/schemas/CoverageSegment'
+        blindspot_score:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        blindspot_direction:
+          type: string
+          enum: [LEFT, RIGHT, CENTER, NONE]
+        claimreview_match:
+          type: boolean
+        claimreview_source:
+          type: string
+        claimreview_verdict:
+          type: string
+        domain_evidence_alignment:
+          type: string
+          enum: [SUPPORTS, CONTRADICTS, PARTIAL, ABSENT]
+        synthesis_signal_count:
+          type: integer
+        synthesis_override_reason:
+          type: string
+        audit_log_ref:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+
+    VerdictList:
+      type: object
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Verdict'
+
+    AgentStatus:
+      type: object
+      properties:
+        name:
+          type: string
+        mcp_endpoint:
+          type: string
+        mirth_channel:
+          type: string
+        status:
+          type: string
+          enum: [IDLE, ACTIVE, COMPLETE, ERROR]
+        last_heartbeat:
+          type: string
+          format: date-time
+        owned_codes:
+          type: array
+          items:
+            type: string
+
+    OBXCodeRegistry:
+      type: object
+      properties:
+        version:
+          type: string
+        coding_system:
+          type: string
+        codes:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              display:
+                type: string
+              owner_agent:
+                type: string
+              value_type:
+                type: string
+              units:
+                type: string
+                nullable: true
+              reference_range:
+                type: string
+                nullable: true
+              description:
+                type: string
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        orchestrator:
+          type: string
+          enum: [reachable, unreachable]
+        yottadb:
+          type: string
+          enum: [reachable, unreachable]
+        checked_at:
+          type: string
+          format: date-time
+
+    ValidationError:
+      type: object
+      properties:
+        error:
+          type: string
+        field:
+          type: string
+        message:
+          type: string
+
+    NotFoundError:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "not_found"
+        message:
+          type: string
+
+    ServiceError:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "service_unavailable"
+        message:
+          type: string

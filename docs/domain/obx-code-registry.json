@@ -1,0 +1,295 @@
+{
+  "version": "0.1.0",
+  "coding_system": "FCK",
+  "description": "Canonical OBX observation codes for hl7-agent-factchecker. All agents must use codes from this registry. Unknown codes are rejected by the tool layer at write time.",
+  "codes": [
+    {
+      "code": "CLAIM_TEXT",
+      "display": "Claim Text",
+      "owner_agent": "ingestion-agent",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "The raw text of the claim under investigation, as submitted."
+    },
+    {
+      "code": "CLAIM_SOURCE_URL",
+      "display": "Claim Source URL",
+      "owner_agent": "ingestion-agent",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "URL of the article or document from which the claim was extracted."
+    },
+    {
+      "code": "CLAIM_SOURCE_DATE",
+      "display": "Claim Source Date",
+      "owner_agent": "ingestion-agent",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Publication date of the source document. Format: YYYYMMDD."
+    },
+    {
+      "code": "CLAIM_DOMAIN",
+      "display": "Claim Domain",
+      "owner_agent": "ingestion-agent",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Subject domain of the claim. Controlled vocabulary: HEALTHCARE, ECONOMICS, POLICY, SCIENCE, ELECTION, CRIME, OTHER."
+    },
+    {
+      "code": "CHECK_WORTHY_SCORE",
+      "display": "Check-Worthy Score",
+      "owner_agent": "claim-detector",
+      "value_type": "NM",
+      "units": "score",
+      "reference_range": "0.0-1.0",
+      "description": "ClaimBuster-style check-worthiness score. 1.0 = highly check-worthy factual claim. 0.0 = opinion or non-factual statement."
+    },
+    {
+      "code": "CLAIM_NORMALIZED",
+      "display": "Normalized Claim Text",
+      "owner_agent": "claim-detector",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Claim text normalized for matching: lowercased, entity references resolved, hedging language removed."
+    },
+    {
+      "code": "ENTITY_PERSON",
+      "display": "Named Person Entity",
+      "owner_agent": "entity-extractor",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Named person mentioned in the claim. One OBX row per person. Value is the canonical name."
+    },
+    {
+      "code": "ENTITY_ORG",
+      "display": "Named Organization Entity",
+      "owner_agent": "entity-extractor",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Named organization mentioned in the claim. One OBX row per organization."
+    },
+    {
+      "code": "ENTITY_DATE",
+      "display": "Temporal Reference",
+      "owner_agent": "entity-extractor",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Date or date range referenced in the claim. Format: YYYYMMDD or YYYYMMDD-YYYYMMDD."
+    },
+    {
+      "code": "ENTITY_LOCATION",
+      "display": "Location Entity",
+      "owner_agent": "entity-extractor",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Geographic location mentioned in the claim. One OBX row per location."
+    },
+    {
+      "code": "ENTITY_STATISTIC",
+      "display": "Statistic or Quantity",
+      "owner_agent": "entity-extractor",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Numeric claim embedded in text. Value is the extracted quantity and unit. e.g. '87% of adults'."
+    },
+    {
+      "code": "CLAIMREVIEW_MATCH",
+      "display": "ClaimReview Match Found",
+      "owner_agent": "claimreview-matcher",
+      "value_type": "CWE",
+      "units": null,
+      "reference_range": null,
+      "description": "Whether a ClaimReview match was found. Coded value: TRUE^Match Found^FCK or FALSE^No Match^FCK."
+    },
+    {
+      "code": "CLAIMREVIEW_VERDICT",
+      "display": "ClaimReview Verdict",
+      "owner_agent": "claimreview-matcher",
+      "value_type": "CWE",
+      "units": null,
+      "reference_range": null,
+      "description": "Verdict from the matched ClaimReview entry. Coded as original reviewer's rating system. e.g. FALSE^False^POLITIFACT."
+    },
+    {
+      "code": "CLAIMREVIEW_SOURCE",
+      "display": "ClaimReview Source Organization",
+      "owner_agent": "claimreview-matcher",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Name of the fact-checking organization that published the matched ClaimReview entry."
+    },
+    {
+      "code": "CLAIMREVIEW_URL",
+      "display": "ClaimReview Source URL",
+      "owner_agent": "claimreview-matcher",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "URL of the matched ClaimReview fact-check article."
+    },
+    {
+      "code": "CLAIMREVIEW_MATCH_SCORE",
+      "display": "ClaimReview Semantic Match Score",
+      "owner_agent": "claimreview-matcher",
+      "value_type": "NM",
+      "units": "score",
+      "reference_range": "0.0-1.0",
+      "description": "Semantic similarity between submitted claim and matched ClaimReview claim text. Scores below 0.75 are flagged as uncertain matches."
+    },
+    {
+      "code": "COVERAGE_ARTICLE_COUNT",
+      "display": "Coverage Article Count",
+      "owner_agent": "coverage-left|coverage-center|coverage-right",
+      "value_type": "NM",
+      "units": "count",
+      "reference_range": null,
+      "description": "Number of articles covering this claim from this spectrum segment. OBX.16 identifies which coverage agent wrote the row."
+    },
+    {
+      "code": "COVERAGE_FRAMING",
+      "display": "Coverage Framing",
+      "owner_agent": "coverage-left|coverage-center|coverage-right",
+      "value_type": "CWE",
+      "units": null,
+      "reference_range": null,
+      "description": "How this spectrum segment frames the claim. Coded value: SUPPORTIVE^Supportive^FCK, CRITICAL^Critical^FCK, NEUTRAL^Neutral^FCK, ABSENT^Not Covered^FCK."
+    },
+    {
+      "code": "COVERAGE_TOP_SOURCE",
+      "display": "Top Coverage Source",
+      "owner_agent": "coverage-left|coverage-center|coverage-right",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Name of the highest-credibility source covering the claim in this spectrum segment."
+    },
+    {
+      "code": "COVERAGE_TOP_SOURCE_URL",
+      "display": "Top Coverage Source URL",
+      "owner_agent": "coverage-left|coverage-center|coverage-right",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "URL of the top coverage source article."
+    },
+    {
+      "code": "BLINDSPOT_SCORE",
+      "display": "Coverage Blindspot Score",
+      "owner_agent": "blindspot-detector",
+      "value_type": "NM",
+      "units": "score",
+      "reference_range": "0.0-1.0",
+      "description": "Degree of coverage asymmetry across the political spectrum. 0.0 = uniform coverage. 1.0 = complete blindspot (only one spectrum segment covering)."
+    },
+    {
+      "code": "BLINDSPOT_DIRECTION",
+      "display": "Blindspot Direction",
+      "owner_agent": "blindspot-detector",
+      "value_type": "CWE",
+      "units": null,
+      "reference_range": null,
+      "description": "Which spectrum segment is absent or underrepresented. Coded: LEFT^Left Absent^FCK, RIGHT^Right Absent^FCK, CENTER^Center Absent^FCK, NONE^No Blindspot^FCK."
+    },
+    {
+      "code": "CROSS_SPECTRUM_CORROBORATION",
+      "display": "Cross-Spectrum Corroboration",
+      "owner_agent": "blindspot-detector",
+      "value_type": "CWE",
+      "units": null,
+      "reference_range": null,
+      "description": "Whether the claim is covered and consistent across all three spectrum segments. TRUE^Corroborated^FCK or FALSE^Not Corroborated^FCK."
+    },
+    {
+      "code": "DOMAIN_SOURCE_NAME",
+      "display": "Domain Primary Source Name",
+      "owner_agent": "domain-evidence",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "Name of the primary authoritative source consulted. e.g. CDC, SEC, court filing, WHO."
+    },
+    {
+      "code": "DOMAIN_SOURCE_URL",
+      "display": "Domain Primary Source URL",
+      "owner_agent": "domain-evidence",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "URL of the primary authoritative source document."
+    },
+    {
+      "code": "DOMAIN_EVIDENCE_ALIGNMENT",
+      "display": "Domain Evidence Alignment",
+      "owner_agent": "domain-evidence",
+      "value_type": "CWE",
+      "units": null,
+      "reference_range": null,
+      "description": "Whether primary source evidence supports or contradicts the claim. SUPPORTS^Supports Claim^FCK, CONTRADICTS^Contradicts Claim^FCK, PARTIAL^Partially Supports^FCK, ABSENT^No Evidence Found^FCK."
+    },
+    {
+      "code": "DOMAIN_CONFIDENCE",
+      "display": "Domain Evidence Confidence",
+      "owner_agent": "domain-evidence",
+      "value_type": "NM",
+      "units": "score",
+      "reference_range": "0.0-1.0",
+      "description": "Confidence in the domain evidence finding. Penalized when source is indirect, dated, or ambiguous."
+    },
+    {
+      "code": "CONFIDENCE_SCORE",
+      "display": "Synthesized Confidence Score",
+      "owner_agent": "synthesizer",
+      "value_type": "NM",
+      "units": "score",
+      "reference_range": "0.0-1.0",
+      "description": "Final confidence score synthesized from all upstream agent findings. Drives VERDICT mapping per hl7-segment-spec.md Section 9."
+    },
+    {
+      "code": "VERDICT",
+      "display": "Final Verdict",
+      "owner_agent": "synthesizer",
+      "value_type": "CWE",
+      "units": null,
+      "reference_range": null,
+      "description": "Final verdict coded value. See hl7-segment-spec.md Section 9 for full coded value set and confidence range mapping."
+    },
+    {
+      "code": "VERDICT_NARRATIVE",
+      "display": "Verdict Narrative",
+      "owner_agent": "synthesizer",
+      "value_type": "TX",
+      "units": null,
+      "reference_range": null,
+      "description": "Human-readable explanation of the verdict. References specific upstream findings by OBX sequence number. Max 1000 chars."
+    },
+    {
+      "code": "SYNTHESIS_SIGNAL_COUNT",
+      "display": "Synthesis Input Signal Count",
+      "owner_agent": "synthesizer",
+      "value_type": "NM",
+      "units": "count",
+      "reference_range": null,
+      "description": "Number of upstream F-status OBX rows used as inputs to the synthesis. Low counts indicate insufficient evidence."
+    },
+    {
+      "code": "SYNTHESIS_OVERRIDE_REASON",
+      "display": "Synthesis Override Reason",
+      "owner_agent": "synthesizer",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "If the synthesizer overrides a ClaimReview verdict, the reason is recorded here. Empty if no override occurred."
+    }
+  ]
+}
