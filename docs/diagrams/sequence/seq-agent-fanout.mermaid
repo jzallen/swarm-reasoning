@@ -5,7 +5,7 @@ sequenceDiagram
     autonumber
 
     participant ORC as Orchestrator
-    participant OMIRTH as Orchestrator<br/>Mirth
+    participant REDIS as Redis Streams
     participant CR as claimreview-matcher
     participant CL as coverage-left
     participant CC as coverage-center
@@ -16,33 +16,34 @@ sequenceDiagram
     participant MBFC as Media Bias<br/>Fact Check
     participant PRIMARY as CDC / WHO /<br/>SEC / Courts
 
-    Note over ORC,PRIMARY: Precondition: entity-extractor has emitted F-status.<br/>Orchestrator dispatches all five agents simultaneously.
+    Note over ORC,PRIMARY: Precondition: entity-extractor STOP received.<br/>Orchestrator dispatches all five agents simultaneously.
 
     par Parallel MCP dispatch
         ORC->>CR: MCP invoke_task({run_id, claim_normalized, entities})
     and
-        ORC->>CL: MCP invoke_task({run_id, claim_text, entities, reply_channel: "ORCH_ACK"})
+        ORC->>CL: MCP invoke_task({run_id, claim_text, entities})
     and
-        ORC->>CC: MCP invoke_task({run_id, claim_text, entities, reply_channel: "ORCH_ACK"})
+        ORC->>CC: MCP invoke_task({run_id, claim_text, entities})
     and
-        ORC->>CRR: MCP invoke_task({run_id, claim_text, entities, reply_channel: "ORCH_ACK"})
+        ORC->>CRR: MCP invoke_task({run_id, claim_text, entities})
     and
-        ORC->>DE: MCP invoke_task({run_id, claim_text, entities, domain, reply_channel: "ORCH_ACK"})
+        ORC->>DE: MCP invoke_task({run_id, claim_text, entities, domain})
     end
 
     Note over CR,GFCT: ClaimReview Matcher (independent)
 
+    CR->>REDIS: XADD ... type=START phase=fanout
     CR->>GFCT: GET /factcheck/v1alpha1/claims:search<br/>?query=claim_normalized
     GFCT-->>CR: ClaimReview results[]
 
     CR->>CR: compute semantic match score<br/>select best match if score >= 0.75
 
-    CR->>CR: tool: add_observation(CLAIMREVIEW_MATCH, F)<br/>tool: add_observation(CLAIMREVIEW_VERDICT, F)<br/>tool: add_observation(CLAIMREVIEW_SOURCE, F)<br/>tool: add_observation(CLAIMREVIEW_MATCH_SCORE, F)
+    CR->>REDIS: XADD ... type=OBS<br/>publish(CLAIMREVIEW_MATCH, F)<br/>publish(CLAIMREVIEW_VERDICT, F)<br/>publish(CLAIMREVIEW_SOURCE, F)<br/>publish(CLAIMREVIEW_MATCH_SCORE, F)
+    CR->>REDIS: XADD ... type=STOP finalStatus=F
 
-    CR->>OMIRTH: MLLP ACK
+    Note over CL,MBFC: Coverage Left (same pattern for Center + Right)
 
-    Note over CL,MBFC: Coverage Left (independent — same pattern for Center + Right)
-
+    CL->>REDIS: XADD ... type=START phase=fanout
     CL->>NEWS: GET articles?q=entities&from=source_date<br/>filter: left-spectrum outlets
     NEWS-->>CL: articles[]
 
@@ -51,26 +52,18 @@ sequenceDiagram
 
     CL->>CL: analyze framing across article set<br/>select top credibility source
 
-    CL->>CL: tool: add_observation(COVERAGE_ARTICLE_COUNT, F)<br/>tool: add_observation(COVERAGE_FRAMING, F)<br/>tool: add_observation(COVERAGE_TOP_SOURCE, F)<br/>tool: add_observation(COVERAGE_TOP_SOURCE_URL, F)
-
-    CL->>OMIRTH: MLLP ACK
+    CL->>REDIS: XADD ... type=OBS<br/>publish(COVERAGE_ARTICLE_COUNT, F)<br/>publish(COVERAGE_FRAMING, F)<br/>publish(COVERAGE_TOP_SOURCE, F)<br/>publish(COVERAGE_TOP_SOURCE_URL, F)
+    CL->>REDIS: XADD ... type=STOP finalStatus=F
 
     Note over CC: Coverage Center — same flow as Coverage Left
-
-    CC->>NEWS: article search (center outlets)
-    CC->>MBFC: bias ratings
-    CC->>CC: analyze + write OBX
-    CC->>OMIRTH: MLLP ACK
+    CC->>REDIS: START → OBS → STOP
 
     Note over CRR: Coverage Right — same flow as Coverage Left
-
-    CRR->>NEWS: article search (right outlets)
-    CRR->>MBFC: bias ratings
-    CRR->>CRR: analyze + write OBX
-    CRR->>OMIRTH: MLLP ACK
+    CRR->>REDIS: START → OBS → STOP
 
     Note over DE,PRIMARY: Domain Evidence (independent)
 
+    DE->>REDIS: XADD ... type=START phase=fanout
     DE->>DE: determine relevant primary source<br/>from CLAIM_DOMAIN and entities
 
     DE->>PRIMARY: fetch authoritative source document
@@ -78,8 +71,7 @@ sequenceDiagram
 
     DE->>DE: evaluate alignment between<br/>source content and claim
 
-    DE->>DE: tool: add_observation(DOMAIN_SOURCE_NAME, F)<br/>tool: add_observation(DOMAIN_SOURCE_URL, F)<br/>tool: add_observation(DOMAIN_EVIDENCE_ALIGNMENT, F)<br/>tool: add_observation(DOMAIN_CONFIDENCE, F)
+    DE->>REDIS: XADD ... type=OBS<br/>publish(DOMAIN_SOURCE_NAME, F)<br/>publish(DOMAIN_SOURCE_URL, F)<br/>publish(DOMAIN_EVIDENCE_ALIGNMENT, F)<br/>publish(DOMAIN_CONFIDENCE, F)
+    DE->>REDIS: XADD ... type=STOP finalStatus=F
 
-    DE->>OMIRTH: MLLP ACK
-
-    Note over ORC: Orchestrator receives 5 ACKs.<br/>completion register: 5/5 parallel agents complete.<br/>Dispatches blindspot-detector (Phase 3a).
+    Note over ORC: Orchestrator receives 5 STOP messages<br/>via XREADGROUP. Completion register: 5/5.<br/>Dispatches blindspot-detector (Phase 3a).

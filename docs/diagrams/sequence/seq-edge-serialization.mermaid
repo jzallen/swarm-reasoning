@@ -1,53 +1,42 @@
 ---
-title: Edge Serialization — HL7v2 to FHIR-like JSON
+title: Verdict Publication — Observation Streams to Consumer API
 ---
 sequenceDiagram
     autonumber
 
-    participant OMIRTH as Orchestrator<br/>Mirth
-    participant EDGE as Edge Adapter<br/>(Mirth / Rhino JS)
-    participant REGISTRY as OBX Code Registry<br/>(YottaDB)
+    participant ORC as Orchestrator
+    participant REDIS as Redis Streams
     participant API as Consumer API
     participant USER as Analyst / Operator
 
-    Note over OMIRTH,USER: Precondition: synthesizer has sent finalized<br/>HL7v2 message to orchestrator Mirth.<br/>Message contains VERDICT OBX row with F status.
+    Note over ORC,USER: Precondition: synthesizer STOP received.<br/>Run status = SYNTHESIZED.<br/>No edge adapter needed — observations are already JSON.
 
-    OMIRTH->>OMIRTH: inspect inbound message<br/>detect OBX where code=VERDICT<br/>and result_status=F
+    ORC->>ORC: detect SYNTHESIZED state<br/>all 10 agents complete
 
-    OMIRTH->>EDGE: route to edge adapter channel<br/>MLLP — full HL7v2 finalized message
+    ORC->>API: notify run_complete({<br/>  run_id: "claim-4821-run-003"<br/>})
 
-    EDGE-->>OMIRTH: ACK AA
+    API->>REDIS: XRANGE reasoning:claim-4821-run-003:* - +<br/>read all observations from all 10 agent streams
 
-    EDGE->>REGISTRY: load OBX code registry<br/>^OBX_CODE(*) — all codes, types, display names
+    API->>API: filter F and C status observations<br/>apply DetermineOBXResolution per code<br/>(select latest F or C as authoritative)
 
-    EDGE->>EDGE: parse MSH — extract run_id, timestamp
+    API->>API: construct verdict response<br/>{<br/>  run_id, claim_id, claim_text,<br/>  verdict, confidence_score, narrative,<br/>  coverage: {left, center, right},<br/>  blindspot_score, blindspot_direction,<br/>  claimreview_match, claimreview_verdict,<br/>  domain_evidence_alignment,<br/>  synthesis_signal_count,<br/>  generated_at<br/>}
 
-    EDGE->>EDGE: parse PID — extract claim_id, claim_slug,<br/>claim_description, source_date
-
-    EDGE->>EDGE: parse OBX rows — group by code<br/>apply DetermineOBXResolution per code<br/>(select latest F or C row)
-
-    Note over EDGE: Rhino JS transformer constructs<br/>FHIR-like JSON from resolved OBX rows.<br/>Uses OBX code registry for field name mapping.
-
-    EDGE->>EDGE: construct JSON object<br/>{<br/>  run_id, claim_id, claim_text,<br/>  verdict, confidence_score, narrative,<br/>  coverage: {left, center, right},<br/>  blindspot_score, blindspot_direction,<br/>  claimreview_match, claimreview_verdict,<br/>  domain_evidence_alignment,<br/>  synthesis_signal_count,<br/>  audit_log_ref: "{run_id}.hl7",<br/>  generated_at<br/>}
-
-    EDGE->>EDGE: validate JSON schema<br/>assert required fields present<br/>assert confidence_score in [0.0, 1.0]<br/>assert verdict in controlled vocabulary
+    API->>API: validate response schema<br/>assert required fields present<br/>assert confidence_score in [0.0, 1.0]<br/>assert verdict in controlled vocabulary
 
     alt schema validation passes
-        EDGE->>API: POST /internal/verdicts<br/>Content-Type: application/json<br/>X-Run-Id: RUN-...<br/>{verdict JSON}
-
-        API->>API: persist verdict to verdict store<br/>update run status → PUBLISHED<br/>emit run_complete event
-
-        API-->>EDGE: 201 Created<br/>{verdict_id, published_at}
+        API->>API: persist verdict<br/>update run status → PUBLISHED
 
         Note over API,USER: Verdict is now queryable by consumers.
 
         USER->>API: GET /verdicts/{verdict_id}
-        API-->>USER: 200 OK<br/>{verdict JSON + audit_log_ref}
+        API-->>USER: 200 OK<br/>{verdict JSON}
+
+        USER->>API: GET /audit/{run_id}/observations
+        API->>REDIS: XRANGE all streams for run_id
+        API-->>USER: 200 OK<br/>{full observation log — all P/F/C/X entries}
 
     else schema validation fails
-        EDGE->>EDGE: log validation error<br/>emit AE (Application Error) ACK
+        API->>API: log validation error<br/>run remains SYNTHESIZED (not PUBLISHED)
 
-        EDGE->>OMIRTH: NACK AE<br/>"Schema validation failed: {field} {reason}"
-
-        Note over OMIRTH: Orchestrator receives AE.<br/>Escalates to run error log.<br/>Does not retry automatically —<br/>schema failure requires investigation.
+        Note over ORC: Orchestrator detects publication failure.<br/>Escalates to run error log.<br/>Schema failure requires investigation.
     end

@@ -1,5 +1,5 @@
 ---
-title: Docker Topology — hl7-agent-factchecker
+title: Docker Topology — swarm-reasoning
 ---
 flowchart TD
 
@@ -9,105 +9,68 @@ flowchart TD
 
     subgraph EXTERNAL_NET["external network (bridge)"]
         PORT8000["host:8000"]
-        PORT8443["host:8443\n(mirth-orchestrator admin)"]
+        PORT6379["host:6379\n(Redis — dev only)"]
     end
 
     subgraph INTERNAL_NET["internal network (bridge) — not reachable from host"]
 
-        subgraph ORCH["Orchestrator Bundle"]
-            ORC["orchestrator\n:8080 (health)\n:9000 (MCP client hub)"]
-            OYDB["ydb-orchestrator\n:9080"]
-            OMIRTH["mirth-orchestrator\n:6661 (MLLP)\n:8443 (admin)"]
-            ORC --> OYDB
-            ORC --> OMIRTH
+        subgraph DATA["Data Plane"]
+            REDIS["redis\n:6379\nRedis Streams\nAppend-only observation log"]
+        end
+
+        subgraph ORCH["Orchestrator"]
+            ORC["orchestrator\n:8080 (health)\n:9000 (MCP client hub)\nXREADGROUP consumer"]
         end
 
         subgraph API_SVC["Consumer API"]
-            CAPI["consumer-api\n:8000"]
-            CAPI --> ORC
+            CAPI["consumer-api\n:8000\nXRANGE reader"]
         end
 
-        subgraph ING["Ingestion Bundle"]
+        ORC --> REDIS
+        CAPI --> REDIS
+        CAPI --> ORC
+
+        subgraph ING["Ingestion Agent"]
             ING_A["ingestion-agent\n:9001 (MCP server)"]
-            ING_YDB["ydb-ingestion\n:9080"]
-            ING_M["mirth-ingestion\n:6661 (MLLP)"]
-            ING_A --> ING_YDB
-            ING_A --> ING_M
         end
 
-        subgraph DET["Claim Detector Bundle"]
+        subgraph DET["Claim Detector"]
             DET_A["claim-detector\n:9002 (MCP server)"]
-            DET_YDB["ydb-detector\n:9080"]
-            DET_M["mirth-detector\n:6661 (MLLP)"]
-            DET_A --> DET_YDB
-            DET_A --> DET_M
         end
 
-        subgraph ENT["Entity Extractor Bundle"]
+        subgraph ENT["Entity Extractor"]
             ENT_A["entity-extractor\n:9003 (MCP server)"]
-            ENT_YDB["ydb-entity\n:9080"]
-            ENT_M["mirth-entity\n:6661 (MLLP)"]
-            ENT_A --> ENT_YDB
-            ENT_A --> ENT_M
         end
 
-        subgraph CR["ClaimReview Bundle"]
+        subgraph CR["ClaimReview Matcher"]
             CR_A["claimreview-matcher\n:9004 (MCP server)"]
-            CR_YDB["ydb-claimreview\n:9080"]
-            CR_M["mirth-claimreview\n:6661 (MLLP)"]
-            CR_A --> CR_YDB
-            CR_A --> CR_M
         end
 
-        subgraph CL["Coverage Left Bundle"]
+        subgraph CL["Coverage Left"]
             CL_A["coverage-left\n:9005 (MCP server)"]
-            CL_YDB["ydb-coverage-left\n:9080"]
-            CL_M["mirth-coverage-left\n:6661 (MLLP)"]
-            CL_A --> CL_YDB
-            CL_A --> CL_M
         end
 
-        subgraph CC["Coverage Center Bundle"]
+        subgraph CC["Coverage Center"]
             CC_A["coverage-center\n:9006 (MCP server)"]
-            CC_YDB["ydb-coverage-center\n:9080"]
-            CC_M["mirth-coverage-center\n:6661 (MLLP)"]
-            CC_A --> CC_YDB
-            CC_A --> CC_M
         end
 
-        subgraph CRR["Coverage Right Bundle"]
+        subgraph CRR["Coverage Right"]
             CRR_A["coverage-right\n:9007 (MCP server)"]
-            CRR_YDB["ydb-coverage-right\n:9080"]
-            CRR_M["mirth-coverage-right\n:6661 (MLLP)"]
-            CRR_A --> CRR_YDB
-            CRR_A --> CRR_M
         end
 
-        subgraph BS["Blindspot Bundle"]
+        subgraph BS["Blindspot Detector"]
             BS_A["blindspot-detector\n:9008 (MCP server)"]
-            BS_YDB["ydb-blindspot\n:9080"]
-            BS_M["mirth-blindspot\n:6661 (MLLP)"]
-            BS_A --> BS_YDB
-            BS_A --> BS_M
         end
 
-        subgraph DE["Domain Evidence Bundle"]
+        subgraph DE["Domain Evidence"]
             DE_A["domain-evidence\n:9009 (MCP server)"]
-            DE_YDB["ydb-domain\n:9080"]
-            DE_M["mirth-domain\n:6661 (MLLP)"]
-            DE_A --> DE_YDB
-            DE_A --> DE_M
         end
 
-        subgraph SY["Synthesizer Bundle"]
+        subgraph SY["Synthesizer"]
             SY_A["synthesizer\n:9010 (MCP server)"]
-            SY_YDB["ydb-synthesizer\n:9080"]
-            SY_M["mirth-synthesizer\n:6661 (MLLP)"]
-            SY_A --> SY_YDB
-            SY_A --> SY_M
         end
 
-        %% MCP connections — orchestrator to each agent
+        %% MCP connections — orchestrator to each agent (control plane)
         ORC -.->|"MCP :9001"| ING_A
         ORC -.->|"MCP :9002"| DET_A
         ORC -.->|"MCP :9003"| ENT_A
@@ -119,52 +82,36 @@ flowchart TD
         ORC -.->|"MCP :9009"| DE_A
         ORC -.->|"MCP :9010"| SY_A
 
-        %% Mirth MLLP — orchestrator to each agent
-        OMIRTH -->|"MLLP dispatch"| ING_M
-        OMIRTH -->|"MLLP dispatch"| DET_M
-        OMIRTH -->|"MLLP dispatch"| ENT_M
-        OMIRTH -->|"MLLP dispatch"| CR_M
-        OMIRTH -->|"MLLP dispatch"| CL_M
-        OMIRTH -->|"MLLP dispatch"| CC_M
-        OMIRTH -->|"MLLP dispatch"| CRR_M
-        OMIRTH -->|"MLLP dispatch"| BS_M
-        OMIRTH -->|"MLLP dispatch"| DE_M
-        OMIRTH -->|"MLLP dispatch"| SY_M
-
-        %% Mirth MLLP — agent ACKs back to orchestrator
-        ING_M -->|"ACK"| OMIRTH
-        DET_M -->|"ACK"| OMIRTH
-        ENT_M -->|"ACK"| OMIRTH
-        CR_M -->|"ACK"| OMIRTH
-        CL_M -->|"ACK"| OMIRTH
-        CC_M -->|"ACK"| OMIRTH
-        CRR_M -->|"ACK"| OMIRTH
-        BS_M -->|"ACK"| OMIRTH
-        DE_M -->|"ACK"| OMIRTH
-        SY_M -->|"finalized HL7v2"| OMIRTH
+        %% Redis Streams — all agents publish to Redis (data plane)
+        ING_A -->|"XADD"| REDIS
+        DET_A -->|"XADD"| REDIS
+        ENT_A -->|"XADD"| REDIS
+        CR_A -->|"XADD"| REDIS
+        CL_A -->|"XADD"| REDIS
+        CC_A -->|"XADD"| REDIS
+        CRR_A -->|"XADD"| REDIS
+        BS_A -->|"XADD"| REDIS
+        DE_A -->|"XADD"| REDIS
+        SY_A -->|"XADD"| REDIS
 
     end
 
     %% External port bindings
     BROWSER -->|"HTTP :8000"| PORT8000
     PORT8000 --> CAPI
-    PORT8443 --> OMIRTH
-    OMIRTH --> PORT8443
+    PORT6379 --> REDIS
 
     %% Startup dependency order
-    %% (approximate — depends_on healthcheck conditions)
-    note1["Startup order:\n1. All YottaDB instances\n2. All Mirth instances\n3. All agent processes\n4. Orchestrator\n5. Consumer API"]
+    note1["Startup order:\n1. Redis\n2. All agent processes\n3. Orchestrator\n4. Consumer API\n\n13 containers total\n(down from 33)"]
 
     classDef agent fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
-    classDef ydb fill:#fef9c3,stroke:#ca8a04,color:#713f12
-    classDef mirth fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef redis fill:#fef9c3,stroke:#ca8a04,color:#713f12
     classDef orch fill:#fce7f3,stroke:#ec4899,color:#831843
     classDef api fill:#f0fdf4,stroke:#86efac,color:#14532d
     classDef note fill:#fefce8,stroke:#fde047,color:#713f12
 
     class ING_A,DET_A,ENT_A,CR_A,CL_A,CC_A,CRR_A,BS_A,DE_A,SY_A agent
-    class OYDB,ING_YDB,DET_YDB,ENT_YDB,CR_YDB,CL_YDB,CC_YDB,CRR_YDB,BS_YDB,DE_YDB,SY_YDB ydb
-    class OMIRTH,ING_M,DET_M,ENT_M,CR_M,CL_M,CC_M,CRR_M,BS_M,DE_M,SY_M mirth
+    class REDIS redis
     class ORC orch
     class CAPI api
     class note1 note

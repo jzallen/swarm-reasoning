@@ -5,60 +5,56 @@ sequenceDiagram
     autonumber
 
     participant ORC as Orchestrator
-    participant OYDB as Orchestrator<br/>YottaDB
+    participant REDIS as Redis Streams
     participant BS as blindspot-detector<br/>(MCP Server)
-    participant BS_YDB as blindspot-detector<br/>YottaDB
-    participant CL_MCP as coverage-left<br/>(MCP Server)
-    participant CC_MCP as coverage-center<br/>(MCP Server)
-    participant CR_MCP as coverage-right<br/>(MCP Server)
     participant SYNTH as synthesizer<br/>(MCP Server)
-    participant SYNTH_YDB as synthesizer<br/>YottaDB
-    participant OMIRTH as Orchestrator<br/>Mirth
 
-    Note over ORC,OMIRTH: Precondition: all 5 parallel agents complete.<br/>Phase 3a — Blindspot Detection (pull pattern)
+    Note over ORC,SYNTH: Precondition: all 5 parallel agents STOP received.<br/>Phase 3a — Blindspot Detection (pull pattern)
 
     ORC->>BS: MCP invoke_task({run_id, task: "analyze_blindspot"})
 
     BS-->>ORC: MCP tool_request: get_observations(run_id, "COVERAGE_*")
 
-    ORC->>CL_MCP: get_observations(run_id, "COVERAGE_*")
-    CL_MCP-->>ORC: 4 OBX rows (article_count=12, framing=SUPPORTIVE, ...)
+    ORC->>REDIS: XRANGE reasoning:...:coverage-left - +
+    REDIS-->>ORC: 4 observations (article_count=12, framing=SUPPORTIVE, ...)
 
-    ORC->>CC_MCP: get_observations(run_id, "COVERAGE_*")
-    CC_MCP-->>ORC: 4 OBX rows (article_count=8, framing=CRITICAL, ...)
+    ORC->>REDIS: XRANGE reasoning:...:coverage-center - +
+    REDIS-->>ORC: 4 observations (article_count=8, framing=CRITICAL, ...)
 
-    ORC->>CR_MCP: get_observations(run_id, "COVERAGE_*")
-    CR_MCP-->>ORC: 4 OBX rows (article_count=11, framing=CRITICAL, ...)
+    ORC->>REDIS: XRANGE reasoning:...:coverage-right - +
+    REDIS-->>ORC: 4 observations (article_count=11, framing=CRITICAL, ...)
 
-    ORC-->>BS: consolidated COVERAGE_* rows from all 3 agents
+    ORC-->>BS: consolidated COVERAGE_* observations from all 3 agents
 
     BS->>BS: compute coverage asymmetry score<br/>left=12 SUPPORTIVE, center=8 CRITICAL,<br/>right=11 CRITICAL → no major blindspot
 
-    BS->>BS_YDB: tool: add_observation(BLINDSPOT_SCORE, 0.12, F)<br/>tool: add_observation(BLINDSPOT_DIRECTION, NONE, F)<br/>tool: add_observation(CROSS_SPECTRUM_CORROBORATION, FALSE, F)
+    BS->>REDIS: XADD ... type=START phase=synthesis
+    BS->>REDIS: XADD ... type=OBS<br/>publish(BLINDSPOT_SCORE, 0.12, F)<br/>publish(BLINDSPOT_DIRECTION, NONE, F)<br/>publish(CROSS_SPECTRUM_CORROBORATION, FALSE, F)
+    BS->>REDIS: XADD ... type=STOP finalStatus=F
 
-    BS->>OMIRTH: MLLP ACK
-    ORC->>OYDB: blindspot-detector = COMPLETE
+    ORC->>REDIS: XREADGROUP — consume STOP
+    ORC->>ORC: blindspot-detector = COMPLETE
 
-    Note over ORC,SYNTH_YDB: Phase 3b — Synthesis (pull pattern)<br/>All 10 agents now complete. Orchestrator<br/>assembles consolidated OBX log.
+    Note over ORC,SYNTH: Phase 3b — Synthesis (pull pattern)<br/>All 9 preceding agents complete.<br/>Orchestrator assembles consolidated observation log.
 
-    ORC->>ORC: collect get_observations(run_id)<br/>from all 10 agent MCP servers
+    ORC->>REDIS: XRANGE all 9 agent streams<br/>collect F/C status observations
 
-    ORC->>SYNTH: MCP invoke_task({<br/>  run_id,<br/>  consolidated_obx_log: [all F/C rows from all agents]<br/>})
+    ORC->>SYNTH: MCP invoke_task({<br/>  run_id,<br/>  consolidated_observations: [all F/C obs from all agents]<br/>})
 
     Note over SYNTH: Synthesizer applies DetermineOBXResolution<br/>DMN to resolve authoritative value per code.<br/>Computes weighted confidence score.
 
-    SYNTH->>SYNTH: resolve authoritative OBX per code<br/>apply confidence weights:<br/>  claimreview_match: 0.35<br/>  domain_evidence: 0.30<br/>  cross_spectrum: 0.20<br/>  blindspot_penalty: -0.10<br/>  → CONFIDENCE_SCORE = 0.31
+    SYNTH->>SYNTH: resolve authoritative obs per code<br/>apply confidence weights:<br/>  claimreview_match: 0.35<br/>  domain_evidence: 0.30<br/>  cross_spectrum: 0.20<br/>  blindspot_penalty: -0.10<br/>  → CONFIDENCE_SCORE = 0.31
 
-    SYNTH->>SYNTH: map 0.31 → MOSTLY_FALSE<br/>(range: 0.25–0.44)
+    SYNTH->>SYNTH: map 0.31 → MOSTLY_FALSE<br/>(range: 0.25-0.44)
 
-    SYNTH->>SYNTH_YDB: tool: add_observation(CONFIDENCE_SCORE, 0.31, F)<br/>tool: add_observation(VERDICT, MOSTLY_FALSE, F)<br/>tool: add_observation(VERDICT_NARRATIVE, "...", F)<br/>tool: add_observation(SYNTHESIS_SIGNAL_COUNT, 28, F)<br/>tool: add_observation(SYNTHESIS_OVERRIDE_REASON, "", F)
+    SYNTH->>REDIS: XADD ... type=START phase=synthesis
+    SYNTH->>REDIS: XADD ... type=OBS<br/>publish(CONFIDENCE_SCORE, 0.31, F)<br/>publish(VERDICT, MOSTLY_FALSE, F)<br/>publish(VERDICT_NARRATIVE, "...", F)<br/>publish(SYNTHESIS_SIGNAL_COUNT, 28, F)<br/>publish(SYNTHESIS_OVERRIDE_REASON, "", F)
 
     Note over SYNTH: Checks if VERDICT differs from CLAIMREVIEW_VERDICT.<br/>PolitiFact said MOSTLY_FALSE. System agrees.<br/>SYNTHESIS_OVERRIDE_REASON left empty.
 
-    SYNTH->>OMIRTH: MLLP — send finalized HL7v2 message<br/>(all OBX rows from all agents + synthesis rows)
+    SYNTH->>REDIS: XADD ... type=STOP finalStatus=F
 
-    OMIRTH-->>SYNTH: ACK AA
+    ORC->>REDIS: XREADGROUP — consume STOP
+    ORC->>ORC: synthesizer = COMPLETE<br/>status = SYNTHESIZED
 
-    ORC->>OYDB: synthesizer = COMPLETE<br/>^RUN(run_id, "status") = "SYNTHESIZED"<br/>^RUN(run_id, "terminal_obx_count") = 10
-
-    Note over ORC,OMIRTH: SYNTHESIZED state triggers edge serialization.<br/>Orchestrator Mirth detects VERDICT F-status OBX<br/>and routes to edge adapter channel.
+    Note over ORC: SYNTHESIZED state triggers publication.<br/>Consumer API reads finalized observations<br/>directly from Redis Streams.

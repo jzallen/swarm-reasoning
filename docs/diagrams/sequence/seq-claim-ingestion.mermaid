@@ -7,37 +7,33 @@ sequenceDiagram
     participant USER as Operator
     participant API as Consumer API
     participant ORC as Orchestrator
-    participant OYDB as Orchestrator<br/>YottaDB
+    participant REDIS as Redis Streams
     participant ING as ingestion-agent<br/>(MCP Server)
-    participant ING_YDB as ingestion-agent<br/>YottaDB
-    participant ING_MIRTH as ingestion-agent<br/>Mirth
     participant DET as claim-detector<br/>(MCP Server)
-    participant DET_YDB as claim-detector<br/>YottaDB
     participant ENT as entity-extractor<br/>(MCP Server)
-    participant ENT_YDB as entity-extractor<br/>YottaDB
-    participant OMIRTH as Orchestrator<br/>Mirth
 
     USER->>API: POST /claims<br/>{claim_text, source_url, source_date}
 
     API->>API: validate input<br/>sanitize PII<br/>assign claim_id + run_id
 
-    API->>ORC: initiate_run({<br/>  run_id: "RUN-20260406-a3f7",<br/>  claim_id: "CLAIM-20260406-001",<br/>  claim_text: "...",<br/>  source_url: "...",<br/>  source_date: "20211104"<br/>})
+    API->>ORC: initiate_run({<br/>  run_id: "claim-4821-run-003",<br/>  claim_id: "CLAIM-20260406-001",<br/>  claim_text: "...",<br/>  source_url: "...",<br/>  source_date: "2021-11-04"<br/>})
 
-    ORC->>OYDB: create run record<br/>^RUN(run_id, "status") = "INGESTED"<br/>^RUN(run_id, "expected_agent_count") = 10
+    ORC->>ORC: initialize run state<br/>status = INGESTED<br/>expected_agent_count = 10
 
-    API-->>USER: 202 Accepted<br/>{run_id, status: "INGESTED",<br/>poll_url: "/runs/RUN-..."}
+    API-->>USER: 202 Accepted<br/>{run_id, status: "INGESTED",<br/>poll_url: "/runs/claim-4821-run-003"}
 
     Note over ORC,ING: Phase 1a — Ingestion
 
     ORC->>ING: MCP invoke_task({<br/>  run_id, claim_id,<br/>  claim_text, source_url, source_date<br/>})
 
-    ING->>ING_YDB: tool: create_message()<br/>tool: set_entity()<br/>tool: add_observation(CLAIM_TEXT, F)<br/>tool: add_observation(CLAIM_SOURCE_URL, F)<br/>tool: add_observation(CLAIM_SOURCE_DATE, F)<br/>tool: add_observation(CLAIM_DOMAIN, F)
+    ING->>REDIS: XADD reasoning:claim-4821-run-003:ingestion-agent *<br/>type=START phase=ingestion
 
-    ING->>ING_MIRTH: send HL7v2 ACK message
+    ING->>REDIS: XADD ... type=OBS<br/>publish(CLAIM_TEXT, F)<br/>publish(CLAIM_SOURCE_URL, F)<br/>publish(CLAIM_SOURCE_DATE, F)<br/>publish(CLAIM_DOMAIN, F)
 
-    ING_MIRTH->>OMIRTH: MLLP ACK AA
+    ING->>REDIS: XADD ... type=STOP<br/>finalStatus=F observationCount=4
 
-    ORC->>OYDB: mark ingestion-agent COMPLETE<br/>^RUN(run_id, "terminal_obx_count") = 1
+    ORC->>REDIS: XREADGROUP — consume STOP message
+    ORC->>ORC: mark ingestion-agent COMPLETE<br/>completed_agent_count = 1
 
     Note over ORC,DET: Phase 1b — Claim Detection
 
@@ -45,28 +41,30 @@ sequenceDiagram
 
     DET->>DET: score check-worthiness<br/>normalize claim text
 
-    DET->>DET_YDB: tool: add_observation(CHECK_WORTHY_SCORE, F)<br/>tool: add_observation(CLAIM_NORMALIZED, F)
+    DET->>REDIS: XADD ... type=START phase=ingestion
+    DET->>REDIS: XADD ... type=OBS<br/>publish(CHECK_WORTHY_SCORE, F)<br/>publish(CLAIM_NORMALIZED, F)
+    DET->>REDIS: XADD ... type=STOP finalStatus=F
 
-    DET->>OMIRTH: MLLP ACK via Mirth
-
+    ORC->>REDIS: XREADGROUP — consume STOP
     ORC->>ORC: evaluate CHECK_WORTHY_SCORE<br/>if score < 0.4 → transition to CANCELLED
 
     alt check_worthy_score >= 0.4
-        ORC->>OYDB: status = "ANALYZING"
+        ORC->>ORC: status = ANALYZING
         Note over ORC,ENT: Phase 1c — Entity Extraction
 
         ORC->>ENT: MCP invoke_task({run_id, claim_text})
 
         ENT->>ENT: extract persons, orgs,<br/>dates, locations, statistics
 
-        ENT->>ENT_YDB: tool: add_observation(ENTITY_PERSON, F) ×N<br/>tool: add_observation(ENTITY_ORG, F) ×N<br/>tool: add_observation(ENTITY_DATE, F) ×N<br/>tool: add_observation(ENTITY_LOCATION, F) ×N<br/>tool: add_observation(ENTITY_STATISTIC, F) ×N
+        ENT->>REDIS: XADD ... type=START phase=ingestion
+        ENT->>REDIS: XADD ... type=OBS<br/>publish(ENTITY_PERSON, F) ×N<br/>publish(ENTITY_ORG, F) ×N<br/>publish(ENTITY_DATE, F) ×N<br/>publish(ENTITY_LOCATION, F) ×N<br/>publish(ENTITY_STATISTIC, F) ×N
+        ENT->>REDIS: XADD ... type=STOP finalStatus=F
 
-        ENT->>OMIRTH: MLLP ACK via Mirth
-
+        ORC->>REDIS: XREADGROUP — consume STOP
         ORC->>ORC: Phase 1 complete<br/>dispatch Phase 2 fan-out
 
     else check_worthy_score < 0.4
-        ORC->>OYDB: status = "CANCELLED"
+        ORC->>ORC: status = CANCELLED
         ORC-->>API: run_status = CANCELLED<br/>reason = "Check-worthy score below threshold"
-        API-->>USER: GET /runs/RUN-... → CANCELLED
+        API-->>USER: GET /runs/claim-4821-run-003 → CANCELLED
     end
