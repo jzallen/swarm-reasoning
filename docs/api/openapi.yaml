@@ -1,15 +1,15 @@
 openapi: 3.1.0
 
 info:
-  title: hl7-agent-factchecker Consumer API
-  version: 0.1.0
+  title: swarm-reasoning Consumer API
+  version: 0.2.0
   description: |
     REST API for claim submission, run lifecycle management, verdict
     retrieval, and audit log access.
 
-    All endpoints are served by the Consumer API (FastAPI). The Consumer API
+    All endpoints are served by the Consumer API. The Consumer API
     sits in the DMZ and is the only system boundary exposed to external
-    operators and analysts. All internal orchestrator, agent, and Mirth
+    operators and analysts. All internal orchestrator, agent, and Redis
     communication is not exposed via this API.
 
     ## Authentication
@@ -18,7 +18,7 @@ info:
     should add OAuth2 or API key authentication at the reverse proxy layer.
 
   contact:
-    name: hl7-agent-factchecker
+    name: swarm-reasoning
   license:
     name: MIT
 
@@ -34,7 +34,7 @@ tags:
   - name: Verdicts
     description: Published fact-check verdict retrieval
   - name: Audit
-    description: Raw HL7v2 audit log access
+    description: Observation stream audit log access
   - name: System
     description: Health checks and registry inspection
 
@@ -222,33 +222,69 @@ paths:
         '404':
           description: Run not found
 
-  /runs/{run_id}/hl7:
+  /runs/{run_id}/observations:
     get:
       tags: [Runs, Audit]
-      operationId: getRunHL7
-      summary: Retrieve the raw HL7v2 audit log for a run
+      operationId: getRunObservations
+      summary: Retrieve the full observation log for a run
       description: |
-        Returns the raw HL7v2 message file for the run. Available at any
-        lifecycle state — partial logs are returned for runs still in
-        ANALYZING state. The response is the raw pipe-delimited HL7v2
-        content with carriage return segment terminators.
+        Returns all observations from all agent streams for the run.
+        Available at any lifecycle state — partial logs are returned for
+        runs still in ANALYZING state. The response is a JSON array of
+        all stream messages (START, OBS, STOP) in temporal order.
 
         This endpoint is the primary audit and dispute resolution mechanism.
-        The HL7v2 file is the authoritative record; the JSON verdict is
-        derived from it.
+        The observation streams are the authoritative record; the JSON
+        verdict is derived from them.
       parameters:
         - $ref: '#/components/parameters/run_id'
+        - name: agent
+          in: query
+          schema:
+            type: string
+          description: Filter by agent name
+        - name: code
+          in: query
+          schema:
+            type: string
+          description: Filter by observation code
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [P, F, C, X]
+          description: Filter by epistemic status
       responses:
         '200':
-          description: Raw HL7v2 message content
+          description: Observation log
           content:
-            text/plain:
+            application/json:
               schema:
-                type: string
-              example: |
-                MSH|^~\&|ingestion-agent|factchecker|orchestrator|factchecker|20260406120000||ORU^R01|RUN001-MSG001|P|2.5
-                PID|||CLAIM-20260406-001^^^factchecker||BidenVaccineMandate^OSHA vaccine mandate claim||20211104
-                OBX|1|ST|CLAIM_TEXT^^FCK||Biden issued a federal vaccine mandate for all private employers.||||||F
+                type: array
+                items:
+                  type: object
+              example:
+                - type: "START"
+                  runId: "claim-4821-run-003"
+                  agent: "ingestion-agent"
+                  phase: "ingestion"
+                  timestamp: "2026-04-06T12:00:00Z"
+                - type: "OBS"
+                  observation:
+                    runId: "claim-4821-run-003"
+                    agent: "ingestion-agent"
+                    seq: 1
+                    code: "CLAIM_TEXT"
+                    value: "Biden issued a federal vaccine mandate for all private employers."
+                    valueType: "ST"
+                    status: "F"
+                    timestamp: "2026-04-06T12:00:01Z"
+                - type: "STOP"
+                  runId: "claim-4821-run-003"
+                  agent: "ingestion-agent"
+                  finalStatus: "F"
+                  observationCount: 4
+                  timestamp: "2026-04-06T12:00:05Z"
         '404':
           description: Run not found
 
@@ -338,7 +374,7 @@ paths:
                 domain_evidence_alignment: "CONTRADICTS"
                 synthesis_signal_count: 28
                 synthesis_override_reason: ""
-                audit_log_ref: "RUN-20260406-a3f7.hl7"
+                audit_stream_prefix: "reasoning:RUN-20260406-a3f7"
                 generated_at: "2026-04-06T12:01:48Z"
         '404':
           description: Verdict not found
@@ -650,7 +686,7 @@ components:
           type: string
         mcp_endpoint:
           type: string
-        mirth_channel:
+        stream_prefix:
           type: string
         status:
           type: string
@@ -701,7 +737,7 @@ components:
         orchestrator:
           type: string
           enum: [reachable, unreachable]
-        yottadb:
+        redis:
           type: string
           enum: [reachable, unreachable]
         checked_at:

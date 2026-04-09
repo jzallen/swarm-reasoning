@@ -4,7 +4,7 @@
              xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/"
              id="ClaimLifecycle"
              name="Claim Lifecycle Decisions"
-             namespace="http://factchecker.hl7agent/dmn">
+             namespace="http://swarm-reasoning/dmn">
 
   <!-- ============================================================
        DECISION 1: DetermineClaimTransition
@@ -141,9 +141,9 @@
 
   <!-- ============================================================
        DECISION 2: DetermineOBXResolution
-       Inputs:  obx_code, obx_rows (count of F/C rows for this code)
-       Output:  authoritative_row_index (the OBX.1 sequence of the
-                authoritative row), resolution_method
+       Inputs:  obs_code, observations (count of F/C entries for this code)
+       Output:  authoritative_entry_index (the seq number of the
+                authoritative observation), resolution_method
        ============================================================ -->
 
   <decision id="DetermineOBXResolution" name="DetermineOBXResolution">
@@ -183,7 +183,7 @@
         <inputEntry id="rA_i2"><text>&gt;= 1</text></inputEntry>
         <inputEntry id="rA_i3"><text>-</text></inputEntry>
         <outputEntry id="rA_o1"><text>"LATEST_C"</text></outputEntry>
-        <outputEntry id="rA_o2"><text>"One or more corrections present; use highest OBX.1 C row"</text></outputEntry>
+        <outputEntry id="rA_o2"><text>"One or more corrections present; use highest seq C observation"</text></outputEntry>
       </rule>
 
       <!-- Rule B: No corrections, one or more finals — use latest F -->
@@ -192,7 +192,7 @@
         <inputEntry id="rB_i2"><text>0</text></inputEntry>
         <inputEntry id="rB_i3"><text>-</text></inputEntry>
         <outputEntry id="rB_o1"><text>"LATEST_F"</text></outputEntry>
-        <outputEntry id="rB_o2"><text>"No corrections; use highest OBX.1 F row"</text></outputEntry>
+        <outputEntry id="rB_o2"><text>"No corrections; use highest seq F observation"</text></outputEntry>
       </rule>
 
       <!-- Rule C: Only X status — observation cancelled -->

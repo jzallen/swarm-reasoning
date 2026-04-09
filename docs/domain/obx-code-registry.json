@@ -1,7 +1,7 @@
 {
   "version": "0.1.0",
   "coding_system": "FCK",
-  "description": "Canonical OBX observation codes for hl7-agent-factchecker. All agents must use codes from this registry. Unknown codes are rejected by the tool layer at write time.",
+  "description": "Canonical observation codes for swarm-reasoning. All agents must use codes from this registry. Unknown codes are rejected by the tool layer at write time.",
   "codes": [
     {
       "code": "CLAIM_TEXT",
@@ -154,7 +154,7 @@
       "value_type": "NM",
       "units": "count",
       "reference_range": null,
-      "description": "Number of articles covering this claim from this spectrum segment. OBX.16 identifies which coverage agent wrote the row."
+      "description": "Number of articles covering this claim from this spectrum segment. The agent field identifies which coverage agent wrote the observation."
     },
     {
       "code": "COVERAGE_FRAMING",
@@ -253,7 +253,7 @@
       "value_type": "NM",
       "units": "score",
       "reference_range": "0.0-1.0",
-      "description": "Final confidence score synthesized from all upstream agent findings. Drives VERDICT mapping per hl7-segment-spec.md Section 9."
+      "description": "Final confidence score synthesized from all upstream agent findings. Drives VERDICT mapping per observation-schema-spec.md Section 9."
     },
     {
       "code": "VERDICT",
@@ -262,7 +262,7 @@
       "value_type": "CWE",
       "units": null,
       "reference_range": null,
-      "description": "Final verdict coded value. See hl7-segment-spec.md Section 9 for full coded value set and confidence range mapping."
+      "description": "Final verdict coded value. See observation-schema-spec.md Section 9 for full coded value set and confidence range mapping."
     },
     {
       "code": "VERDICT_NARRATIVE",

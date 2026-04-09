@@ -8,48 +8,46 @@ stateDiagram-v2
 
     INGESTED --> CANCELLED : check_worthy_score < 0.4\nclaim not check-worthy
 
-    ANALYZING --> ANALYZING : one or more agents\nstill pending terminal OBX\n(F or X status)
+    ANALYZING --> ANALYZING : one or more agents\nstill pending terminal status\n(F or X)
 
-    ANALYZING --> SYNTHESIZED : all 10 agents emitted\nterminal OBX status\nAND synthesizer emitted\nVERDICT F-status
+    ANALYZING --> SYNTHESIZED : all 10 agents published\nSTOP messages\nAND synthesizer emitted\nVERDICT F-status
 
-    SYNTHESIZED --> PUBLISHED : edge adapter serialized\nHL7v2 → JSON\nConsumer API persisted verdict
+    SYNTHESIZED --> PUBLISHED : Consumer API read observations\nvalidated schema\npersisted verdict
 
-    SYNTHESIZED --> SYNTHESIZED : edge adapter schema\nvalidation failed —\nawaiting investigation
+    SYNTHESIZED --> SYNTHESIZED : schema validation failed —\nawaiting investigation
 
     PUBLISHED --> [*] : terminal state\naudit log retained
 
     CANCELLED --> [*] : terminal state\naudit log retained
 
     note right of INGESTED
-        ^RUN(run_id, "status") = "INGESTED"
+        status = "INGESTED"
         Run record created.
         Ingestion agent dispatched.
     end note
 
     note right of ANALYZING
-        ^RUN(run_id, "status") = "ANALYZING"
+        status = "ANALYZING"
         Orchestrator monitors completion register.
         Parallel fan-out active during this state.
-        terminal_obx_count increments per ACK.
+        completed_agent_count increments per STOP.
     end note
 
     note right of SYNTHESIZED
-        ^RUN(run_id, "status") = "SYNTHESIZED"
-        All OBX rows written to YottaDB.
-        HL7v2 finalized message complete.
-        Edge serialization in progress.
+        status = "SYNTHESIZED"
+        All observations written to Redis Streams.
+        Verdict publication in progress.
     end note
 
     note right of PUBLISHED
-        ^RUN(run_id, "status") = "PUBLISHED"
+        status = "PUBLISHED"
         JSON verdict available via Consumer API.
-        HL7v2 audit log retained in YottaDB.
-        audit_log_ref accessible to consumers.
+        Observation streams retained in Redis.
     end note
 
     note right of CANCELLED
-        ^RUN(run_id, "status") = "CANCELLED"
-        Reason recorded in OBX_ROW.
+        status = "CANCELLED"
+        Reason recorded in observations.
         No agents dispatched beyond
         claim-detector.
     end note

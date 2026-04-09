@@ -1,5 +1,5 @@
 ---
-title: Agent Topology — hl7-agent-factchecker
+title: Agent Topology — swarm-reasoning
 ---
 graph TD
 
@@ -10,7 +10,7 @@ graph TD
   subgraph LEGEND["Legend"]
     direction LR
     L1["─── MCP control plane"]
-    L2["··· HL7v2 Mirth data plane"]
+    L2["··· Redis Streams data plane"]
   end
 
   %% ============================================================
@@ -24,8 +24,8 @@ graph TD
   %% ============================================================
 
   subgraph PHASE1["Phase 1 — Sequential"]
-    A1["① Ingestion Agent\n───────────────\nMSH + PID construction\nClaim registration\nYottaDB: ^CLAIM ^RUN"]
-    A2["② Claim Detector\n───────────────\nCheck-worthiness score\nClaim normalisation\nYottaDB: CHECK_WORTHY\nCLAIM_NORMALIZED"]
+    A1["① Ingestion Agent\n───────────────\nClaim registration\nPublishes CLAIM_TEXT\nCLAIM_SOURCE_*\nCLAIM_DOMAIN"]
+    A2["② Claim Detector\n───────────────\nCheck-worthiness score\nClaim normalisation\nPublishes CHECK_WORTHY\nCLAIM_NORMALIZED"]
     A3["③ Entity Extractor\n───────────────\nNER extraction\nPersons · Orgs\nDates · Locations\nStatistics"]
   end
 
@@ -39,7 +39,7 @@ graph TD
     A5["⑤ Coverage\nAgent — Left\n───────────────\nLeft-spectrum\narticle analysis\nFraming"]
     A6["⑥ Coverage\nAgent — Center\n───────────────\nCenter-spectrum\narticle analysis\nFraming"]
     A7["⑦ Coverage\nAgent — Right\n───────────────\nRight-spectrum\narticle analysis\nFraming"]
-    A9["⑨ Domain\nEvidence Agent\n───────────────\nCDC · SEC · WHO\nCourt records\nPrimary alignment"]
+    A9["⑧ Domain\nEvidence Agent\n───────────────\nCDC · SEC · WHO\nCourt records\nPrimary alignment"]
   end
 
   %% ============================================================
@@ -48,16 +48,15 @@ graph TD
 
   subgraph PHASE3["Phase 3 — Aggregation"]
     direction LR
-    A8["⑧ Blindspot\nDetector\n───────────────\nReads ⑤ ⑥ ⑦\nCoverage asymmetry\nCross-spectrum check"]
-    A10["⑩ Synthesizer\n───────────────\nReads full OBX log\nResolves F/C rows\nConfidence score\nVerdict emission"]
+    A8["⑨ Blindspot\nDetector\n───────────────\nReads ⑤ ⑥ ⑦\nCoverage asymmetry\nCross-spectrum check"]
+    A10["⑩ Synthesizer\n───────────────\nReads full obs log\nResolves F/C entries\nConfidence score\nVerdict emission"]
   end
 
   %% ============================================================
   %% Output
   %% ============================================================
 
-  EDGE["Edge Adapter\n(Mirth channel)\nHL7v2 → JSON"]
-  CONSUMER(["Consumer\nJSON verdict\n+ audit trail"])
+  CONSUMER(["Consumer API\nJSON verdict\n+ audit trail"])
 
   %% ============================================================
   %% MCP control plane edges (solid)
@@ -71,35 +70,34 @@ graph TD
   A3 -->|"MCP: orchestrator fans out"| A6
   A3 -->|"MCP: orchestrator fans out"| A7
   A3 -->|"MCP: orchestrator fans out"| A9
-  A5 -->|"MCP: orchestrator gates ⑧\nafter ⑤⑥⑦ complete"| A8
+  A5 -->|"MCP: orchestrator gates ⑨\nafter ⑤⑥⑦ complete"| A8
   A6 --> A8
   A7 --> A8
   A4 -->|"MCP: orchestrator gates ⑩\nafter all parallel complete"| A10
   A8 --> A10
   A9 --> A10
-  A10 -->|"HL7v2 → Mirth"| EDGE
-  EDGE -->|"JSON POST"| CONSUMER
+  A10 -->|"JSON via API"| CONSUMER
 
   %% ============================================================
   %% Cancellation path
   %% ============================================================
 
-  A2 -->|"check_worthy < 0.4\nrun CANCELLED"| CANCEL(["Run cancelled\nOBX status X"])
+  A2 -->|"check_worthy < 0.4\nrun CANCELLED"| CANCEL(["Run cancelled\nstatus X"])
 
   %% ============================================================
-  %% OBX log annotations
+  %% Observation stream annotations
   %% ============================================================
 
-  A1 -.->|"writes MSH PID"| LOG[("Append-only\nHL7v2 OBX log\nYottaDB ^MSG")]
-  A2 -.->|"writes OBX P→F"| LOG
-  A3 -.->|"writes OBX P→F"| LOG
-  A4 -.->|"writes OBX P→F"| LOG
-  A5 -.->|"writes OBX P→F"| LOG
-  A6 -.->|"writes OBX P→F"| LOG
-  A7 -.->|"writes OBX P→F"| LOG
-  A8 -.->|"writes OBX P→F\nmay emit C corrections"| LOG
-  A9 -.->|"writes OBX P→F"| LOG
-  A10 -.->|"writes VERDICT\nCONFIDENCE_SCORE\nVERDICT_NARRATIVE F"| LOG
+  A1 -.->|"publishes START + OBS"| LOG[("Append-only\nObservation Streams\nRedis Streams")]
+  A2 -.->|"publishes obs P→F"| LOG
+  A3 -.->|"publishes obs P→F"| LOG
+  A4 -.->|"publishes obs P→F"| LOG
+  A5 -.->|"publishes obs P→F"| LOG
+  A6 -.->|"publishes obs P→F"| LOG
+  A7 -.->|"publishes obs P→F"| LOG
+  A8 -.->|"publishes obs P→F\nmay emit C corrections"| LOG
+  A9 -.->|"publishes obs P→F"| LOG
+  A10 -.->|"publishes VERDICT\nCONFIDENCE_SCORE\nVERDICT_NARRATIVE F"| LOG
 
   %% ============================================================
   %% Styling
@@ -108,11 +106,9 @@ graph TD
   classDef agent fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f,rx:6
   classDef io fill:#fff7ed,stroke:#ea580c,color:#431407
   classDef store fill:#fef9c3,stroke:#ca8a04,color:#713f12
-  classDef edge fill:#dcfce7,stroke:#16a34a,color:#14532d
   classDef cancel fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
 
   class A1,A2,A3,A4,A5,A6,A7,A8,A9,A10 agent
   class CLAIM_IN,CONSUMER io
   class LOG store
-  class EDGE edge
   class CANCEL cancel

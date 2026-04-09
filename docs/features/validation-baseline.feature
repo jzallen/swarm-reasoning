@@ -12,7 +12,7 @@ Feature: Validation Baseline
 
   Background:
     Given the validation corpus is loaded from "docs/validation/corpus.json"
-    And the orchestrator is running with all 10 agent bundles healthy
+    And the orchestrator is running with all 10 agents healthy
     And the Google Fact Check Tools API is reachable
     And NewsAPI is reachable
     And the Media Bias Fact Check source list is loaded
@@ -91,9 +91,8 @@ Feature: Validation Baseline
   Scenario: Every published run has a queryable audit log
     Given all 50 corpus claims have been processed to PUBLISHED state
     When a consumer fetches any verdict via GET "/verdicts/{verdict_id}"
-    Then the response contains an "audit_log_ref" field
-    And the referenced ".hl7" file exists in YottaDB
-    And the file contains OBX rows from at least 8 distinct agents
+    Then the observation streams for that run exist in Redis
+    And the streams contain observations from at least 8 distinct agents
 
   Scenario: No run reaches PUBLISHED state with fewer than 5 synthesis signals
     Given all 50 corpus claims have been processed
@@ -110,4 +109,4 @@ Feature: Validation Baseline
     Given a claim from the validation corpus
     When the claim is submitted and the run completes to PUBLISHED state
     Then the elapsed time between POST /claims and PUBLISHED status is under 120 seconds
-    And the parallel fan-out phase (agents 4–7 + 9) completes in under 45 seconds
+    And the parallel fan-out phase (agents 4-8) completes in under 45 seconds

@@ -1,28 +1,28 @@
 ---
-title: OBX Result Status State Machine
+title: Observation Result Status State Machine
 ---
 stateDiagram-v2
-    [*] --> P : agent emits preliminary\nobservation during reasoning\ntool: add_observation(..., status="P")
+    [*] --> P : agent emits preliminary\nobservation during reasoning\ntool: publish(..., status="P")
 
-    P --> F : agent confirms finding\nis settled\ntool: add_observation(..., status="F")
+    P --> F : agent confirms finding\nis settled\ntool: publish(..., status="F")
 
-    P --> X : agent determines observation\nis not applicable or retracted\ntool: add_observation(..., status="X")
+    P --> X : agent determines observation\nis not applicable or retracted\ntool: publish(..., status="X")
 
-    F --> C : later agent (or same agent)\ncorrects a prior F observation\nnew OBX row appended —\noriginal F row retained
+    F --> C : later agent (or same agent)\ncorrects a prior F observation\nnew observation appended —\noriginal F observation retained
 
-    C --> C : further correction appended\neach correction is a new OBX row\nwith incrementing OBX.1 seq
+    C --> C : further correction appended\neach correction is a new observation\nwith incrementing seq number
 
-    F --> [*] : synthesizer uses F row\nas authoritative input
+    F --> [*] : synthesizer uses F observation\nas authoritative input
 
-    C --> [*] : synthesizer uses latest C row\nas authoritative input\n(supersedes all prior F rows\nfor same code)
+    C --> [*] : synthesizer uses latest C observation\nas authoritative input\n(supersedes all prior F observations\nfor same code)
 
     X --> [*] : excluded from synthesis\nretained in log for audit
 
     note right of P
-        Preliminary rows are informational.
-        Synthesizer does not use P rows
+        Preliminary observations are informational.
+        Synthesizer does not use P observations
         as authoritative inputs.
-        An agent may emit multiple P rows
+        An agent may emit multiple P observations
         for the same code during reasoning.
     end note
 
@@ -36,12 +36,12 @@ stateDiagram-v2
 
     note right of C
         Correction is append-only.
-        The original F row is never
+        The original F observation is never
         modified or deleted.
-        OBX.1 sequence identifies
+        seq number identifies
         temporal order.
         DetermineOBXResolution selects
-        highest OBX.1 C row.
+        highest seq C observation.
     end note
 
     note right of X

@@ -9,8 +9,8 @@ Feature: Claim Ingestion
 
   Background:
     Given the orchestrator is running
-    And all agent bundles are healthy and registered
-    And the OBX code registry is loaded into YottaDB
+    And all agents are healthy and registered
+    And the observation code registry is loaded
 
   # ---------------------------------------------------------------------------
   # Claim Submission
@@ -22,14 +22,14 @@ Feature: Claim Ingestion
       {
         "claim_text": "Biden issued a federal vaccine mandate for all private employers.",
         "source_url": "https://example.com/article",
-        "source_date": "20211104"
+        "source_date": "2021-11-04"
       }
       """
     Then the response status is 202
     And the response body contains a "run_id"
     And the response body contains "status": "INGESTED"
     And the response body contains a "poll_url"
-    And a run record exists in orchestrator YottaDB with status "INGESTED"
+    And a run record exists with status "INGESTED"
 
   Scenario: Submission is rejected if claim_text is missing
     When an operator POSTs to "/claims" with body:
@@ -57,25 +57,25 @@ Feature: Claim Ingestion
   # Ingestion Agent
   # ---------------------------------------------------------------------------
 
-  Scenario: Ingestion agent writes required OBX rows
+  Scenario: Ingestion agent publishes required observations
     Given a run "RUN-001" has been initiated for claim "CLAIM-001"
     When the ingestion agent completes its task
-    Then YottaDB contains an F-status OBX row for code "CLAIM_TEXT" in run "RUN-001"
-    And YottaDB contains an F-status OBX row for code "CLAIM_SOURCE_URL" in run "RUN-001"
-    And YottaDB contains an F-status OBX row for code "CLAIM_SOURCE_DATE" in run "RUN-001"
-    And YottaDB contains an F-status OBX row for code "CLAIM_DOMAIN" in run "RUN-001"
-    And the orchestrator Mirth receives an ACK AA from ingestion-agent
+    Then the agent stream contains an F-status observation for code "CLAIM_TEXT" in run "RUN-001"
+    And the agent stream contains an F-status observation for code "CLAIM_SOURCE_URL" in run "RUN-001"
+    And the agent stream contains an F-status observation for code "CLAIM_SOURCE_DATE" in run "RUN-001"
+    And the agent stream contains an F-status observation for code "CLAIM_DOMAIN" in run "RUN-001"
+    And the agent stream contains a STOP message with finalStatus "F"
 
-  Scenario: Ingestion agent OBX rows are attributed correctly
+  Scenario: Ingestion agent observations are attributed correctly
     Given a run "RUN-001" has been initiated for claim "CLAIM-001"
     When the ingestion agent completes its task
-    Then all OBX rows written by ingestion-agent have OBX.16 = "ingestion-agent"
+    Then all observations published by ingestion-agent have agent = "ingestion-agent"
 
-  Scenario: HL7v2 escape sequences are applied to claim text containing pipe characters
+  Scenario: Claim text containing special characters is stored correctly
     Given a claim_text contains the string "Congress passed the bill | the president signed it"
-    When the ingestion agent writes the CLAIM_TEXT OBX row
-    Then the stored OBX value contains "\F\" in place of "|"
-    And the raw HL7v2 segment is parseable without field count errors
+    When the ingestion agent publishes the CLAIM_TEXT observation
+    Then the stored observation value contains the pipe character as-is
+    And the JSON observation is parseable without errors
 
   # ---------------------------------------------------------------------------
   # Claim Detection
@@ -93,12 +93,12 @@ Feature: Claim Ingestion
     Then the run status transitions to "CANCELLED"
     And no further agents are dispatched
     And GET "/runs/RUN-001" returns status "CANCELLED"
-    And the YottaDB OBX log for "RUN-001" is retained
+    And the observation streams for "RUN-001" are retained in Redis
 
-  Scenario: Claim detector writes normalized claim text
+  Scenario: Claim detector publishes normalized claim text
     Given the ingestion agent has completed for run "RUN-001"
     When the claim-detector completes its task
-    Then YottaDB contains an F-status OBX row for code "CLAIM_NORMALIZED" in run "RUN-001"
+    Then the agent stream contains an F-status observation for code "CLAIM_NORMALIZED" in run "RUN-001"
     And the CLAIM_NORMALIZED value is lowercase
     And the CLAIM_NORMALIZED value does not contain hedging phrases like "reportedly" or "allegedly"
 
@@ -106,22 +106,22 @@ Feature: Claim Ingestion
   # Entity Extraction
   # ---------------------------------------------------------------------------
 
-  Scenario: Entity extractor writes one OBX row per extracted entity
+  Scenario: Entity extractor publishes one observation per extracted entity
     Given the claim-detector has completed for run "RUN-001" with score 0.82
     And the claim text contains two named persons, one organization, and one date
     When the entity-extractor completes its task
-    Then YottaDB contains exactly 2 F-status OBX rows for code "ENTITY_PERSON" in run "RUN-001"
-    And YottaDB contains exactly 1 F-status OBX row for code "ENTITY_ORG" in run "RUN-001"
-    And YottaDB contains exactly 1 F-status OBX row for code "ENTITY_DATE" in run "RUN-001"
+    Then the agent stream contains exactly 2 F-status observations for code "ENTITY_PERSON" in run "RUN-001"
+    And the agent stream contains exactly 1 F-status observation for code "ENTITY_ORG" in run "RUN-001"
+    And the agent stream contains exactly 1 F-status observation for code "ENTITY_DATE" in run "RUN-001"
 
-  Scenario: Entity extractor emits no ENTITY_STATISTIC rows for claims without numeric content
+  Scenario: Entity extractor emits no ENTITY_STATISTIC observations for claims without numeric content
     Given the claim text contains no numeric quantities
     When the entity-extractor completes its task
-    Then YottaDB contains zero OBX rows for code "ENTITY_STATISTIC" in run "RUN-001"
+    Then the agent stream contains zero observations for code "ENTITY_STATISTIC" in run "RUN-001"
 
   Scenario: Completion of entity extraction triggers Phase 2 fan-out
     Given the entity-extractor has completed for run "RUN-001"
-    When the orchestrator processes the entity-extractor ACK
+    When the orchestrator receives the entity-extractor STOP message
     Then the orchestrator dispatches claimreview-matcher via MCP
     And the orchestrator dispatches coverage-left via MCP
     And the orchestrator dispatches coverage-center via MCP
