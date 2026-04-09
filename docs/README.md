@@ -55,7 +55,7 @@ API specification.
 
 | File | Format | Contents |
 |---|---|---|
-| `openapi.yaml` | OpenAPI 3.1 | 15 REST endpoints across Claims, Runs, Verdicts, Audit, and System tags |
+| `openapi.yaml` | OpenAPI 3.1 | 11 REST endpoint paths across Claims, Runs, Verdicts, Audit, and System tags |
 
 > Paste into [editor.swagger.io](https://editor.swagger.io) for interactive docs.
 

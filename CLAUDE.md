@@ -31,11 +31,11 @@ ADRs in `docs/decisions/` as individual MADR v3.0 files (ADR-0001 through ADR-00
 docs/
   decisions/               — 13 individual MADR v3.0 ADR files + index + template
   domain/                  — Observation schema spec, OBX code registry (31 codes), claim lifecycle DMN, ERD
-  api/openapi.yaml         — 15 REST endpoints (Claims, Runs, Verdicts, Audit, System)
+  api/openapi.yaml         — 11 REST endpoint paths (Claims, Runs, Verdicts, Audit, System)
   architecture/            — C4 containers, agent topology, MCP topology, DFD, stream lifecycle
   diagrams/sequence/       — 6 Mermaid sequence diagrams (ingestion, fanout, synthesis, etc.)
   diagrams/state/          — Claim lifecycle + observation result status state machines
-  features/                — 5 Gherkin files (66 scenarios)
+  features/                — 5 Gherkin files (65 scenarios)
   requirements/nfrs/       — 27 individual NFR files (Planguage + SEI QAS) + index + template
   infrastructure/          — docker-compose.yml, topology diagram
 ```
