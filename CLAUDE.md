@@ -15,7 +15,7 @@
 
 ## Architecture (Key Decisions)
 
-Detailed ADRs in `docs/decisions/adrs.md` (ADR-001 through ADR-013).
+ADRs in `docs/decisions/` as individual MADR v3.0 files (ADR-0001 through ADR-0013).
 
 - **JSON observation schema** — Typed observations with epistemic status (P/F/C/X), published to Redis Streams (ADR-011)
 - **Tool-based observation construction** — LLMs never generate raw observations; tools enforce schema validity (ADR-004)
@@ -29,14 +29,14 @@ Detailed ADRs in `docs/decisions/adrs.md` (ADR-001 through ADR-013).
 
 ```
 docs/
-  decisions/adrs.md        — 13 ADRs (001-010 original, 011-013 current)
+  decisions/               — 13 individual MADR v3.0 ADR files + index + template
   domain/                  — Observation schema spec, OBX code registry (31 codes), claim lifecycle DMN, ERD
   api/openapi.yaml         — 15 REST endpoints (Claims, Runs, Verdicts, Audit, System)
   architecture/            — C4 containers, agent topology, MCP topology, DFD, stream lifecycle
   diagrams/sequence/       — 6 Mermaid sequence diagrams (ingestion, fanout, synthesis, etc.)
   diagrams/state/          — Claim lifecycle + observation result status state machines
-  features/                — 5 Gherkin files (52 scenarios)
-  requirements/nfr.md      — 27 NFRs (ISO/IEC 25010)
+  features/                — 5 Gherkin files (66 scenarios)
+  requirements/nfrs/       — 27 individual NFR files (Planguage + SEI QAS) + index + template
   infrastructure/          — docker-compose.yml, topology diagram
 ```
 
