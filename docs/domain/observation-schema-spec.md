@@ -2,7 +2,6 @@
 
 **Version:** 0.2.0
 **Wire Format:** JSON over Redis Streams
-**Supersedes:** hl7-segment-spec.md (v0.1.0, HL7v2 ORU^R01)
 
 This document defines the observation schema used for inter-agent
 communication. All agents must conform to this spec. The tool layer
@@ -117,7 +116,7 @@ interface Observation {
   status:         'P' | 'F' | 'C' | 'X';
   timestamp:      string;    // ISO 8601 UTC
   method:         string | null;
-  note:           string | null;  // ≤ 512 chars, replaces NTE segment
+  note:           string | null;  // ≤ 512 chars, optional annotation
 }
 ```
 
@@ -135,8 +134,8 @@ interface Observation {
 | `referenceRange` | Expected range for numeric values, e.g. `"0.0-1.0"`. Null when not applicable. |
 | `status` | Epistemic state. See Section 4. |
 | `timestamp` | When the observation was produced. ISO 8601 UTC. Set by tool layer. |
-| `method` | Name of the MCP tool or function that produced this observation. Null if not tool-generated. |
-| `note` | Optional free-text annotation. Replaces the HL7v2 NTE segment. Max 512 characters. |
+| `method` | Name of the tool function that produced this observation. Null if not tool-generated. |
+| `note` | Optional free-text annotation. Max 512 characters. |
 
 ### 3.2 Value Types
 
@@ -175,7 +174,7 @@ the most recent `F` or `C` entry for each code.
 
 An agent may publish `P` observations freely during reasoning and must
 publish at least one `F` or `X` observation for each of its registered
-codes before the orchestrator considers it complete (see ADR-005, ADR-010).
+codes before the orchestrator considers it complete (see ADR-005, ADR-016).
 
 ---
 
@@ -217,17 +216,16 @@ for log resolution.
 ## 7. Delivery Acknowledgment
 
 Redis Streams consumer groups provide delivery acknowledgment. The
-orchestrator uses `XACK` to confirm processing of each message.
-Unacknowledged messages can be reclaimed via `XPENDING` and `XCLAIM`.
+orchestrator uses `XACK` within its consumer group to confirm processing
+of each message. Unacknowledged messages remain in the Pending Entries
+List (PEL) and can be inspected via `XPENDING` and transferred to
+another consumer via `XCLAIM` after a configurable idle timeout.
 
-This replaces the HL7v2 ACK/NACK mechanism (MSA segment). The semantics
-map as follows:
-
-| HL7v2 ACK (former) | Redis Streams (current) |
+| Operation | Semantics |
 |---|---|
-| `AA` (Application Accept) | `XACK` — message processed |
-| `AE` (Application Error) | No ACK — message remains pending, reclaimable |
-| `AR` (Application Reject) | Dead-letter handling (application-level) |
+| `XACK` | Message successfully processed, removed from PEL |
+| No ACK (idle timeout exceeded) | Message remains pending, reclaimable via `XCLAIM` |
+| Dead-letter handling | Application-level: messages exceeding a retry threshold are logged and the run is marked `ERROR` |
 
 ---
 
@@ -251,8 +249,8 @@ coded value maps to PolitiFact's six-tier scale:
 
 | Value (CWE format) | PolitiFact Equivalent | Confidence Range |
 |---|---|---|
-| `TRUE^True^POLITIFACT` | True | 0.85 - 1.00 |
-| `MOSTLY_TRUE^Mostly True^POLITIFACT` | Mostly True | 0.70 - 0.84 |
+| `TRUE^True^POLITIFACT` | True | 0.90 - 1.00 |
+| `MOSTLY_TRUE^Mostly True^POLITIFACT` | Mostly True | 0.70 - 0.89 |
 | `HALF_TRUE^Half True^POLITIFACT` | Half True | 0.45 - 0.69 |
 | `MOSTLY_FALSE^Mostly False^POLITIFACT` | Mostly False | 0.25 - 0.44 |
 | `FALSE^False^POLITIFACT` | False | 0.10 - 0.24 |

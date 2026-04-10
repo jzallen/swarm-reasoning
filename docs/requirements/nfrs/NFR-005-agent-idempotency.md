@@ -6,7 +6,7 @@ category: reliability
 subcategory: fault-tolerance
 priority: must
 components: [orchestrator, all-agents]
-adrs: [ADR-003, ADR-010]
+adrs: [ADR-003, ADR-016]
 tests: []
 date: 2026-04-09
 ---

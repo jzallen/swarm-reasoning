@@ -4,114 +4,77 @@ title: Docker Topology — swarm-reasoning
 flowchart TD
 
     subgraph HOST["Host Machine"]
-        BROWSER["Browser / curl\n(developer)"]
+        BROWSER["User Browser"]
     end
 
-    subgraph EXTERNAL_NET["external network (bridge)"]
-        PORT8000["host:8000"]
-        PORT6379["host:6379\n(Redis — dev only)"]
-    end
+    subgraph SWARM_NET["swarm-net (Docker bridge network)"]
 
-    subgraph INTERNAL_NET["internal network (bridge) — not reachable from host"]
-
-        subgraph DATA["Data Plane"]
-            REDIS["redis\n:6379\nRedis Streams\nAppend-only observation log"]
+        subgraph APP_FRONTEND["Frontend (React/TypeScript, Vite)"]
+            FE["frontend\n:5173"]
         end
 
-        subgraph ORCH["Orchestrator"]
-            ORC["orchestrator\n:8080 (health)\n:9000 (MCP client hub)\nXREADGROUP consumer"]
+        subgraph APP_BACKEND["Backend API (NestJS)"]
+            BE["backend\n:3000"]
         end
 
-        subgraph API_SVC["Consumer API"]
-            CAPI["consumer-api\n:8000\nXRANGE reader"]
+        subgraph APP_AGENTS["Agent Service (Python/LangChain)"]
+            AS["agent-service\n11 Temporal workers\n(one per agent type)"]
         end
 
-        ORC --> REDIS
-        CAPI --> REDIS
-        CAPI --> ORC
-
-        subgraph ING["Ingestion Agent"]
-            ING_A["ingestion-agent\n:9001 (MCP server)"]
+        subgraph TEMPORAL_STACK["Temporal"]
+            TS["temporal\n:7233\n(auto-setup)"]
+            TUI["temporal-ui\n:8233"]
+            TDB["temporal-db\n:5433 -> 5432\n(postgres:16)"]
         end
 
-        subgraph DET["Claim Detector"]
-            DET_A["claim-detector\n:9002 (MCP server)"]
+        subgraph DATA["Data Stores"]
+            PG["postgresql\n:5432\ndb: swarm"]
+            REDIS["redis\n:6379\nRedis Streams\n(observations + progress)"]
         end
 
-        subgraph ENT["Entity Extractor"]
-            ENT_A["entity-extractor\n:9003 (MCP server)"]
-        end
+        %% Frontend to Backend
+        FE -->|"API calls + SSE"| BE
 
-        subgraph CR["ClaimReview Matcher"]
-            CR_A["claimreview-matcher\n:9004 (MCP server)"]
-        end
+        %% Backend connections
+        BE -->|"queries"| PG
+        BE -->|"read streams"| REDIS
+        BE -->|"start workflows"| TS
 
-        subgraph CL["Coverage Left"]
-            CL_A["coverage-left\n:9005 (MCP server)"]
-        end
+        %% Temporal Server connections
+        TS -->|"state store"| TDB
+        TS -->|"dispatch activities"| AS
 
-        subgraph CC["Coverage Center"]
-            CC_A["coverage-center\n:9006 (MCP server)"]
-        end
+        %% Temporal UI
+        TUI -->|"gRPC"| TS
 
-        subgraph CRR["Coverage Right"]
-            CRR_A["coverage-right\n:9007 (MCP server)"]
-        end
-
-        subgraph BS["Blindspot Detector"]
-            BS_A["blindspot-detector\n:9008 (MCP server)"]
-        end
-
-        subgraph DE["Domain Evidence"]
-            DE_A["domain-evidence\n:9009 (MCP server)"]
-        end
-
-        subgraph SY["Synthesizer"]
-            SY_A["synthesizer\n:9010 (MCP server)"]
-        end
-
-        %% MCP connections — orchestrator to each agent (control plane)
-        ORC -.->|"MCP :9001"| ING_A
-        ORC -.->|"MCP :9002"| DET_A
-        ORC -.->|"MCP :9003"| ENT_A
-        ORC -.->|"MCP :9004"| CR_A
-        ORC -.->|"MCP :9005"| CL_A
-        ORC -.->|"MCP :9006"| CC_A
-        ORC -.->|"MCP :9007"| CRR_A
-        ORC -.->|"MCP :9008"| BS_A
-        ORC -.->|"MCP :9009"| DE_A
-        ORC -.->|"MCP :9010"| SY_A
-
-        %% Redis Streams — all agents publish to Redis (data plane)
-        ING_A -->|"XADD"| REDIS
-        DET_A -->|"XADD"| REDIS
-        ENT_A -->|"XADD"| REDIS
-        CR_A -->|"XADD"| REDIS
-        CL_A -->|"XADD"| REDIS
-        CC_A -->|"XADD"| REDIS
-        CRR_A -->|"XADD"| REDIS
-        BS_A -->|"XADD"| REDIS
-        DE_A -->|"XADD"| REDIS
-        SY_A -->|"XADD"| REDIS
+        %% Agent Service connections
+        AS -->|"publish observations\n+ progress"| REDIS
+        AS -->|"External APIs\n(Google Fact Check,\nNewsAPI, Anthropic)"| EXTERNAL
 
     end
 
-    %% External port bindings
-    BROWSER -->|"HTTP :8000"| PORT8000
-    PORT8000 --> CAPI
-    PORT6379 --> REDIS
+    EXTERNAL["External APIs"]
+
+    %% Host to containers (port mappings)
+    BROWSER -->|":5173"| FE
+    BROWSER -->|":3000"| BE
+    BROWSER -->|":8233"| TUI
 
     %% Startup dependency order
-    note1["Startup order:\n1. Redis\n2. All agent processes\n3. Orchestrator\n4. Consumer API\n\n13 containers total\n(down from 33)"]
+    note1["Startup order:\n1. PostgreSQL, Temporal DB, Redis\n2. Temporal Server\n3. Agent Service, Backend\n4. Temporal UI, Frontend\n\n8 containers total"]
 
-    classDef agent fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
-    classDef redis fill:#fef9c3,stroke:#ca8a04,color:#713f12
-    classDef orch fill:#fce7f3,stroke:#ec4899,color:#831843
-    classDef api fill:#f0fdf4,stroke:#86efac,color:#14532d
+    classDef frontend fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+    classDef backend fill:#f0fdf4,stroke:#86efac,color:#14532d
+    classDef agents fill:#fce7f3,stroke:#ec4899,color:#831843
+    classDef temporal fill:#e0e7ff,stroke:#6366f1,color:#312e81
+    classDef datastore fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef external fill:#f1f5f9,stroke:#94a3b8,color:#334155
     classDef note fill:#fefce8,stroke:#fde047,color:#713f12
 
-    class ING_A,DET_A,ENT_A,CR_A,CL_A,CC_A,CRR_A,BS_A,DE_A,SY_A agent
-    class REDIS redis
-    class ORC orch
-    class CAPI api
+    class FE frontend
+    class BE backend
+    class AS agents
+    class TS,TUI,TDB temporal
+    class PG,REDIS datastore
+    class EXTERNAL external
     class note1 note

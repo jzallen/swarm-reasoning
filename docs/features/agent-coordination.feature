@@ -1,5 +1,5 @@
 # feature: agent-coordination
-# Covers hub-and-spoke MCP topology enforcement, pull and push interaction
+# Covers Temporal workflow orchestration, pull and push interaction
 # patterns, observation append ordering, delivery semantics, completion
 # register behaviour, and orchestrator restart recovery.
 #
@@ -13,30 +13,30 @@ Feature: Agent Coordination
     And run "RUN-001" is in ANALYZING state
 
   # ---------------------------------------------------------------------------
-  # Hub-and-Spoke MCP Topology
+  # Temporal Workflow Orchestration
   # ---------------------------------------------------------------------------
 
-  Scenario: No subagent-to-subagent MCP connections are permitted
+  Scenario: No subagent-to-subagent Temporal activity dispatch is permitted
     Given coverage-left is executing its task for run "RUN-001"
     When coverage-left requires COVERAGE_* data from coverage-center
-    Then coverage-left issues an MCP tool_request to the orchestrator
+    Then coverage-left signals the orchestrator workflow to fetch the data
     And the orchestrator fetches from coverage-center on coverage-left's behalf
-    And no direct MCP connection exists between coverage-left and coverage-center
+    And no direct Temporal activity dispatch exists between coverage-left and coverage-center
 
-  Scenario: Each subagent exposes get_observations tool
-    When the orchestrator calls get_observations on any agent MCP server
+  Scenario: Each agent worker exposes get_observations activity
+    When the orchestrator invokes get_observations on any agent Temporal worker
     Then the response contains observations scoped to the specified run_id
     And the response includes code, value, units, status, and agent per observation
 
-  Scenario: Each subagent exposes get_terminal_status tool
+  Scenario: Each agent worker exposes get_terminal_status activity
     When all parallel agents have published STOP messages with F-status for run "RUN-001"
-    And the orchestrator calls get_terminal_status on each agent MCP server
+    And the orchestrator invokes get_terminal_status on each agent Temporal worker
     Then each response returns true
 
-  Scenario: Orchestrator holds all MCP client connections
-    Then the MCP connection registry on the orchestrator contains exactly 10 entries
+  Scenario: Orchestrator workflow manages all agent task queues
+    Then the Temporal worker registry contains exactly 11 agent task queues
     And each entry corresponds to a registered agent
-    And no agent holds an MCP client connection to another agent
+    And no agent dispatches a Temporal activity to another agent
 
   # ---------------------------------------------------------------------------
   # Push Pattern
@@ -51,9 +51,9 @@ Feature: Agent Coordination
     And the agent field on all observations equals "coverage-left"
     And the stream contains a STOP message within 30 seconds
 
-  Scenario: Orchestrator marks agent complete on STOP receipt, not on MCP return
+  Scenario: Orchestrator marks agent complete on STOP receipt, not on Temporal activity return
     Given the orchestrator dispatches coverage-right
-    When coverage-right's MCP invoke_task call returns task_accepted
+    When coverage-right's Temporal activity dispatch returns task_accepted
     Then the orchestrator completion register does NOT mark coverage-right complete
     When the orchestrator receives a STOP message from coverage-right via XREADGROUP
     Then the orchestrator completion register marks coverage-right complete
@@ -65,16 +65,16 @@ Feature: Agent Coordination
   Scenario: Blindspot detector requests data via orchestrator
     Given coverage-left, coverage-center, and coverage-right are all complete
     And the orchestrator dispatches blindspot-detector
-    When blindspot-detector issues an MCP tool_request for COVERAGE_* observations
+    When blindspot-detector issues a Temporal activity request for COVERAGE_* observations
     Then the orchestrator reads COVERAGE_* observations from the coverage-left Redis Stream
     And the orchestrator reads COVERAGE_* observations from the coverage-center Redis Stream
     And the orchestrator reads COVERAGE_* observations from the coverage-right Redis Stream
-    And the orchestrator returns consolidated observations to blindspot-detector in a single MCP response
+    And the orchestrator returns consolidated observations to blindspot-detector in a single Temporal activity result
 
-  Scenario: Synthesizer receives full consolidated observation log via MCP
-    Given all 10 agents have published STOP messages for run "RUN-001"
+  Scenario: Synthesizer receives full consolidated observation log via Temporal
+    Given all 11 agents have published STOP messages for run "RUN-001"
     When the orchestrator dispatches the synthesizer
-    Then the MCP invoke_task payload includes observations from all 10 agents
+    Then the Temporal activity dispatch payload includes observations from all 11 agents
     And the payload contains only F-status and C-status observations
     And no P-status observations are included in the synthesizer payload
 
@@ -115,7 +115,7 @@ Feature: Agent Coordination
     Given Redis is temporarily unreachable from coverage-center
     When coverage-center attempts to publish an observation
     Then coverage-center retries the publish up to 3 times with backoff
-    And if all retries fail, the agent reports an error to the orchestrator via MCP
+    And if all retries fail, the agent reports an error to the orchestrator via Temporal
 
   # ---------------------------------------------------------------------------
   # Completion Register and Fan-out Gates
@@ -127,9 +127,9 @@ Feature: Agent Coordination
     Then the orchestrator does NOT dispatch blindspot-detector
 
   Scenario: Synthesizer is not dispatched until all preceding agents are complete
-    Given 8 of 9 preceding agents have published STOP messages for run "RUN-001"
+    Given 10 of 11 preceding agents have published STOP messages for run "RUN-001"
     Then the orchestrator does NOT dispatch the synthesizer
-    When the ninth agent publishes its STOP message
+    When the eleventh agent publishes its STOP message
     Then the orchestrator dispatches the synthesizer within 5 seconds
 
   # ---------------------------------------------------------------------------
@@ -143,4 +143,4 @@ Feature: Agent Coordination
     Then the orchestrator scans Redis Streams for STOP messages in run "RUN-001"
     And the completion register reflects coverage-left, coverage-center, and claimreview-matcher as complete
     And the orchestrator resumes monitoring for the remaining agents
-    And no duplicate MCP dispatch is issued to already-complete agents
+    And no duplicate Temporal activity dispatch is issued to already-complete agents

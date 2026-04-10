@@ -1,20 +1,21 @@
 ---
-title: Orchestrator Push Pattern — orchestrator dispatches task, agent streams results
+title: Orchestrator Push Pattern — workflow dispatches activity, worker streams results
 ---
 sequenceDiagram
     autonumber
 
-    participant ORC as Orchestrator
+    participant ORC as Orchestrator<br/>(Temporal Workflow)
+    participant TEMPORAL as Temporal
     participant REDIS as Redis Streams
-    participant CL as coverage-left<br/>(MCP Server)
+    participant CL as coverage-left<br/>(Temporal Worker)
 
-    Note over ORC,CL: Precondition: entity-extractor STOP received.<br/>Parallel fan-out begins. Same pattern runs<br/>concurrently for coverage-center, coverage-right,<br/>domain-evidence.
+    Note over ORC,CL: Precondition: entity-extractor STOP received.<br/>Parallel fan-out begins. Same pattern runs<br/>concurrently for coverage-center, coverage-right,<br/>claimreview-matcher, domain-evidence, source-validator.
 
-    ORC->>CL: MCP invoke_task({<br/>  run_id: "claim-4821-run-003",<br/>  task: "analyze_left_coverage",<br/>  claim_text: "Biden issued...",<br/>  entities: [{type: "PERSON", value: "Biden"}, ...]<br/>})
+    ORC->>TEMPORAL: schedule activity: coverage-left<br/>({<br/>  run_id: "claim-4821-run-003",<br/>  task: "analyze_left_coverage",<br/>  claim_text: "Biden issued...",<br/>  entities: [{type: "PERSON", value: "Biden"}, ...]<br/>})
 
-    CL-->>ORC: MCP task_accepted({<br/>  run_id: "claim-4821-run-003",<br/>  agent: "coverage-left"<br/>})
+    TEMPORAL->>CL: execute activity
 
-    Note over CL: Agent queries NewsAPI and MBFC<br/>independently. No MCP calls back<br/>to orchestrator during execution.
+    Note over CL: Agent queries NewsAPI and MBFC<br/>independently. No callbacks to orchestrator<br/>during execution.
 
     CL->>CL: query NewsAPI for left-spectrum<br/>sources covering claim entities
 
@@ -32,12 +33,18 @@ sequenceDiagram
     CL->>REDIS: XADD ... type=OBS<br/>publish(COVERAGE_TOP_SOURCE, "DailyKos", F)
     CL->>REDIS: XADD ... type=OBS<br/>publish(COVERAGE_TOP_SOURCE_URL, "https://...", F)
 
+    CL->>REDIS: XADD progress:claim-4821-run-003 *<br/>agent=coverage-left event=observations_published
+
     CL->>REDIS: XADD ... type=STOP<br/>finalStatus=F observationCount=6
 
-    Note over ORC,REDIS: Orchestrator consumes via XREADGROUP.<br/>Receives START, all OBS, and STOP in order.<br/>Does not issue MCP calls to read agent state.
+    Note over ORC,REDIS: Orchestrator consumes via XREADGROUP.<br/>Receives START, all OBS, and STOP in order.<br/>Temporal tracks activity completion independently.
+
+    CL-->>TEMPORAL: activity complete ({<br/>  agent: "coverage-left",<br/>  status: "COMPLETE",<br/>  observationCount: 6<br/>})
+
+    TEMPORAL-->>ORC: activity result
 
     ORC->>REDIS: XREADGROUP — consume STOP message
 
     ORC->>ORC: update completion register<br/>coverage-left = COMPLETE
 
-    Note over ORC: Orchestrator waits for coverage-center,<br/>coverage-right, claimreview-matcher,<br/>domain-evidence STOP messages before<br/>dispatching blindspot-detector.
+    Note over ORC: Orchestrator awaits coverage-center,<br/>coverage-right, claimreview-matcher,<br/>domain-evidence, source-validator STOP messages<br/>before dispatching blindspot-detector.

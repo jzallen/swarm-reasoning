@@ -1,53 +1,32 @@
 ---
-title: Claim Run State Machine
+title: Run Status & Session Status State Machines
 ---
+
+%% State Machine 1 — Run Status
 stateDiagram-v2
-    [*] --> INGESTED : POST /claims\naccepted by API
+    direction LR
 
-    INGESTED --> ANALYZING : check_worthy_score >= 0.4\ningestion + detection + entity\nextraction complete
+    [*] --> pending
+    pending --> ingesting : Temporal workflow starts Phase 1
+    ingesting --> cancelled : check_worthy_score < 0.4
+    ingesting --> analyzing : Phase 1 complete, dispatch Phase 2
+    analyzing --> synthesizing : All Phase 2 agents complete
+    synthesizing --> completed : Synthesis complete, verdict emitted
+    pending --> failed : Temporal workflow error
+    ingesting --> failed : Agent activity failure (after retries)
+    analyzing --> failed : Agent activity failure (after retries)
+    synthesizing --> failed : Synthesizer failure
+    completed --> [*]
+    cancelled --> [*]
+    failed --> [*]
 
-    INGESTED --> CANCELLED : check_worthy_score < 0.4\nclaim not check-worthy
+---
 
-    ANALYZING --> ANALYZING : one or more agents\nstill pending terminal status\n(F or X)
+%% State Machine 2 — Session Status
+stateDiagram-v2
+    direction LR
 
-    ANALYZING --> SYNTHESIZED : all 10 agents published\nSTOP messages\nAND synthesizer emitted\nVERDICT F-status
-
-    SYNTHESIZED --> PUBLISHED : Consumer API read observations\nvalidated schema\npersisted verdict
-
-    SYNTHESIZED --> SYNTHESIZED : schema validation failed —\nawaiting investigation
-
-    PUBLISHED --> [*] : terminal state\naudit log retained
-
-    CANCELLED --> [*] : terminal state\naudit log retained
-
-    note right of INGESTED
-        status = "INGESTED"
-        Run record created.
-        Ingestion agent dispatched.
-    end note
-
-    note right of ANALYZING
-        status = "ANALYZING"
-        Orchestrator monitors completion register.
-        Parallel fan-out active during this state.
-        completed_agent_count increments per STOP.
-    end note
-
-    note right of SYNTHESIZED
-        status = "SYNTHESIZED"
-        All observations written to Redis Streams.
-        Verdict publication in progress.
-    end note
-
-    note right of PUBLISHED
-        status = "PUBLISHED"
-        JSON verdict available via Consumer API.
-        Observation streams retained in Redis.
-    end note
-
-    note right of CANCELLED
-        status = "CANCELLED"
-        Reason recorded in observations.
-        No agents dispatched beyond
-        claim-detector.
-    end note
+    [*] --> active
+    active --> frozen : Run completed, cancelled, or failed
+    frozen --> expired : 3-day TTL elapsed
+    expired --> [*] : Cleanup deletes all data

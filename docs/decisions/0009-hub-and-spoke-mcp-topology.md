@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: "superseded by [ADR-0016](0016-temporal-agent-orchestration.md)"
 date: 2026-04-08
 deciders: []
 ---
@@ -56,6 +56,4 @@ Orchestrator monitors stream for STOP message
 
 ## More Information
 
-### Update Note
-
-The interaction patterns are unchanged. The data plane transport changed from Mirth/HL7v2 to Redis Streams/JSON, but the MCP control plane remains hub-and-spoke. The two planes (MCP control + Redis Streams data) continue to fail independently.
+Superseded by [ADR-0016](0016-temporal-agent-orchestration.md). Temporal.io replaces MCP as the control plane. The orchestrator is now a Temporal workflow that dispatches agent activities. Redis Streams remains the data plane for observations.

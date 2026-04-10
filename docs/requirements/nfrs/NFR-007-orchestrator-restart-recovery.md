@@ -5,8 +5,8 @@ status: accepted
 category: reliability
 subcategory: recoverability
 priority: must
-components: [orchestrator, redis]
-adrs: [ADR-010]
+components: [orchestrator, temporal-server]
+adrs: [ADR-016]
 tests: []
 date: 2026-04-09
 ---
@@ -15,16 +15,16 @@ date: 2026-04-09
 
 ## Context
 
-A stateless orchestrator that crashes must reconstruct run state from Redis Streams on restart. Without this, partial runs would be abandoned, wasting compute and leaving claims unresolved.
+With Temporal as the orchestration engine, workflow state is durably persisted in Temporal's event history. When the orchestrator process crashes or restarts, Temporal automatically replays the workflow from its event history to reconstruct state. This eliminates the need for manual state reconstruction from Redis Streams.
 
 ## Specification
 
 | Field    | Value |
 |----------|-------|
 | **Scale**  | Time from orchestrator restart to correct run resumption |
-| **Meter**  | Timer from process start to successful state reconstruction and resumed dispatching |
-| **Must**   | Run resumes within 30 seconds, no duplicate dispatches, no data loss |
-| **Plan**   | Run resumes within 15 seconds |
+| **Meter**  | Timer from process start to successful workflow replay and resumed dispatching |
+| **Must**   | Automatic recovery via Temporal workflow replay, no duplicate dispatches, no data loss |
+| **Plan**   | Run resumes within 10 seconds |
 | **Wish**   | Run resumes within 5 seconds |
 
 ## Stimulus Scenario
@@ -34,11 +34,11 @@ A stateless orchestrator that crashes must reconstruct run state from Redis Stre
 | **Source**         | Infrastructure (process crash) |
 | **Stimulus**       | Orchestrator process terminates unexpectedly during an active run |
 | **Environment**    | Run in ANALYZING state with partial agent completion |
-| **Artifact**       | Orchestrator |
-| **Response**       | Orchestrator restarts and reconstructs completion state by scanning Redis Streams for STOP messages |
-| **Response Measure** | Run resumes correctly within 30 seconds of orchestrator restart, with no duplicate agent dispatches and no data loss in Redis Streams |
+| **Artifact**       | Orchestrator, Temporal server |
+| **Response**       | Temporal replays the workflow from its event history, reconstructing state and resuming from where execution left off |
+| **Response Measure** | Run resumes automatically via Temporal replay with no duplicate agent dispatches and no data loss |
 
 ## Verification
 
 - **Automated**: TBD
-- **Manual**: Kill orchestrator during ANALYZING state, restart, and verify run completes correctly
+- **Manual**: Kill orchestrator during ANALYZING state, restart, and verify Temporal replays the workflow and run completes correctly

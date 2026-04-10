@@ -6,7 +6,7 @@ category: observability
 subcategory: fault-tolerance
 priority: must
 components: [orchestrator, all-agents]
-adrs: [ADR-009, ADR-010]
+adrs: [ADR-016]
 tests: []
 date: 2026-04-09
 ---

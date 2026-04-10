@@ -8,8 +8,10 @@
 |----|-------|----------|--------|
 | [NFR-001](NFR-001-end-to-end-run-latency.md) | End-to-End Run Latency | Must | Accepted |
 | [NFR-002](NFR-002-parallel-fanout-latency.md) | Parallel Fan-out Phase Latency | Must | Accepted |
-| [NFR-003](NFR-003-mcp-round-trip-latency.md) | MCP Round-Trip Latency | Must | Accepted |
+| [NFR-003](NFR-003-temporal-activity-dispatch-latency.md) | Temporal Activity Dispatch Latency | Must | Accepted |
 | [NFR-004](NFR-004-observation-publish-throughput.md) | Observation Publish Throughput | Must | Accepted |
+| [NFR-028](NFR-028-sse-progress-latency.md) | SSE Progress Event Latency | Must | Accepted |
+| [NFR-030](NFR-030-static-html-render-time.md) | Static HTML Verdict Render Time | Must | Accepted |
 
 ## Reliability
 
@@ -25,10 +27,11 @@
 
 | ID | Title | Priority | Status |
 |----|-------|----------|--------|
-| [NFR-010](NFR-010-mcp-internal-network-only.md) | MCP Connections Are Internal-Network-Only | Must | Accepted |
+| [NFR-010](NFR-010-agent-service-internal-network-only.md) | Agent Service Internal-Network-Only | Must | Accepted |
 | [NFR-011](NFR-011-pii-sanitization.md) | PII Sanitization Before LLM Calls | Must | Accepted |
 | [NFR-012](NFR-012-external-api-validation.md) | External API Responses Are Validated Before Observation Write | Must | Accepted |
-| [NFR-013](NFR-013-observation-stream-confinement.md) | Observation Streams Are Confined to the Internal Docker Network | Must | Accepted |
+| [NFR-013](NFR-013-observation-stream-confinement.md) | Observation Streams Are Confined to the Internal Network | Must | Accepted |
+| [NFR-031](NFR-031-cloudflare-rate-limiting.md) | Cloudflare Rate Limiting | Must | Accepted |
 
 ## Maintainability
 
@@ -37,6 +40,7 @@
 | [NFR-014](NFR-014-new-agent-modularity.md) | New Agent Can Be Added Without Modifying Existing Agents | Must | Accepted |
 | [NFR-015](NFR-015-new-observation-code-no-migration.md) | New Observation Code Can Be Added Without Schema Migration | Must | Accepted |
 | [NFR-016](NFR-016-transport-backend-swappable.md) | Transport Backend Is Swappable via Configuration | Must | Accepted |
+| [NFR-029](NFR-029-session-ttl-cleanup.md) | Session TTL and Cleanup | Must | Accepted |
 
 ## Portability
 
@@ -52,6 +56,7 @@
 | [NFR-019](NFR-019-swarm-verdict-accuracy.md) | Swarm Verdict Accuracy on PolitiFact Corpus | Must | Accepted |
 | [NFR-020](NFR-020-swarm-outperforms-single-agent.md) | Swarm Outperforms Single-Agent on Non-Indexed Claims | Must | Accepted |
 | [NFR-021](NFR-021-synthesis-signal-count-accuracy.md) | SYNTHESIS_SIGNAL_COUNT Accurately Reflects Evidence Breadth | Must | Accepted |
+| [NFR-032](NFR-032-source-validator-coverage.md) | Source Validator URL Coverage | Must | Accepted |
 
 ## Auditability
 

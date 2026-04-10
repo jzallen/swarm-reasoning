@@ -12,7 +12,7 @@ Feature: Validation Baseline
 
   Background:
     Given the validation corpus is loaded from "docs/validation/corpus.json"
-    And the orchestrator is running with all 10 agents healthy
+    And the orchestrator is running with all 11 agents healthy
     And the Google Fact Check Tools API is reachable
     And NewsAPI is reachable
     And the Media Bias Fact Check source list is loaded
@@ -23,7 +23,7 @@ Feature: Validation Baseline
 
   Scenario: System correctly identifies true claims
     Given the validation corpus category "TRUE_MOSTLY_TRUE" containing 10 claims
-    When the system processes all 10 claims to PUBLISHED state
+    When the system processes all 10 claims to completed state
     Then at least 7 of 10 verdicts map to TRUE or MOSTLY_TRUE
     And no verdict maps to FALSE or PANTS_FIRE
     And the mean CONFIDENCE_SCORE for the category is above 0.70
@@ -34,7 +34,7 @@ Feature: Validation Baseline
 
   Scenario: System correctly identifies false claims
     Given the validation corpus category "FALSE_PANTS_FIRE" containing 10 claims
-    When the system processes all 10 claims to PUBLISHED state
+    When the system processes all 10 claims to completed state
     Then at least 7 of 10 verdicts map to FALSE or PANTS_FIRE
     And no verdict maps to TRUE or MOSTLY_TRUE
     And the mean CONFIDENCE_SCORE for the category is below 0.25
@@ -45,7 +45,7 @@ Feature: Validation Baseline
 
   Scenario: System handles ambiguous claims without overclaiming
     Given the validation corpus category "HALF_TRUE" containing 10 claims
-    When the system processes all 10 claims to PUBLISHED state
+    When the system processes all 10 claims to completed state
     Then at least 5 of 10 verdicts map to HALF_TRUE or MOSTLY_TRUE or MOSTLY_FALSE
     And SYNTHESIS_SIGNAL_COUNT is above 10 for all 10 runs
     And no claim in this category reaches UNVERIFIABLE verdict
@@ -56,7 +56,7 @@ Feature: Validation Baseline
 
   Scenario: System matches ClaimReview verdicts for indexed claims
     Given the validation corpus category "CLAIMREVIEW_INDEXED" containing 10 claims
-    When the system processes all 10 claims to PUBLISHED state
+    When the system processes all 10 claims to completed state
     Then CLAIMREVIEW_MATCH is TRUE for all 10 runs
     And CLAIMREVIEW_MATCH_SCORE is above 0.75 for all 10 runs
     And the system verdict matches the ClaimReview verdict for at least 8 of 10 claims
@@ -71,7 +71,7 @@ Feature: Validation Baseline
 
   Scenario: Swarm produces verdicts for claims not in ClaimReview
     Given the validation corpus category "NOT_CLAIMREVIEW_INDEXED" containing 10 claims
-    When the system processes all 10 claims to PUBLISHED state
+    When the system processes all 10 claims to completed state
     Then CLAIMREVIEW_MATCH is FALSE for all 10 runs
     And no claim reaches UNVERIFIABLE verdict
     And SYNTHESIS_SIGNAL_COUNT is above 8 for all 10 runs
@@ -89,14 +89,14 @@ Feature: Validation Baseline
   # ---------------------------------------------------------------------------
 
   Scenario: Every published run has a queryable audit log
-    Given all 50 corpus claims have been processed to PUBLISHED state
-    When a consumer fetches any verdict via GET "/verdicts/{verdict_id}"
+    Given all 50 corpus claims have been processed to completed state
+    When a user fetches any verdict via GET "/sessions/{sessionId}/verdict"
     Then the observation streams for that run exist in Redis
     And the streams contain observations from at least 8 distinct agents
 
-  Scenario: No run reaches PUBLISHED state with fewer than 5 synthesis signals
+  Scenario: No run reaches completed state with fewer than 5 synthesis signals
     Given all 50 corpus claims have been processed
-    Then no PUBLISHED run has SYNTHESIS_SIGNAL_COUNT below 5
+    Then no completed run has SYNTHESIS_SIGNAL_COUNT below 5
     And any run with SYNTHESIS_SIGNAL_COUNT below 5 has VERDICT = "UNVERIFIABLE"
 
   Scenario: Blindspot detection correlates with lower confidence scores
@@ -107,6 +107,6 @@ Feature: Validation Baseline
 
   Scenario: Total run time for a single claim does not exceed 120 seconds
     Given a claim from the validation corpus
-    When the claim is submitted and the run completes to PUBLISHED state
-    Then the elapsed time between POST /claims and PUBLISHED status is under 120 seconds
-    And the parallel fan-out phase (agents 4-8) completes in under 45 seconds
+    When the claim is submitted and the run completes to completed state
+    Then the elapsed time between POST /sessions/{sessionId}/claims and completed status is under 120 seconds
+    And the parallel fan-out phase (agents 4-9) completes in under 45 seconds

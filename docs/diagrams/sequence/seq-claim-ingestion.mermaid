@@ -1,70 +1,90 @@
 ---
-title: Claim Ingestion — Phase 1 (Ingestion → Detection → Entity Extraction)
+title: Claim Ingestion — Phase 1 (Ingestion -> Detection -> Entity Extraction)
 ---
 sequenceDiagram
     autonumber
 
     participant USER as Operator
-    participant API as Consumer API
-    participant ORC as Orchestrator
+    participant API as NestJS Backend<br/>(:3000)
+    participant TEMPORAL as Temporal
+    participant ORC as Orchestrator<br/>(Temporal Workflow)
     participant REDIS as Redis Streams
-    participant ING as ingestion-agent<br/>(MCP Server)
-    participant DET as claim-detector<br/>(MCP Server)
-    participant ENT as entity-extractor<br/>(MCP Server)
+    participant ING as ingestion-agent<br/>(Temporal Worker)
+    participant DET as claim-detector<br/>(Temporal Worker)
+    participant ENT as entity-extractor<br/>(Temporal Worker)
 
-    USER->>API: POST /claims<br/>{claim_text, source_url, source_date}
+    USER->>API: POST /sessions/:id/claims<br/>{claim_text, source_url, source_date}
 
     API->>API: validate input<br/>sanitize PII<br/>assign claim_id + run_id
 
-    API->>ORC: initiate_run({<br/>  run_id: "claim-4821-run-003",<br/>  claim_id: "CLAIM-20260406-001",<br/>  claim_text: "...",<br/>  source_url: "...",<br/>  source_date: "2021-11-04"<br/>})
+    API->>TEMPORAL: start workflow({<br/>  run_id: "claim-4821-run-003",<br/>  claim_id: "CLAIM-20260406-001",<br/>  claim_text: "...",<br/>  source_url: "...",<br/>  source_date: "2021-11-04"<br/>})
 
-    ORC->>ORC: initialize run state<br/>status = INGESTED<br/>expected_agent_count = 10
+    TEMPORAL->>ORC: workflow started
 
-    API-->>USER: 202 Accepted<br/>{run_id, status: "INGESTED",<br/>poll_url: "/runs/claim-4821-run-003"}
+    ORC->>ORC: initialize run state<br/>status = pending<br/>expected_agent_count = 11
+
+    API-->>USER: 202 Accepted<br/>{run_id, status: "pending",<br/>poll_url: "/runs/claim-4821-run-003"}
 
     Note over ORC,ING: Phase 1a — Ingestion
 
-    ORC->>ING: MCP invoke_task({<br/>  run_id, claim_id,<br/>  claim_text, source_url, source_date<br/>})
+    ORC->>TEMPORAL: schedule activity: ingestion-agent<br/>({run_id, claim_id, claim_text, source_url, source_date})
+    TEMPORAL->>ING: execute activity
 
     ING->>REDIS: XADD reasoning:claim-4821-run-003:ingestion-agent *<br/>type=START phase=ingestion
 
     ING->>REDIS: XADD ... type=OBS<br/>publish(CLAIM_TEXT, F)<br/>publish(CLAIM_SOURCE_URL, F)<br/>publish(CLAIM_SOURCE_DATE, F)<br/>publish(CLAIM_DOMAIN, F)
 
+    ING->>REDIS: XADD progress:claim-4821-run-003 *<br/>agent=ingestion-agent event=observations_published
+
     ING->>REDIS: XADD ... type=STOP<br/>finalStatus=F observationCount=4
+
+    ING-->>TEMPORAL: activity complete
+    TEMPORAL-->>ORC: activity result
 
     ORC->>REDIS: XREADGROUP — consume STOP message
     ORC->>ORC: mark ingestion-agent COMPLETE<br/>completed_agent_count = 1
 
     Note over ORC,DET: Phase 1b — Claim Detection
 
-    ORC->>DET: MCP invoke_task({<br/>  run_id, claim_text<br/>})
+    ORC->>TEMPORAL: schedule activity: claim-detector<br/>({run_id, claim_text})
+    TEMPORAL->>DET: execute activity
 
     DET->>DET: score check-worthiness<br/>normalize claim text
 
     DET->>REDIS: XADD ... type=START phase=ingestion
     DET->>REDIS: XADD ... type=OBS<br/>publish(CHECK_WORTHY_SCORE, F)<br/>publish(CLAIM_NORMALIZED, F)
+    DET->>REDIS: XADD progress:claim-4821-run-003 *<br/>agent=claim-detector event=observations_published
     DET->>REDIS: XADD ... type=STOP finalStatus=F
 
+    DET-->>TEMPORAL: activity complete
+    TEMPORAL-->>ORC: activity result
+
     ORC->>REDIS: XREADGROUP — consume STOP
-    ORC->>ORC: evaluate CHECK_WORTHY_SCORE<br/>if score < 0.4 → transition to CANCELLED
+    ORC->>ORC: evaluate CHECK_WORTHY_SCORE<br/>if score < 0.4 -> transition to CANCELLED
 
     alt check_worthy_score >= 0.4
         ORC->>ORC: status = ANALYZING
         Note over ORC,ENT: Phase 1c — Entity Extraction
 
-        ORC->>ENT: MCP invoke_task({run_id, claim_text})
+        ORC->>TEMPORAL: schedule activity: entity-extractor<br/>({run_id, claim_text})
+        TEMPORAL->>ENT: execute activity
 
         ENT->>ENT: extract persons, orgs,<br/>dates, locations, statistics
 
         ENT->>REDIS: XADD ... type=START phase=ingestion
-        ENT->>REDIS: XADD ... type=OBS<br/>publish(ENTITY_PERSON, F) ×N<br/>publish(ENTITY_ORG, F) ×N<br/>publish(ENTITY_DATE, F) ×N<br/>publish(ENTITY_LOCATION, F) ×N<br/>publish(ENTITY_STATISTIC, F) ×N
+        ENT->>REDIS: XADD ... type=OBS<br/>publish(ENTITY_PERSON, F) xN<br/>publish(ENTITY_ORG, F) xN<br/>publish(ENTITY_DATE, F) xN<br/>publish(ENTITY_LOCATION, F) xN<br/>publish(ENTITY_STATISTIC, F) xN
+        ENT->>REDIS: XADD progress:claim-4821-run-003 *<br/>agent=entity-extractor event=observations_published
         ENT->>REDIS: XADD ... type=STOP finalStatus=F
 
+        ENT-->>TEMPORAL: activity complete
+        TEMPORAL-->>ORC: activity result
+
         ORC->>REDIS: XREADGROUP — consume STOP
-        ORC->>ORC: Phase 1 complete<br/>dispatch Phase 2 fan-out
+        ORC->>ORC: Phase 1 complete (3/11 agents)<br/>dispatch Phase 2 fan-out
 
     else check_worthy_score < 0.4
         ORC->>ORC: status = CANCELLED
-        ORC-->>API: run_status = CANCELLED<br/>reason = "Check-worthy score below threshold"
-        API-->>USER: GET /runs/claim-4821-run-003 → CANCELLED
+        ORC-->>TEMPORAL: workflow complete (CANCELLED)
+        TEMPORAL-->>API: workflow result: CANCELLED<br/>reason = "Check-worthy score below threshold"
+        API-->>USER: GET /runs/claim-4821-run-003 -> CANCELLED
     end

@@ -1,0 +1,65 @@
+---
+title: Session Finalization — Verdict Persistence + Static Snapshots + SSE Close
+---
+sequenceDiagram
+    autonumber
+
+    participant ORC as Orchestrator<br/>(Temporal Workflow)
+    participant TEMPORAL as Temporal
+    participant REDIS as Redis Streams
+    participant API as NestJS Backend<br/>(:3000)
+    participant PG as PostgreSQL
+    participant S3 as S3
+    participant FE as Frontend (SSE)
+
+    Note over ORC,FE: Precondition: synthesizer STOP received.<br/>All 11 agents complete. Run status = synthesizing.
+
+    ORC->>ORC: detect synthesis complete<br/>all 11 agents complete
+
+    ORC-->>TEMPORAL: workflow completes with verdict result
+    TEMPORAL->>API: signal: workflow_completed({<br/>  run_id: "claim-4821-run-003"<br/>})
+
+    Note over API: FinalizeSessionUseCase begins
+
+    API->>REDIS: XRANGE reasoning:claim-4821-run-003:* - +<br/>read all observations from all 11 agent streams
+
+    API->>API: aggregate citations from observations<br/>extract all SOURCE_URL, CLAIMREVIEW_SOURCE,<br/>DOMAIN_SOURCE_URL, COVERAGE_TOP_SOURCE_URL
+
+    API->>API: filter F and C status observations<br/>apply DetermineOBXResolution per code<br/>(select latest F or C as authoritative)
+
+    API->>API: construct verdict payload<br/>{<br/>  run_id, claim_id, claim_text,<br/>  verdict, confidence_score, narrative,<br/>  coverage: {left, center, right},<br/>  blindspot_score, blindspot_direction,<br/>  claimreview_match, claimreview_verdict,<br/>  domain_evidence_alignment,<br/>  source_credibility_score,<br/>  synthesis_signal_count,<br/>  citations: [{url, label, agent}...],<br/>  generated_at<br/>}
+
+    API->>API: validate verdict schema<br/>assert required fields present<br/>assert confidence_score in [0.0, 1.0]<br/>assert verdict in controlled vocabulary
+
+    alt schema validation passes
+        API->>PG: persist verdict + citations<br/>INSERT INTO verdicts (...)<br/>INSERT INTO citations (verdict_id, ...)
+
+        API->>PG: update run status -> completed<br/>update session status -> frozen
+
+        Note over API,S3: Render static HTML snapshots
+
+        API->>API: render verdict view HTML<br/>(claim, verdict, confidence, citations, narrative)
+
+        API->>API: render chat progress view HTML<br/>(timeline of agent observations, START/OBS/STOP)
+
+        API->>S3: PUT verdict-snapshot.html<br/>s3://snapshots/{run_id}/verdict.html
+
+        API->>S3: PUT progress-snapshot.html<br/>s3://snapshots/{run_id}/progress.html
+
+        Note over API,FE: Send final SSE event and close
+
+        API->>REDIS: XADD progress:claim-4821-run-003 *<br/>event=verdict_published verdict=MOSTLY_FALSE<br/>confidence=0.31 snapshot_url=s3://...
+
+        API->>FE: SSE event: verdict_published<br/>{verdict, confidence_score, snapshot_urls}
+
+        API->>API: freeze session<br/>mark session read-only<br/>no further claims accepted
+
+        API->>FE: SSE: stream closed
+
+    else schema validation fails
+        API->>API: log validation error<br/>run transitions to failed
+
+        API->>FE: SSE event: finalization_error<br/>{reason: "schema validation failed"}
+
+        Note over API: Escalates to error log.<br/>Schema failure requires investigation.
+    end

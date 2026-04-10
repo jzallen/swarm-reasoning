@@ -5,7 +5,7 @@ status: accepted
 category: auditability
 subcategory: accountability
 priority: must
-components: [redis, synthesizer, consumer-api]
+components: [redis, synthesizer, backend-api]
 adrs: [ADR-003]
 tests: []
 date: 2026-04-09
@@ -25,7 +25,7 @@ Published verdicts may be disputed. Analysts must be able to trace any verdict b
 | **Meter**  | Count distinct agent fields in observation streams referenced by each verdict |
 | **Must**   | >= 8 distinct agents per published verdict |
 | **Plan**   | >= 9 distinct agents per published verdict |
-| **Wish**   | 10 distinct agents per published verdict |
+| **Wish**   | 11 distinct agents per published verdict |
 
 ## Stimulus Scenario
 

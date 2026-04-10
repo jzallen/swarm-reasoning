@@ -38,9 +38,3 @@ Chosen option: "Append-only log", because the reasoning log is the primary sourc
 - Bad, because the synthesizer must implement log resolution logic: given multiple observation entries for the same code, determine the authoritative current value by selecting the most recent `F` or `C` status entry
 - Bad, because Redis Stream storage grows monotonically per run; `MAXLEN` or `MINID` trimming policy is required for long-running deployments but is out of scope for the prototype
 - Neutral, because query patterns must account for log structure — "What is the current confidence score?" requires a scan of all CONFIDENCE_SCORE entries and selection of the latest authoritative one
-
-## More Information
-
-### Update Note
-
-This decision survives the transport change from HL7v2/YottaDB to JSON/Redis Streams. Redis Streams are append-only by nature — entries are immutable once written. The `XADD` command appends; there is no update-in-place. The log resolution logic in the synthesizer is unchanged: given multiple observations for the same code, select the most recent `F` or `C` status entry as authoritative.

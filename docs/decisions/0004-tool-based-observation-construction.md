@@ -44,9 +44,3 @@ Structural correctness is guaranteed by the tool layer.
 - Good, because observation code validation against the registry happens at write time
 - Good, because the tool layer enforces observation code ownership — only the agent registered as the owner of a given code can write it
 - Bad, because every new observation code must be registered in `obx-code-registry.json` before agents can use it — the tool rejects unknown codes
-
-## More Information
-
-### Update Note
-
-This decision survives the transport change. The tool layer now produces typed JSON observation objects and publishes them to Redis Streams instead of constructing HL7v2 OBX segments and writing to YottaDB. The tool surface is simplified — no escape sequence handling, no positional field encoding. Validation of observation codes against the registry remains at the tool layer.

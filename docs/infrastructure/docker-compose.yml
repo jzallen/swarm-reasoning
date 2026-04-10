@@ -3,323 +3,207 @@ name: swarm-reasoning
 # ---------------------------------------------------------------------------
 # Networks
 # ---------------------------------------------------------------------------
-# All containers communicate on the internal bridge network.
-# Only the consumer-api and redis ports are exposed to the host.
-# Agent MCP servers are internal-only.
+# All containers share a single bridge network.
 # ---------------------------------------------------------------------------
 
 networks:
-  internal:
-    driver: bridge
-  external:
+  swarm-net:
     driver: bridge
 
 # ---------------------------------------------------------------------------
 # Volumes
 # ---------------------------------------------------------------------------
-# Redis uses a named volume for persistence across restarts.
-# ---------------------------------------------------------------------------
 
 volumes:
+  pg-data:
+  temporal-db-data:
   redis-data:
 
 # ---------------------------------------------------------------------------
-# Services — 13 containers total
+# Services — 8 containers total
 # ---------------------------------------------------------------------------
 
 services:
 
   # -------------------------------------------------------------------------
-  # Redis — Shared Data Plane
+  # Frontend — React / TypeScript / Vite
   # -------------------------------------------------------------------------
 
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    networks:
-      - internal
-      - external
-    ports:
-      - "6379:6379"   # Exposed to host for dev tooling (redis-cli, RedisInsight)
+  frontend:
+    image: node:20
+    container_name: frontend
+    working_dir: /app
     volumes:
-      - redis-data:/data
-    command: >
-      redis-server
-      --appendonly yes
-      --appendfsync everysec
-      --maxmemory 512mb
-      --maxmemory-policy noeviction
+      - ./services/frontend:/app
+    command: npm run dev
+    ports:
+      - "5173:5173"
+    networks:
+      - swarm-net
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Backend API — NestJS
+  # -------------------------------------------------------------------------
+
+  backend:
+    image: node:20
+    container_name: backend
+    working_dir: /app
+    volumes:
+      - ./services/backend:/app
+    command: npm run start:dev
+    ports:
+      - "3000:3000"
+    networks:
+      - swarm-net
+    environment:
+      - DATABASE_URL=postgresql://swarm:swarm@postgresql:5432/swarm
+      - REDIS_URL=redis://redis:6379
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # -------------------------------------------------------------------------
+  # Agent Service — Python / LangChain / Temporal Workers (11 agents)
+  # -------------------------------------------------------------------------
+
+  agent-service:
+    build:
+      context: ./services/agent-service
+      dockerfile: Dockerfile
+    container_name: agent-service
+    networks:
+      - swarm-net
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - TEMPORAL_ADDRESS=temporal:7233
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_FACTCHECK_API_KEY=${GOOGLE_FACTCHECK_API_KEY}
+      - NEWSAPI_KEY=${NEWSAPI_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Temporal Server
+  # -------------------------------------------------------------------------
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: temporal
+    ports:
+      - "7233:7233"
+    networks:
+      - swarm-net
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-db
+    depends_on:
+      temporal-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Temporal UI
+  # -------------------------------------------------------------------------
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: temporal-ui
+    ports:
+      - "8233:8233"
+    networks:
+      - swarm-net
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Temporal DB — PostgreSQL (Temporal's own state store)
+  # -------------------------------------------------------------------------
+
+  temporal-db:
+    image: postgres:16
+    container_name: temporal-db
+    ports:
+      - "5433:5432"
+    networks:
+      - swarm-net
+    environment:
+      - POSTGRES_USER=temporal
+      - POSTGRES_PASSWORD=temporal
+    volumes:
+      - temporal-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
       interval: 5s
       timeout: 3s
       retries: 5
     restart: unless-stopped
 
   # -------------------------------------------------------------------------
-  # Orchestrator
+  # PostgreSQL — Application Database
   # -------------------------------------------------------------------------
 
-  orchestrator:
-    build:
-      context: ./services/orchestrator
-      dockerfile: Dockerfile
-    container_name: orchestrator
-    networks:
-      - internal
-    environment:
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - AGENT_HEARTBEAT_INTERVAL=15
-      - AGENT_HEARTBEAT_TIMEOUT=30
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # -------------------------------------------------------------------------
-  # Consumer API
-  # -------------------------------------------------------------------------
-
-  consumer-api:
-    build:
-      context: ./services/consumer-api
-      dockerfile: Dockerfile
-    container_name: consumer-api
-    networks:
-      - internal
-      - external
+  postgresql:
+    image: postgres:16
+    container_name: postgresql
     ports:
-      - "8000:8000"   # REST API — exposed to host
+      - "5432:5432"
+    networks:
+      - swarm-net
     environment:
-      - REDIS_URL=redis://redis:6379
-      - ORCHESTRATOR_HOST=orchestrator
-      - ORCHESTRATOR_PORT=8080
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    restart: unless-stopped
+      - POSTGRES_DB=swarm
+      - POSTGRES_USER=swarm
+      - POSTGRES_PASSWORD=swarm
+    volumes:
+      - pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "pg_isready -U swarm -d swarm"]
+      interval: 5s
+      timeout: 3s
       retries: 5
+    restart: unless-stopped
 
   # -------------------------------------------------------------------------
-  # Agent Services
-  # Each agent is a single lightweight container exposing an MCP server.
-  # All agents publish observations to Redis Streams.
+  # Redis — Observation Stream Store
   # -------------------------------------------------------------------------
 
-  # --- Ingestion Agent ---
-
-  ingestion-agent:
-    build:
-      context: ./services/agents/ingestion
-      dockerfile: Dockerfile
-    container_name: ingestion-agent
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
     networks:
-      - internal
-    environment:
-      - AGENT_NAME=ingestion-agent
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MCP_PORT=9001
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # --- Claim Detector ---
-
-  claim-detector:
-    build:
-      context: ./services/agents/claim-detector
-      dockerfile: Dockerfile
-    container_name: claim-detector
-    networks:
-      - internal
-    environment:
-      - AGENT_NAME=claim-detector
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MCP_PORT=9002
-      - CHECK_WORTHY_THRESHOLD=0.4
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # --- Entity Extractor ---
-
-  entity-extractor:
-    build:
-      context: ./services/agents/entity-extractor
-      dockerfile: Dockerfile
-    container_name: entity-extractor
-    networks:
-      - internal
-    environment:
-      - AGENT_NAME=entity-extractor
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MCP_PORT=9003
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # --- ClaimReview Matcher ---
-
-  claimreview-matcher:
-    build:
-      context: ./services/agents/claimreview-matcher
-      dockerfile: Dockerfile
-    container_name: claimreview-matcher
-    networks:
-      - internal
-    environment:
-      - AGENT_NAME=claimreview-matcher
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - GOOGLE_FACTCHECK_API_KEY=${GOOGLE_FACTCHECK_API_KEY}
-      - MCP_PORT=9004
-      - MATCH_SCORE_THRESHOLD=0.75
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # --- Coverage Agents (Left / Center / Right share build context) ---
-
-  coverage-left:
-    build:
-      context: ./services/agents/coverage
-      dockerfile: Dockerfile
-    container_name: coverage-left
-    networks:
-      - internal
-    environment:
-      - AGENT_NAME=coverage-left
-      - SPECTRUM=left
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - NEWSAPI_KEY=${NEWSAPI_KEY}
-      - MCP_PORT=9005
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  coverage-center:
-    build:
-      context: ./services/agents/coverage
-      dockerfile: Dockerfile
-    container_name: coverage-center
-    networks:
-      - internal
-    environment:
-      - AGENT_NAME=coverage-center
-      - SPECTRUM=center
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - NEWSAPI_KEY=${NEWSAPI_KEY}
-      - MCP_PORT=9006
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  coverage-right:
-    build:
-      context: ./services/agents/coverage
-      dockerfile: Dockerfile
-    container_name: coverage-right
-    networks:
-      - internal
-    environment:
-      - AGENT_NAME=coverage-right
-      - SPECTRUM=right
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - NEWSAPI_KEY=${NEWSAPI_KEY}
-      - MCP_PORT=9007
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # --- Blindspot Detector ---
-
-  blindspot-detector:
-    build:
-      context: ./services/agents/blindspot-detector
-      dockerfile: Dockerfile
-    container_name: blindspot-detector
-    networks:
-      - internal
-    environment:
-      - AGENT_NAME=blindspot-detector
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MCP_PORT=9008
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # --- Domain Evidence ---
-
-  domain-evidence:
-    build:
-      context: ./services/agents/domain-evidence
-      dockerfile: Dockerfile
-    container_name: domain-evidence
-    networks:
-      - internal
-    environment:
-      - AGENT_NAME=domain-evidence
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MCP_PORT=9009
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # --- Synthesizer ---
-
-  synthesizer:
-    build:
-      context: ./services/agents/synthesizer
-      dockerfile: Dockerfile
-    container_name: synthesizer
-    networks:
-      - internal
-    environment:
-      - AGENT_NAME=synthesizer
-      - REDIS_URL=redis://redis:6379
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MCP_PORT=9010
-      - STREAM_BACKEND=redis
-    depends_on:
-      redis:
-        condition: service_healthy
+      - swarm-net
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped

@@ -32,7 +32,7 @@ The synthesizer's signal count drives confidence scoring. If it does not match t
 | Part               | Value |
 |--------------------|-------|
 | **Source**         | Orchestrator |
-| **Stimulus**       | A claim is processed with all 10 agents active |
+| **Stimulus**       | A claim is processed with all 11 agents active |
 | **Environment**    | Normal operation, all external APIs returning data |
 | **Artifact**       | Synthesizer |
 | **Response**       | Synthesizer records the number of F/C status observations used as inputs |

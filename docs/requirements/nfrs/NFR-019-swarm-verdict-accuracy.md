@@ -5,7 +5,7 @@ status: accepted
 category: correctness
 subcategory: functional-correctness
 priority: must
-components: [synthesizer, all-agents, consumer-api]
+components: [synthesizer, all-agents, backend-api]
 adrs: []
 tests: []
 date: 2026-04-09

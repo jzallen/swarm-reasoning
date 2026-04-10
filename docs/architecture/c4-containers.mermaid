@@ -16,81 +16,128 @@ graph TB
   end
 
   %% ============================================================
-  %% Consumer
+  %% User / Browser
   %% ============================================================
 
-  subgraph CONSUMER["Consumer Boundary"]
-    DASHBOARD["Verdict Dashboard\n─────────────\nJSON REST consumer\nBrowser / API client"]
+  subgraph USER_ZONE["User Boundary"]
+    USER["User / Browser\n─────────────\nReact SPA\nReceives SSE progress"]
   end
 
   %% ============================================================
-  %% Redis — Shared Data Plane
+  %% Edge / CDN
   %% ============================================================
 
-  REDIS[("Redis\n─────────────\nRedis Streams\nAppend-only observation log\nConsumer groups\nPort 6379")]
-
-  %% ============================================================
-  %% Orchestrator
-  %% ============================================================
-
-  subgraph ORCH_SVC["Orchestrator  [Docker Compose service]"]
-    ORCH["Orchestrator\n─────────────\nLangChain / LangGraph\nMCP client hub\nDAG manager\nStream consumer\nPython"]
-  end
-
-  %% ============================================================
-  %% Agent Services — Sequential Phase
-  %% ============================================================
-
-  subgraph SEQ_PHASE["Sequential Phase  [Agents 1–3]"]
+  subgraph EDGE["Edge Layer"]
     direction LR
-    INGEST["Ingestion Agent\n─────────────\nAccepts raw claim\nPublishes observations\nPython / LangChain"]
-    DETECT["Claim Detector\n─────────────\nCheck-worthiness scoring\nClaim normalisation\nPython / LangChain"]
-    ENTITY["Entity Extractor\n─────────────\nNER: persons orgs\ndates locations\nstatistics\nPython / LangChain"]
+    CF["Cloudflare\n─────────────\nEdge proxy\nDDoS protection\nTLS termination"]
+    CLOUDFRONT["CloudFront + S3\n─────────────\nFrontend static build\n(React/Vite)\nHTML snapshots"]
   end
 
   %% ============================================================
-  %% Agent Services — Parallel Phase
+  %% AWS Load Balancer
   %% ============================================================
 
-  subgraph PAR_PHASE["Parallel Phase  [Agents 4–8]"]
-    direction LR
-    CR["ClaimReview Matcher\n─────────────\nGoogle Fact Check Tools\nSemantic matching\nPython / LangChain"]
-    COV_L["Coverage Agent — Left\n─────────────\nLeft-spectrum sources\nFraming analysis"]
-    COV_C["Coverage Agent — Center\n─────────────\nCenter-spectrum sources\nFraming analysis"]
-    COV_R["Coverage Agent — Right\n─────────────\nRight-spectrum sources\nFraming analysis"]
-    DOM["Domain Evidence Agent\n─────────────\nCDC · SEC · WHO\nPrimary source alignment"]
+  ALB["Application Load Balancer\n─────────────\nAWS ALB\nRoute to ECS tasks"]
+
+  %% ============================================================
+  %% Backend API
+  %% ============================================================
+
+  subgraph BACKEND_SVC["Backend API  [ECS Fargate]"]
+    BACKEND["NestJS Backend\n─────────────\nClean Architecture\nTypeORM\nREST + SSE endpoints\nTypeScript / Node 20"]
   end
 
   %% ============================================================
-  %% Agent Services — Aggregation Phase
+  %% Temporal Server
   %% ============================================================
 
-  subgraph AGG_PHASE["Aggregation Phase  [Agents 9–10]"]
-    direction LR
-    BLIND["Blindspot Detector\n─────────────\nReads coverage streams\nComputes asymmetry\nFlags absent spectrum"]
-    SYNTH["Synthesizer Agent\n─────────────\nReads full observation log\nResolves F/C entries\nEmits VERDICT\nCONFIDENCE_SCORE"]
+  TEMPORAL["Temporal Server\n─────────────\nWorkflow orchestration\nActivity dispatch\nRetry policies\nPhase gating"]
+
+  %% ============================================================
+  %% Data Stores
+  %% ============================================================
+
+  POSTGRES[("PostgreSQL\n─────────────\nAurora Serverless v2\nClaims, runs, verdicts\nTypeORM entities")]
+  REDIS[("Redis\n─────────────\nElastiCache\nRedis Streams\nObservation log\nProgress streams\nConsumer groups")]
+  S3_DATA[("S3\n─────────────\nStatic HTML snapshots\nVerdict archives")]
+
+  %% ============================================================
+  %% Agent Service — Sequential Phase
+  %% ============================================================
+
+  subgraph AGENT_SVC["Agent Service  [ECS Fargate — Temporal Workers]"]
+    direction TB
+
+    subgraph SEQ_PHASE["Phase 1 — Sequential  [Agents 1–3]"]
+      direction LR
+      INGEST["Ingestion Agent\n─────────────\nAccepts raw claim\nPublishes observations\nPython / LangChain"]
+      DETECT["Claim Detector\n─────────────\nCheck-worthiness scoring\nClaim normalisation\nPython / LangChain"]
+      ENTITY["Entity Extractor\n─────────────\nNER: persons orgs\ndates locations\nstatistics\nPython / LangChain"]
+    end
+
+    %% ============================================================
+    %% Agent Service — Parallel Phase
+    %% ============================================================
+
+    subgraph PAR_PHASE["Phase 2 — Parallel  [Agents 4–9]"]
+      direction LR
+      CR["ClaimReview Matcher\n─────────────\nGoogle Fact Check Tools\nSemantic matching\nPython / LangChain"]
+      COV_L["Coverage Agent — Left\n─────────────\nLeft-spectrum sources\nFraming analysis"]
+      COV_C["Coverage Agent — Center\n─────────────\nCenter-spectrum sources\nFraming analysis"]
+      COV_R["Coverage Agent — Right\n─────────────\nRight-spectrum sources\nFraming analysis"]
+      DOM["Domain Evidence Agent\n─────────────\nCDC · SEC · WHO\nPrimary source alignment"]
+      SRC_VAL["Source Validator\n─────────────\nLink extraction\nURL validation\nSource convergence\nCitation aggregation"]
+    end
+
+    %% ============================================================
+    %% Agent Service — Aggregation Phase
+    %% ============================================================
+
+    subgraph AGG_PHASE["Phase 3 — Aggregation  [Agents 10–11]"]
+      direction LR
+      BLIND["Blindspot Detector\n─────────────\nReads coverage streams\nComputes asymmetry\nFlags absent spectrum"]
+      SYNTH["Synthesizer Agent\n─────────────\nReads full observation log\nResolves F/C entries\nEmits VERDICT\nCONFIDENCE_SCORE"]
+    end
   end
 
   %% ============================================================
-  %% Consumer API
+  %% User → Edge → Backend
   %% ============================================================
 
-  CAPI["Consumer API\n─────────────\nFastAPI / NestJS\nREST endpoints\nReads from Redis Streams\nPort 8000"]
+  USER -->|"HTTPS"| CF
+  CF -->|"API requests"| ALB
+  ALB -->|"HTTP"| BACKEND
+  USER -->|"HTTPS static"| CLOUDFRONT
 
   %% ============================================================
-  %% MCP Control Plane (dashed)
+  %% Backend → Data Stores
   %% ============================================================
 
-  ORCH -.->|"MCP tool calls\ncontrol plane"| INGEST
-  ORCH -.->|"MCP tool calls"| DETECT
-  ORCH -.->|"MCP tool calls"| ENTITY
-  ORCH -.->|"MCP tool calls"| CR
-  ORCH -.->|"MCP tool calls"| COV_L
-  ORCH -.->|"MCP tool calls"| COV_C
-  ORCH -.->|"MCP tool calls"| COV_R
-  ORCH -.->|"MCP tool calls"| DOM
-  ORCH -.->|"MCP tool calls"| BLIND
-  ORCH -.->|"MCP tool calls"| SYNTH
+  BACKEND -->|"TypeORM\nCRUD operations"| POSTGRES
+  BACKEND -->|"XRANGE / subscribe\nprogress:{runId}\nSSE relay"| REDIS
+  BACKEND -->|"store/serve\nHTML snapshots"| S3_DATA
+
+  %% ============================================================
+  %% Backend → Temporal (start workflows)
+  %% ============================================================
+
+  BACKEND -->|"start workflow\nfact-check run"| TEMPORAL
+
+  %% ============================================================
+  %% Temporal → Agent Service (dispatch activities)
+  %% ============================================================
+
+  TEMPORAL -->|"dispatch activities\nphase gating"| INGEST
+  TEMPORAL -->|"dispatch activities"| DETECT
+  TEMPORAL -->|"dispatch activities"| ENTITY
+  TEMPORAL -->|"dispatch activities"| CR
+  TEMPORAL -->|"dispatch activities"| COV_L
+  TEMPORAL -->|"dispatch activities"| COV_C
+  TEMPORAL -->|"dispatch activities"| COV_R
+  TEMPORAL -->|"dispatch activities"| DOM
+  TEMPORAL -->|"dispatch activities"| SRC_VAL
+  TEMPORAL -->|"dispatch activities"| BLIND
+  TEMPORAL -->|"dispatch activities"| SYNTH
 
   %% ============================================================
   %% Redis Streams Data Plane
@@ -104,11 +151,9 @@ graph TB
   COV_C -->|"XADD observations"| REDIS
   COV_R -->|"XADD observations"| REDIS
   DOM -->|"XADD observations"| REDIS
+  SRC_VAL -->|"XADD observations"| REDIS
   BLIND -->|"XADD observations"| REDIS
   SYNTH -->|"XADD observations"| REDIS
-
-  ORCH -->|"XREADGROUP\nconsume all streams"| REDIS
-  CAPI -->|"XRANGE\nread finalized obs"| REDIS
 
   %% ============================================================
   %% External API calls
@@ -119,12 +164,13 @@ graph TB
   COV_C -->|"HTTPS article retrieval"| NEWSAPI
   COV_R -->|"HTTPS article retrieval"| NEWSAPI
   DOM -->|"HTTPS primary source fetch"| PRIMARY
+  SRC_VAL -->|"HTTPS credibility lookup"| MBFC
 
   %% ============================================================
-  %% Consumer-facing
+  %% SSE from Backend to User
   %% ============================================================
 
-  CAPI -->|"JSON REST API"| DASHBOARD
+  BACKEND -->|"SSE\nprogress events"| USER
 
   %% ============================================================
   %% Styling
@@ -133,13 +179,16 @@ graph TB
   classDef external fill:#f5f5f5,stroke:#999,color:#333
   classDef agent fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
   classDef redis fill:#fef9c3,stroke:#ca8a04,color:#713f12
-  classDef orch fill:#ede9fe,stroke:#7c3aed,color:#2e1065
+  classDef temporal fill:#ede9fe,stroke:#7c3aed,color:#2e1065
   classDef consumer fill:#fff7ed,stroke:#ea580c,color:#431407
-  classDef api fill:#f0fdf4,stroke:#86efac,color:#14532d
+  classDef backend fill:#f0fdf4,stroke:#86efac,color:#14532d
+  classDef edge fill:#fef3c7,stroke:#f59e0b,color:#78350f
+  classDef store fill:#fef9c3,stroke:#ca8a04,color:#713f12
 
   class NEWSAPI,GFCT,MBFC,PRIMARY external
-  class INGEST,DETECT,ENTITY,CR,COV_L,COV_C,COV_R,DOM,BLIND,SYNTH agent
-  class REDIS redis
-  class ORCH orch
-  class DASHBOARD consumer
-  class CAPI api
+  class INGEST,DETECT,ENTITY,CR,COV_L,COV_C,COV_R,DOM,SRC_VAL,BLIND,SYNTH agent
+  class REDIS,POSTGRES,S3_DATA store
+  class TEMPORAL temporal
+  class USER consumer
+  class BACKEND backend
+  class CF,CLOUDFRONT,ALB edge

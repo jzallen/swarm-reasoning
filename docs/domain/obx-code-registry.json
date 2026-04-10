@@ -199,7 +199,7 @@
       "value_type": "CWE",
       "units": null,
       "reference_range": null,
-      "description": "Which spectrum segment is absent or underrepresented. Coded: LEFT^Left Absent^FCK, RIGHT^Right Absent^FCK, CENTER^Center Absent^FCK, NONE^No Blindspot^FCK."
+      "description": "Which spectrum segment is absent or underrepresented. Coded: LEFT^Left Absent^FCK, RIGHT^Right Absent^FCK, CENTER^Center Absent^FCK, MULTIPLE^Multiple Absent^FCK, NONE^No Blindspot^FCK."
     },
     {
       "code": "CROSS_SPECTRUM_CORROBORATION",
@@ -271,7 +271,7 @@
       "value_type": "TX",
       "units": null,
       "reference_range": null,
-      "description": "Human-readable explanation of the verdict. References specific upstream findings by OBX sequence number. Max 1000 chars."
+      "description": "Human-readable explanation of the verdict. References specific upstream findings by observation sequence number. Max 1000 chars."
     },
     {
       "code": "SYNTHESIS_SIGNAL_COUNT",
@@ -290,6 +290,42 @@
       "units": null,
       "reference_range": null,
       "description": "If the synthesizer overrides a ClaimReview verdict, the reason is recorded here. Empty if no override occurred."
+    },
+    {
+      "code": "SOURCE_EXTRACTED_URL",
+      "display": "Extracted Source URL",
+      "owner_agent": "source-validator",
+      "value_type": "ST",
+      "units": null,
+      "reference_range": null,
+      "description": "A URL extracted from another agent's retrieved content. One observation per extracted URL. Value is the full URL."
+    },
+    {
+      "code": "SOURCE_VALIDATION_STATUS",
+      "display": "Source URL Validation Status",
+      "owner_agent": "source-validator",
+      "value_type": "CWE",
+      "units": null,
+      "reference_range": null,
+      "description": "Validation result for an extracted source URL. Coded value: LIVE^Live^FCK, DEAD^Dead^FCK, REDIRECT^Redirect^FCK, SOFT404^Soft 404^FCK, TIMEOUT^Timeout^FCK."
+    },
+    {
+      "code": "SOURCE_CONVERGENCE_SCORE",
+      "display": "Source Convergence Score",
+      "owner_agent": "source-validator",
+      "value_type": "NM",
+      "units": "score",
+      "reference_range": "0.0-1.0",
+      "description": "Degree of source convergence across agents. 1.0 = all evidence-gathering agents cite the same underlying source. 0.0 = no shared sources. Computed by normalized domain + path matching."
+    },
+    {
+      "code": "CITATION_LIST",
+      "display": "Aggregated Citation List",
+      "owner_agent": "source-validator",
+      "value_type": "TX",
+      "units": null,
+      "reference_range": null,
+      "description": "JSON-encoded array of citation objects aggregating all validated source URLs, their validation status, originating agent, observation code, and convergence count. Consumed by the synthesizer for verdict annotation."
     }
   ]
 }

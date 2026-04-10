@@ -9,85 +9,96 @@ flowchart TD
 
   subgraph INTERNET["Public Internet  [untrusted]"]
     direction LR
-    USER(["Analyst / API Client\nSubmits claim URL\nor claim text"])
+    USER(["User / Browser\nReact SPA\nSubmits claims"])
     NEWSAPI_EXT["NewsAPI / GNews\nArticle content\nPublicly licensed"]
     GFCT_EXT["Google Fact Check\nTools API\nClaimReview index"]
     PRIMARY_EXT["CDC · SEC · WHO\nCourt records\nAuthoritative public data"]
+    MBFC_EXT["Media Bias Fact Check\nSource credibility ratings"]
   end
 
   %% ============================================================
-  %% Trust Zone: DMZ — API Gateway
+  %% Trust Zone: Edge / DMZ
   %% ============================================================
 
-  subgraph DMZ["DMZ  [semi-trusted — TLS termination + rate limiting]"]
-    GATEWAY["API Gateway\n─────────────\nTLS termination\nRate limiting\nClaim text sanitisation\nPII scrubbing before ingestion"]
+  subgraph DMZ["DMZ  [semi-trusted — edge + load balancing]"]
+    direction LR
+    CLOUDFLARE["Cloudflare\n─────────────\nEdge proxy\nDDoS protection\nTLS termination\nRate limiting"]
+    CLOUDFRONT["CloudFront\n─────────────\nCDN for static assets\nReact SPA build\nHTML snapshots"]
+    ALB["Application Load Balancer\n─────────────\nAWS ALB\nRoute to ECS"]
   end
 
   %% ============================================================
-  %% Trust Zone: Internal Agent Mesh
+  %% Trust Zone: Internal Services
   %% ============================================================
 
-  subgraph INTERNAL["Internal Agent Mesh  [trusted — Docker internal network]"]
+  subgraph INTERNAL["Internal Services  [trusted — AWS VPC private subnets]"]
     direction TB
 
-    subgraph ORCH_ZONE["Orchestrator Zone"]
-      ORCH_PROC["Orchestrator\nMCP client hub\nDAG manager\nStream consumer"]
+    subgraph BACKEND_ZONE["Backend Zone"]
+      BACKEND["NestJS Backend\n─────────────\nClean Architecture\nTypeORM\nREST + SSE endpoints\nClaim text sanitisation\nPII scrubbing"]
+    end
+
+    subgraph TEMPORAL_ZONE["Orchestration Zone"]
+      TEMPORAL["Temporal Server\n─────────────\nWorkflow orchestration\nActivity dispatch\nRetry policies\nPhase gating"]
     end
 
     subgraph AGENT_ZONE["Agent Zone"]
       direction LR
       AG_SEQ["Sequential agents\n1. Ingestion\n2. Claim Detector\n3. Entity Extractor"]
-      AG_PAR["Parallel agents\n4. ClaimReview\n5-7. Coverage L/C/R\n8. Domain Evidence"]
-      AG_AGG["Aggregation agents\n9. Blindspot Detector\n10. Synthesizer"]
+      AG_PAR["Parallel agents\n4. ClaimReview\n5-7. Coverage L/C/R\n8. Domain Evidence\n9. Source Validator"]
+      AG_AGG["Aggregation agents\n10. Blindspot Detector\n11. Synthesizer"]
     end
 
     subgraph DATA_ZONE["Data Zone"]
-      REDIS_STORE[("Redis\nAppend-only\nObservation Streams\nreasoning:runId:agent")]
+      direction LR
+      POSTGRES[("PostgreSQL\nAurora Serverless v2\nClaims, runs, verdicts")]
+      REDIS_STORE[("Redis\nElastiCache\nObservation Streams\nreasoning:runId:agent\nprogress:runId")]
+      S3_STORE[("S3\nStatic HTML snapshots\nVerdict archives")]
     end
-  end
-
-  %% ============================================================
-  %% Trust Zone: Consumer
-  %% ============================================================
-
-  subgraph CONSUMER_ZONE["Consumer Zone  [semi-trusted — authenticated read-only]"]
-    DASHBOARD_PROC["Verdict Dashboard\nJSON REST consumer\nRead-only access"]
   end
 
   %% ============================================================
   %% Data flows with sensitivity labels
   %% ============================================================
 
-  USER -->|"HTTPS POST\nclaim_text or url\n[PUBLIC DATA]"| GATEWAY
-  GATEWAY -->|"sanitised claim\nPII scrubbed\n[INTERNAL]"| ORCH_PROC
+  USER -->|"HTTPS\nclaim submission\n[PUBLIC DATA]"| CLOUDFLARE
+  USER -->|"HTTPS\nstatic assets\n[PUBLIC]"| CLOUDFRONT
+  CLOUDFLARE -->|"proxied request"| ALB
+  ALB -->|"HTTP internal\n[INTERNAL]"| BACKEND
 
-  ORCH_PROC -.->|"MCP tool calls\n[INTERNAL CONTROL]"| AG_SEQ
-  ORCH_PROC -.->|"MCP tool calls\n[INTERNAL CONTROL]"| AG_PAR
-  ORCH_PROC -.->|"MCP tool calls\n[INTERNAL CONTROL]"| AG_AGG
+  BACKEND -->|"SSE\nprogress events\n[INTERNAL — streamed export]"| USER
+
+  BACKEND -->|"start workflow\nfact-check run\n[INTERNAL CONTROL]"| TEMPORAL
+  BACKEND -->|"TypeORM CRUD\n[INTERNAL DATA]"| POSTGRES
+  BACKEND -->|"XRANGE / subscribe\nprogress:{runId}\n[INTERNAL DATA]"| REDIS_STORE
+  BACKEND -->|"store/serve snapshots\n[INTERNAL DATA]"| S3_STORE
+
+  TEMPORAL -->|"Temporal activity dispatch\n[INTERNAL CONTROL]"| AG_SEQ
+  TEMPORAL -->|"Temporal activity dispatch\n[INTERNAL CONTROL]"| AG_PAR
+  TEMPORAL -->|"Temporal activity dispatch\n[INTERNAL CONTROL]"| AG_AGG
 
   AG_SEQ -->|"XADD observations\n[INTERNAL DATA]"| REDIS_STORE
   AG_PAR -->|"XADD observations\n[INTERNAL DATA]"| REDIS_STORE
   AG_AGG -->|"XADD observations\n[INTERNAL DATA]"| REDIS_STORE
 
-  ORCH_PROC -->|"XREADGROUP\nconsume observations\n[INTERNAL DATA]"| REDIS_STORE
-
   AG_PAR -->|"HTTPS\narticle retrieval\n[PUBLIC DATA]"| NEWSAPI_EXT
   AG_PAR -->|"HTTPS\nClaimReview query\n[PUBLIC DATA]"| GFCT_EXT
   AG_PAR -->|"HTTPS\nprimary source fetch\n[PUBLIC DATA]"| PRIMARY_EXT
+  AG_PAR -->|"HTTPS\ncredibility lookup\n[PUBLIC DATA]"| MBFC_EXT
 
-  REDIS_STORE -->|"XRANGE\nfinalized observations\n[INTERNAL — read-only export]"| DASHBOARD_PROC
+  CLOUDFRONT -->|"serve from"| S3_STORE
 
   %% ============================================================
   %% Trust boundary crossing annotations
   %% ============================================================
 
-  TB1["BOUNDARY CROSSING RULES\n══════════════════════════════════\nInternet → DMZ:\n  TLS required · rate limited\n  claim text sanitised\n  no raw URLs passed to agents\n\nDMZ → Internal:\n  PII scrubbed before ingestion\n  claim_id assigned at gateway\n  original URL stored, not forwarded\n\nInternal → External APIs:\n  no claim_id or internal IDs sent\n  only normalised claim text or\n  entity strings used as query params\n  API keys in Docker secrets\n\nInternal → Consumer:\n  read-only JSON export via API\n  no Redis keys exposed directly\n  audit trail included in payload"]
+  TB1["BOUNDARY CROSSING RULES\n══════════════════════════════════\nInternet → DMZ:\n  TLS required · rate limited via Cloudflare\n  DDoS protection at edge\n  static assets served via CloudFront\n\nDMZ → Internal:\n  ALB routes to ECS tasks\n  claim text sanitised at NestJS layer\n  PII scrubbed before workflow start\n  claim_id assigned at backend\n\nInternal → External APIs:\n  no claim_id or internal IDs sent\n  only normalised claim text or\n  entity strings used as query params\n  API keys in AWS Secrets Manager\n\nInternal → User (SSE):\n  read-only progress stream\n  no Redis keys exposed directly\n  backend reads progress:{runId}\n  relays as SSE events"]
 
   %% ============================================================
   %% Data classification legend
   %% ============================================================
 
-  DC["DATA CLASSIFICATION\n══════════════════════════════════\n[PUBLIC DATA]     Sourced from public web\n[INTERNAL]        Claim text post-sanitisation\n[INTERNAL DATA]   JSON observation stream entries\n[INTERNAL CONTROL] MCP tool calls + responses\n[INTERNAL — read-only export] Final verdict JSON"]
+  DC["DATA CLASSIFICATION\n══════════════════════════════════\n[PUBLIC DATA]     Sourced from public web\n[PUBLIC]          Static frontend assets\n[INTERNAL]        Claim text post-sanitisation\n[INTERNAL DATA]   JSON observation stream entries\n[INTERNAL CONTROL] Temporal activity dispatch + results\n[INTERNAL — streamed export] SSE progress events"]
 
   %% ============================================================
   %% Styling
@@ -96,13 +107,13 @@ flowchart TD
   classDef untrusted fill:#fef2f2,stroke:#ef4444,color:#7f1d1d
   classDef dmz fill:#fff7ed,stroke:#f97316,color:#431407
   classDef internal fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
-  classDef consumer fill:#f0fdf4,stroke:#22c55e,color:#14532d
   classDef store fill:#fef9c3,stroke:#ca8a04,color:#713f12
   classDef note fill:#fafafa,stroke:#d1d5db,color:#374151
+  classDef temporal fill:#ede9fe,stroke:#7c3aed,color:#2e1065
 
-  class USER,NEWSAPI_EXT,GFCT_EXT,PRIMARY_EXT untrusted
-  class GATEWAY dmz
-  class ORCH_PROC,AG_SEQ,AG_PAR,AG_AGG internal
-  class REDIS_STORE store
-  class DASHBOARD_PROC consumer
+  class USER,NEWSAPI_EXT,GFCT_EXT,PRIMARY_EXT,MBFC_EXT untrusted
+  class CLOUDFLARE,CLOUDFRONT,ALB dmz
+  class BACKEND,AG_SEQ,AG_PAR,AG_AGG internal
+  class TEMPORAL temporal
+  class REDIS_STORE,POSTGRES,S3_STORE store
   class TB1,DC note

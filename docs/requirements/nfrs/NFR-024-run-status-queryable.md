@@ -5,8 +5,8 @@ status: accepted
 category: observability
 subcategory: operability
 priority: must
-components: [consumer-api, orchestrator]
-adrs: [ADR-010]
+components: [backend-api, orchestrator]
+adrs: [ADR-016]
 tests: []
 date: 2026-04-09
 ---
@@ -23,7 +23,7 @@ Operators need real-time visibility into run progress. If status is only availab
 |----------|-------|
 | **Scale**  | Response time and availability of GET /runs/{run_id} during active runs |
 | **Meter**  | API response time measurement at each lifecycle state |
-| **Must**   | Responds within 500 ms with current status, agents complete, agents pending; available at all lifecycle states |
+| **Must**   | Responds within 500 ms with current session status, agents complete, agents pending; available at all lifecycle states |
 | **Plan**   | Responds within 200 ms |
 | **Wish**   | Responds within 100 ms |
 
@@ -32,11 +32,11 @@ Operators need real-time visibility into run progress. If status is only availab
 | Part               | Value |
 |--------------------|-------|
 | **Source**         | Operator |
-| **Stimulus**       | Polls GET /runs/{run_id} during an active run |
+| **Stimulus**       | Polls GET /sessions/{id} during an active run |
 | **Environment**    | Run in ANALYZING state |
-| **Artifact**       | Consumer API |
+| **Artifact**       | Backend API |
 | **Response**       | API returns current status and completion register summary |
-| **Response Measure** | GET /runs/{run_id} responds within 500 ms with current status, number of agents complete, and number of agents pending; available at all lifecycle states |
+| **Response Measure** | GET /sessions/{id} responds within 500 ms with current status, number of agents complete, and number of agents pending; available at all lifecycle states |
 
 ## Verification
 

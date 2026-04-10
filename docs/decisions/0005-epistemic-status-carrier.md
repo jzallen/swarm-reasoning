@@ -21,7 +21,7 @@ Observation entries carry a `status` field with the following values:
 | `C` | Corrected — supersedes an earlier observation of the same code |
 | `X` | Cancelled — claim determined not check-worthy or finding retracted |
 
-This model was informed by HL7v2's OBX.11 result status semantics, which solved the same epistemic state tracking problem in clinical observation reporting. The status values are carried as a typed field in the JSON observation schema rather than in a positional HL7v2 field.
+The status values are carried as a typed field in the JSON observation schema.
 
 The synthesizer treats only `F` and `C` status entries as authoritative inputs to the final verdict. `P` entries are informational. `X` entries are excluded from synthesis but retained in the log for auditability.
 

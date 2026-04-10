@@ -4,57 +4,59 @@ title: Synthesis — Phase 3 (Blindspot Detection + Verdict Synthesis)
 sequenceDiagram
     autonumber
 
-    participant ORC as Orchestrator
+    participant ORC as Orchestrator<br/>(Temporal Workflow)
+    participant TEMPORAL as Temporal
     participant REDIS as Redis Streams
-    participant BS as blindspot-detector<br/>(MCP Server)
-    participant SYNTH as synthesizer<br/>(MCP Server)
+    participant BS as blindspot-detector<br/>(Temporal Worker)
+    participant SYNTH as synthesizer<br/>(Temporal Worker)
 
-    Note over ORC,SYNTH: Precondition: all 5 parallel agents STOP received.<br/>Phase 3a — Blindspot Detection (pull pattern)
+    Note over ORC,SYNTH: Precondition: all 6 parallel agents STOP received.<br/>Phase 3a — Blindspot Detection
 
-    ORC->>BS: MCP invoke_task({run_id, task: "analyze_blindspot"})
+    ORC->>REDIS: XRANGE all 9 preceding agent streams<br/>collect observations for blindspot input
 
-    BS-->>ORC: MCP tool_request: get_observations(run_id, "COVERAGE_*")
+    ORC->>TEMPORAL: schedule activity: blindspot-detector<br/>({run_id, upstream_observations: [all 9 agent obs]})
+    TEMPORAL->>BS: execute activity
 
-    ORC->>REDIS: XRANGE reasoning:...:coverage-left - +
-    REDIS-->>ORC: 4 observations (article_count=12, framing=SUPPORTIVE, ...)
+    BS->>BS: analyze observations from<br/>all 9 preceding agents
 
-    ORC->>REDIS: XRANGE reasoning:...:coverage-center - +
-    REDIS-->>ORC: 4 observations (article_count=8, framing=CRITICAL, ...)
-
-    ORC->>REDIS: XRANGE reasoning:...:coverage-right - +
-    REDIS-->>ORC: 4 observations (article_count=11, framing=CRITICAL, ...)
-
-    ORC-->>BS: consolidated COVERAGE_* observations from all 3 agents
-
-    BS->>BS: compute coverage asymmetry score<br/>left=12 SUPPORTIVE, center=8 CRITICAL,<br/>right=11 CRITICAL → no major blindspot
+    BS->>BS: compute coverage asymmetry score<br/>left=12 SUPPORTIVE, center=8 CRITICAL,<br/>right=11 CRITICAL -> no major blindspot
 
     BS->>REDIS: XADD ... type=START phase=synthesis
     BS->>REDIS: XADD ... type=OBS<br/>publish(BLINDSPOT_SCORE, 0.12, F)<br/>publish(BLINDSPOT_DIRECTION, NONE, F)<br/>publish(CROSS_SPECTRUM_CORROBORATION, FALSE, F)
+    BS->>REDIS: XADD progress:claim-4821-run-003 *<br/>agent=blindspot-detector event=observations_published
     BS->>REDIS: XADD ... type=STOP finalStatus=F
+
+    BS-->>TEMPORAL: activity complete
+    TEMPORAL-->>ORC: activity result
 
     ORC->>REDIS: XREADGROUP — consume STOP
     ORC->>ORC: blindspot-detector = COMPLETE
 
-    Note over ORC,SYNTH: Phase 3b — Synthesis (pull pattern)<br/>All 9 preceding agents complete.<br/>Orchestrator assembles consolidated observation log.
+    Note over ORC,SYNTH: Phase 3b — Synthesis<br/>All 10 preceding agents complete.<br/>Orchestrator assembles consolidated observation log.
 
-    ORC->>REDIS: XRANGE all 9 agent streams<br/>collect F/C status observations
+    ORC->>REDIS: XRANGE all 10 agent streams<br/>collect F/C status observations
 
-    ORC->>SYNTH: MCP invoke_task({<br/>  run_id,<br/>  consolidated_observations: [all F/C obs from all agents]<br/>})
+    ORC->>TEMPORAL: schedule activity: synthesizer<br/>({run_id, consolidated_observations: [all F/C obs from 10 agents]})
+    TEMPORAL->>SYNTH: execute activity
 
     Note over SYNTH: Synthesizer applies DetermineOBXResolution<br/>DMN to resolve authoritative value per code.<br/>Computes weighted confidence score.
 
-    SYNTH->>SYNTH: resolve authoritative obs per code<br/>apply confidence weights:<br/>  claimreview_match: 0.35<br/>  domain_evidence: 0.30<br/>  cross_spectrum: 0.20<br/>  blindspot_penalty: -0.10<br/>  → CONFIDENCE_SCORE = 0.31
+    SYNTH->>SYNTH: resolve authoritative obs per code<br/>apply confidence weights:<br/>  claimreview_match: 0.35<br/>  domain_evidence: 0.30<br/>  cross_spectrum: 0.20<br/>  blindspot_penalty: -0.10<br/>  -> CONFIDENCE_SCORE = 0.31
 
-    SYNTH->>SYNTH: map 0.31 → MOSTLY_FALSE<br/>(range: 0.25-0.44)
+    SYNTH->>SYNTH: map 0.31 -> MOSTLY_FALSE<br/>(range: 0.25-0.44)
 
     SYNTH->>REDIS: XADD ... type=START phase=synthesis
     SYNTH->>REDIS: XADD ... type=OBS<br/>publish(CONFIDENCE_SCORE, 0.31, F)<br/>publish(VERDICT, MOSTLY_FALSE, F)<br/>publish(VERDICT_NARRATIVE, "...", F)<br/>publish(SYNTHESIS_SIGNAL_COUNT, 28, F)<br/>publish(SYNTHESIS_OVERRIDE_REASON, "", F)
 
     Note over SYNTH: Checks if VERDICT differs from CLAIMREVIEW_VERDICT.<br/>PolitiFact said MOSTLY_FALSE. System agrees.<br/>SYNTHESIS_OVERRIDE_REASON left empty.
 
+    SYNTH->>REDIS: XADD progress:claim-4821-run-003 *<br/>agent=synthesizer event=verdict_emitted
     SYNTH->>REDIS: XADD ... type=STOP finalStatus=F
 
-    ORC->>REDIS: XREADGROUP — consume STOP
-    ORC->>ORC: synthesizer = COMPLETE<br/>status = SYNTHESIZED
+    SYNTH-->>TEMPORAL: activity complete
+    TEMPORAL-->>ORC: activity result
 
-    Note over ORC: SYNTHESIZED state triggers publication.<br/>Consumer API reads finalized observations<br/>directly from Redis Streams.
+    ORC->>REDIS: XREADGROUP — consume STOP
+    ORC->>ORC: synthesizer = COMPLETE<br/>all 11 agents complete<br/>status = completed
+
+    Note over ORC: completed state triggers session finalization.<br/>Orchestrator workflow proceeds to finalization steps.

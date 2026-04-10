@@ -1,33 +1,43 @@
 ---
-title: Agent Fan-Out — Phase 2 (Parallel Execution)
+title: Agent Fan-Out — Phase 2 (Parallel Execution, 6 Agents)
 ---
 sequenceDiagram
     autonumber
 
-    participant ORC as Orchestrator
+    participant ORC as Orchestrator<br/>(Temporal Workflow)
+    participant TEMPORAL as Temporal
     participant REDIS as Redis Streams
-    participant CR as claimreview-matcher
-    participant CL as coverage-left
-    participant CC as coverage-center
-    participant CRR as coverage-right
-    participant DE as domain-evidence
+    participant CR as claimreview-matcher<br/>(Temporal Worker)
+    participant CL as coverage-left<br/>(Temporal Worker)
+    participant CC as coverage-center<br/>(Temporal Worker)
+    participant CRR as coverage-right<br/>(Temporal Worker)
+    participant DE as domain-evidence<br/>(Temporal Worker)
+    participant SV as source-validator<br/>(Temporal Worker)
     participant GFCT as Google Fact Check<br/>Tools API
     participant NEWS as NewsAPI / GNews
     participant MBFC as Media Bias<br/>Fact Check
     participant PRIMARY as CDC / WHO /<br/>SEC / Courts
 
-    Note over ORC,PRIMARY: Precondition: entity-extractor STOP received.<br/>Orchestrator dispatches all five agents simultaneously.
+    Note over ORC,PRIMARY: Precondition: entity-extractor STOP received (Phase 1 complete).<br/>Orchestrator dispatches all 6 agents simultaneously via Temporal.
 
-    par Parallel MCP dispatch
-        ORC->>CR: MCP invoke_task({run_id, claim_normalized, entities})
+    par Parallel Temporal activity dispatch (Promise.all)
+        ORC->>TEMPORAL: schedule activity: claimreview-matcher<br/>({run_id, claim_normalized, entities})
+        TEMPORAL->>CR: execute activity
     and
-        ORC->>CL: MCP invoke_task({run_id, claim_text, entities})
+        ORC->>TEMPORAL: schedule activity: coverage-left<br/>({run_id, claim_text, entities})
+        TEMPORAL->>CL: execute activity
     and
-        ORC->>CC: MCP invoke_task({run_id, claim_text, entities})
+        ORC->>TEMPORAL: schedule activity: coverage-center<br/>({run_id, claim_text, entities})
+        TEMPORAL->>CC: execute activity
     and
-        ORC->>CRR: MCP invoke_task({run_id, claim_text, entities})
+        ORC->>TEMPORAL: schedule activity: coverage-right<br/>({run_id, claim_text, entities})
+        TEMPORAL->>CRR: execute activity
     and
-        ORC->>DE: MCP invoke_task({run_id, claim_text, entities, domain})
+        ORC->>TEMPORAL: schedule activity: domain-evidence<br/>({run_id, claim_text, entities, domain})
+        TEMPORAL->>DE: execute activity
+    and
+        ORC->>TEMPORAL: schedule activity: source-validator<br/>({run_id, claim_text, entities})
+        TEMPORAL->>SV: execute activity
     end
 
     Note over CR,GFCT: ClaimReview Matcher (independent)
@@ -39,7 +49,9 @@ sequenceDiagram
     CR->>CR: compute semantic match score<br/>select best match if score >= 0.75
 
     CR->>REDIS: XADD ... type=OBS<br/>publish(CLAIMREVIEW_MATCH, F)<br/>publish(CLAIMREVIEW_VERDICT, F)<br/>publish(CLAIMREVIEW_SOURCE, F)<br/>publish(CLAIMREVIEW_MATCH_SCORE, F)
+    CR->>REDIS: XADD progress:...:run_id *<br/>agent=claimreview-matcher event=observations_published
     CR->>REDIS: XADD ... type=STOP finalStatus=F
+    CR-->>TEMPORAL: activity complete
 
     Note over CL,MBFC: Coverage Left (same pattern for Center + Right)
 
@@ -53,13 +65,17 @@ sequenceDiagram
     CL->>CL: analyze framing across article set<br/>select top credibility source
 
     CL->>REDIS: XADD ... type=OBS<br/>publish(COVERAGE_ARTICLE_COUNT, F)<br/>publish(COVERAGE_FRAMING, F)<br/>publish(COVERAGE_TOP_SOURCE, F)<br/>publish(COVERAGE_TOP_SOURCE_URL, F)
+    CL->>REDIS: XADD progress:...:run_id *<br/>agent=coverage-left event=observations_published
     CL->>REDIS: XADD ... type=STOP finalStatus=F
+    CL-->>TEMPORAL: activity complete
 
     Note over CC: Coverage Center — same flow as Coverage Left
-    CC->>REDIS: START → OBS → STOP
+    CC->>REDIS: START -> OBS -> STOP
+    CC-->>TEMPORAL: activity complete
 
     Note over CRR: Coverage Right — same flow as Coverage Left
-    CRR->>REDIS: START → OBS → STOP
+    CRR->>REDIS: START -> OBS -> STOP
+    CRR-->>TEMPORAL: activity complete
 
     Note over DE,PRIMARY: Domain Evidence (independent)
 
@@ -72,6 +88,17 @@ sequenceDiagram
     DE->>DE: evaluate alignment between<br/>source content and claim
 
     DE->>REDIS: XADD ... type=OBS<br/>publish(DOMAIN_SOURCE_NAME, F)<br/>publish(DOMAIN_SOURCE_URL, F)<br/>publish(DOMAIN_EVIDENCE_ALIGNMENT, F)<br/>publish(DOMAIN_CONFIDENCE, F)
+    DE->>REDIS: XADD progress:...:run_id *<br/>agent=domain-evidence event=observations_published
     DE->>REDIS: XADD ... type=STOP finalStatus=F
+    DE-->>TEMPORAL: activity complete
 
-    Note over ORC: Orchestrator receives 5 STOP messages<br/>via XREADGROUP. Completion register: 5/5.<br/>Dispatches blindspot-detector (Phase 3a).
+    Note over SV: Source Validator (independent)
+
+    SV->>REDIS: XADD ... type=START phase=fanout
+    SV->>SV: extract links,<br/>validate URLs,<br/>compute source convergence,<br/>aggregate citations
+    SV->>REDIS: XADD ... type=OBS<br/>publish(SOURCE_EXTRACTED_URL, F)<br/>publish(SOURCE_VALIDATION_STATUS, F)<br/>publish(SOURCE_CONVERGENCE_SCORE, F)<br/>publish(CITATION_LIST, F)
+    SV->>REDIS: XADD progress:...:run_id *<br/>agent=source-validator event=observations_published
+    SV->>REDIS: XADD ... type=STOP finalStatus=F
+    SV-->>TEMPORAL: activity complete
+
+    Note over ORC: Orchestrator receives 6 STOP messages<br/>via XREADGROUP. Completion register: 6/6.<br/>Dispatches blindspot-detector (Phase 3a).

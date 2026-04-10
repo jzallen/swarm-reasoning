@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: "superseded by [ADR-0016](0016-temporal-agent-orchestration.md)"
 date: 2026-04-08
 deciders: []
 ---
@@ -29,7 +29,7 @@ A stateful orchestrator duplicates data, creates synchronization requirements, a
 Chosen option: "Stateless orchestrator", because it avoids data duplication and synchronization issues. The orchestrator maintains only:
 
 - The DAG of agent execution order and dependencies
-- The set of active MCP client connections
+- The Temporal workflow execution context
 - The current run ID and claim under investigation
 - A completion register: which agents have emitted terminal status (`F` or `X`) for their assigned codes in the current run
 
@@ -41,13 +41,8 @@ The completion register is ephemeral. If the orchestrator restarts during a run,
 
 - Good, because there is a single source of truth for observations (Redis Streams)
 - Good, because the orchestrator can recover after restart by scanning agent streams for STOP messages
-- Good, because the orchestrator subscribes to agent streams and receives observations in real time via `XREADGROUP`, eliminating MCP roundtrips for state reads
+- Good, because the orchestrator subscribes to agent streams and receives observations in real time via `XREADGROUP`
 - Bad, because each agent must publish observations to its own Redis Stream (`reasoning:{runId}:{agent}`), requiring the orchestrator to consume from all active agent streams for a given run
 - Neutral, because the minimum agent contract is: publish START, publish one or more observations, publish STOP with terminal status
 - Neutral, because agent Redis Streams are the system's ground truth — Redis persistence configuration (RDB snapshots or AOF) determines durability guarantees
 
-## More Information
-
-### Update Note
-
-The stateless orchestrator pattern maps cleanly to Redis Streams. Instead of issuing MCP tool calls to each agent's YottaDB instance to query state, the orchestrator reads directly from Redis Streams using `XRANGE`. This eliminates the MCP roundtrip for state reads — the orchestrator subscribes to agent streams and receives observations in real time via `XREADGROUP`. MCP remains the control plane for issuing commands to agents; Redis Streams is the data plane for reading results.

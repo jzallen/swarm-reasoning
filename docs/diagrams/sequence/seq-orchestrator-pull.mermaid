@@ -1,20 +1,17 @@
 ---
-title: Orchestrator Pull Pattern — subagent reads upstream observations via orchestrator
+title: Orchestrator Pull Pattern — workflow reads upstream observations, passes as activity input
 ---
 sequenceDiagram
     autonumber
 
-    participant ORC as Orchestrator
+    participant ORC as Orchestrator<br/>(Temporal Workflow)
+    participant TEMPORAL as Temporal
     participant REDIS as Redis Streams
-    participant BS as blindspot-detector<br/>(MCP Server)
+    participant BS as blindspot-detector<br/>(Temporal Worker)
 
-    Note over ORC,BS: Precondition: coverage-left, coverage-center,<br/>coverage-right STOP messages received.
+    Note over ORC,BS: Precondition: coverage-left, coverage-center,<br/>coverage-right, source-validator STOP messages received.
 
-    ORC->>BS: MCP invoke_task({<br/>  run_id: "claim-4821-run-003",<br/>  task: "analyze_blindspot"<br/>})
-
-    BS-->>ORC: MCP tool_request({<br/>  tool: "get_observations",<br/>  params: {run_id, code: "COVERAGE_*"}<br/>})
-
-    Note over ORC,REDIS: Orchestrator resolves the data request<br/>by reading from Redis Streams directly.<br/>No direct BS → coverage-* connection exists.
+    Note over ORC,REDIS: Orchestrator reads cross-agent data from Redis Streams<br/>and passes it as input to the activity.<br/>No direct agent-to-agent connection exists.
 
     ORC->>REDIS: XRANGE reasoning:claim-4821-run-003:coverage-left - +<br/>filter: code matches COVERAGE_*
     REDIS-->>ORC: observations [COVERAGE_ARTICLE_COUNT,<br/>COVERAGE_FRAMING, COVERAGE_TOP_SOURCE]
@@ -25,7 +22,14 @@ sequenceDiagram
     ORC->>REDIS: XRANGE reasoning:claim-4821-run-003:coverage-right - +
     REDIS-->>ORC: observations
 
-    ORC-->>BS: MCP tool_response({<br/>  observations: [<br/>    {agent: "coverage-left", obs: [...]},<br/>    {agent: "coverage-center", obs: [...]},<br/>    {agent: "coverage-right", obs: [...]}<br/>  ]<br/>})
+    ORC->>REDIS: XRANGE reasoning:claim-4821-run-003:source-validator - +
+    REDIS-->>ORC: observations [SOURCE_EXTRACTED_URL,<br/>SOURCE_VALIDATION_STATUS, SOURCE_CONVERGENCE_SCORE, CITATION_LIST]
+
+    ORC->>ORC: consolidate upstream observations<br/>into activity input payload
+
+    ORC->>TEMPORAL: schedule activity: blindspot-detector<br/>({<br/>  run_id: "claim-4821-run-003",<br/>  task: "analyze_blindspot",<br/>  upstream_observations: [<br/>    {agent: "coverage-left", obs: [...]},<br/>    {agent: "coverage-center", obs: [...]},<br/>    {agent: "coverage-right", obs: [...]},<br/>    {agent: "source-validator", obs: [...]}<br/>  ]<br/>})
+
+    TEMPORAL->>BS: execute activity with upstream data
 
     Note over BS: Agent reasons over consolidated<br/>coverage data. Publishes observations<br/>to its own stream.
 
@@ -35,7 +39,12 @@ sequenceDiagram
 
     BS->>REDIS: XADD ... type=OBS<br/>publish(BLINDSPOT_SCORE, 0.12, F)<br/>publish(BLINDSPOT_DIRECTION, NONE, F)<br/>publish(CROSS_SPECTRUM_CORROBORATION, FALSE, F)
 
+    BS->>REDIS: XADD progress:claim-4821-run-003 *<br/>agent=blindspot-detector event=observations_published
     BS->>REDIS: XADD ... type=STOP finalStatus=F
+
+    BS-->>TEMPORAL: activity complete ({<br/>  agent: "blindspot-detector",<br/>  status: "COMPLETE",<br/>  observationCount: 5<br/>})
+
+    TEMPORAL-->>ORC: activity result
 
     ORC->>REDIS: XREADGROUP — consume STOP
     ORC->>ORC: mark blindspot-detector COMPLETE

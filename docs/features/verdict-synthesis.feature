@@ -8,7 +8,7 @@ Feature: Verdict Synthesis
 
   Background:
     Given the orchestrator is running
-    And all 10 agents have published STOP messages for run "RUN-001"
+    And all 11 agents have published STOP messages for run "RUN-001"
     And the orchestrator has assembled the consolidated observation log
 
   # ---------------------------------------------------------------------------
@@ -137,8 +137,8 @@ Feature: Verdict Synthesis
     And the STOP message has finalStatus "F"
     And the STOP message observationCount matches the number of observations published
 
-  Scenario: Run transitions to SYNTHESIZED after synthesizer STOP
+  Scenario: Run transitions to completed after synthesizer STOP
     Given the synthesizer has published its STOP message
     When the orchestrator receives the STOP message via XREADGROUP
-    Then the run status transitions to "SYNTHESIZED"
-    And the orchestrator triggers verdict publication
+    Then the run status transitions to "completed"
+    And the orchestrator triggers session finalization

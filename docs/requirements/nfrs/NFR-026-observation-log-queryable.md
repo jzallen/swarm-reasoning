@@ -5,7 +5,7 @@ status: accepted
 category: observability
 subcategory: analysability
 priority: must
-components: [redis, consumer-api]
+components: [redis, backend-api]
 adrs: [ADR-003]
 tests: []
 date: 2026-04-09

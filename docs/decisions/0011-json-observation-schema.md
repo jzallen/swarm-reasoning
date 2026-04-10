@@ -8,33 +8,27 @@ deciders: []
 
 ## Context and Problem Statement
 
-ADR-001 chose HL7v2 pipe-delimited messaging as the inter-agent wire format. The rationale centered on three properties: line-level validity for streaming, native epistemic status (OBX.11 result status), and zero-serialization alignment with YottaDB storage.
+Agents in the swarm-reasoning system need a shared wire format for typed observations published to Redis Streams. The format must carry epistemic state (P/F/C/X status), support append-only log semantics, and be directly consumable by the consumer API without a translation layer.
 
-Re-evaluation revealed that these properties are not unique to HL7v2:
-
-1. **Epistemic status** — The P/F/C/X model is a four-value enum. A `status` field in a JSON object carries identical semantics.
-2. **Streaming** — Redis Streams delivers discrete messages. Each message is independently valid regardless of format. The streaming argument applies to the transport layer, not the encoding.
-3. **YottaDB alignment** — With YottaDB superseded (ADR-0012), the zero-serialization-gap argument is circular and no longer applies.
-4. **Edge serialization** — HL7v2 required a dedicated serialization adapter (ADR-0006) to produce JSON for external consumers. A native JSON format eliminates this translation layer entirely.
-
-The HL7v2 encoding added domain-specific complexity (escape sequences, positional field semantics, MLLP framing) without functional benefit over a well-typed JSON schema. The cross-domain insight — that healthcare protocols solved epistemic state tracking, append-only audit, and provenance decades ago — informed the design of the replacement schema. The insight is preserved; the encoding is not.
+The observation schema must encode agent identity, observation codes from the registry, typed values, and lifecycle events (START, OBS, STOP). It must be validated at the tool layer (ADR-0004) and readable by the synthesizer for log resolution.
 
 ## Decision Drivers
 
-- HL7v2 properties (epistemic status, streaming, provenance) are achievable with typed JSON
-- YottaDB alignment argument is circular once YottaDB is superseded
-- HL7v2 encoding adds domain-specific complexity without functional benefit
-- Edge serialization adapter (ADR-0006) exists only because internal format differs from external format
-- Cross-domain insight from healthcare protocols should be preserved in the schema design
+- Observations must carry epistemic state, provenance, and typed values in a single schema
+- The consumer API must read observations directly without a translation layer
+- Standard JSON tooling (validators, serializers, TypeScript interfaces) must work out of the box
+- The schema must be streamable as discrete Redis Stream messages
+- Type safety must be enforceable at the tool layer via registry validation
 
 ## Considered Options
 
-1. **Retain HL7v2 pipe-delimited format** — Keep the existing wire format. Preserves native OBX.11 semantics but retains unnecessary complexity and requires edge serialization.
-2. **Typed JSON observation schema** — Encode observations as typed JSON objects with explicit status fields. Preserves epistemic state model while eliminating HL7v2 complexity and the edge serialization layer.
+1. **Typed JSON observation schema** — Encode observations as typed JSON objects with explicit status, code, and value fields. Directly consumable by the API and streamable via Redis Streams.
+2. **Protocol Buffers** — Binary encoding with schema evolution support. Efficient on the wire but requires compilation step and is not human-readable in Redis Stream inspection.
+3. **Avro with Schema Registry** — Schema-evolved binary format. Adds operational complexity (schema registry service) disproportionate to the prototype's needs.
 
 ## Decision Outcome
 
-Chosen option: "Typed JSON observation schema", because the epistemic status model, append-only semantics, and observation structure are preserved while eliminating HL7v2 encoding complexity and the edge serialization layer.
+Chosen option: "Typed JSON observation schema", because it carries epistemic state, provenance, and typed values in a human-readable format that is directly consumable by the consumer API, streamable via Redis Streams, and enforceable at the tool layer.
 
 Observations are encoded as typed JSON objects conforming to the following schema:
 
@@ -68,13 +62,10 @@ The observation code registry (`obx-code-registry.json`) remains the governing c
 
 ### Consequences
 
-- Good, because the edge-serializer agent is eliminated — the consumer API reads JSON observations directly from Redis Streams
-- Good, because no escape sequence handling is needed — JSON string escaping is handled by standard libraries
-- Good, because the cross-domain insight from healthcare protocols is preserved in the schema design (P/F/C/X status model)
-- Neutral, because the `obx-code-registry.json` file is unchanged — the `FCK` coding system identifier is retained in the registry but is not encoded into observation values (unlike the HL7v2 `{code}^^FCK` pattern)
+- Good, because the consumer API reads JSON observations directly from Redis Streams without a translation layer
+- Good, because JSON string escaping is handled by standard libraries — no custom encoding logic
+- Good, because the P/F/C/X epistemic status model is a first-class typed field in the schema
+- Neutral, because the `obx-code-registry.json` file governs valid codes, value types, ownership, and reference ranges — the `FCK` coding system identifier is retained in the registry
 - Neutral, because CWE-typed values use a structured format: `{code}^{display}^{system}` stored as a string, consistent with the registry; implementations may alternatively parse this into a structured object
 - Neutral, because verdict mapping to PolitiFact scale is unchanged (see observation schema spec, Section 9)
 
-## More Information
-
-Supersedes [ADR-0001](0001-hl7v2-wire-format.md) and [ADR-0006](0006-edge-serialization-mirth.md).

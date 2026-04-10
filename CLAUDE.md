@@ -2,47 +2,57 @@
 
 ## Project Overview
 
-**swarm-reasoning** — Multi-agent fact-checking system using structured JSON observations streamed via Redis Streams as inter-agent communication. Ten specialized agents coordinate via swarm reasoning to validate claims against a PolitiFact corpus. Confidence-scored verdicts are produced through three-phase execution: sequential ingestion, parallel fan-out, sequential synthesis.
+**swarm-reasoning** — Multi-agent fact-checking system using structured JSON observations streamed via Redis Streams as inter-agent communication. Eleven specialized agents coordinate via swarm reasoning to validate claims against a PolitiFact corpus. Confidence-scored verdicts are produced through three-phase execution: sequential ingestion, parallel fan-out, sequential synthesis. A chat-based frontend lets users submit claims, watch agent progress via SSE, and receive annotated verdicts with full source citations.
 
 ## Tech Stack
 
-- **Python 3.11** — Agent logic, orchestration (LangChain), API (FastAPI)
-- **TypeScript / Node 20** — CLI tooling, API layer
+- **Python 3.11** — Agent logic (LangChain), Temporal workers
+- **TypeScript / Node 20** — NestJS backend API (Clean Architecture, TypeORM), React frontend (Vite)
+- **PostgreSQL** — Persistent storage for claims, sessions, verdicts, citations (Aurora Serverless v2 in prod)
 - **Redis Streams** — Append-only observation log, inter-agent data plane (dev); Kafka graduation path for production (ADR-012)
-- **MCP** — Control plane between orchestrator (hub) and agent servers (spokes)
-- **Docker Compose** — 13-container local stack
-- **Gherkin / Cucumber** — BDD acceptance tests (52 scenarios across 5 feature files)
+- **Temporal.io** — Durable workflow orchestration; replaces MCP as control plane (ADR-016)
+- **Docker Compose** — Local development stack
+- **Cloudflare** — Edge proxy, DDoS protection, SSL termination, rate limiting (ADR-020)
+- **AWS ECS Fargate** — Production deployment, scale-to-zero (ADR-020)
+- **Gherkin / Cucumber** — BDD acceptance tests (65 scenarios across 5 feature files)
 
 ## Architecture (Key Decisions)
 
-ADRs in `docs/decisions/` as individual MADR v3.0 files (ADR-0001 through ADR-0013).
+ADRs in `docs/decisions/` as individual MADR v3.0 files (ADR-0003 through ADR-0021).
 
+- **Three-service architecture** — Frontend (React/TS), Backend API (NestJS), Agent Service (Python/LangChain) (ADR-014)
+- **NestJS Clean Architecture** — Domain → Application (Use Cases) → Interface Adapters → Infrastructure (ADR-015)
+- **Temporal.io orchestration** — Orchestrator is a Temporal workflow; each agent is a Temporal activity worker (ADR-016)
+- **PostgreSQL + TypeORM** — Persistent storage with Aurora Serverless v2 for prod scale-to-zero (ADR-017)
+- **SSE relay** — Backend subscribes to Redis progress stream and relays to frontend via Server-Sent Events (ADR-018)
+- **Static HTML verdict snapshots** — Frozen sessions served as self-contained HTML with verdict/chat toggle, 3-day TTL (ADR-019)
 - **JSON observation schema** — Typed observations with epistemic status (P/F/C/X), published to Redis Streams (ADR-011)
 - **Tool-based observation construction** — LLMs never generate raw observations; tools enforce schema validity (ADR-004)
 - **Append-only observation log** — Observations are never overwritten; the Redis Streams log is authoritative (ADR-003)
-- **Hub-and-spoke MCP** — Orchestrator is the sole MCP client; no subagent-to-subagent connections (ADR-009)
-- **Stateless orchestrator** — Reads agent state from Redis Streams on demand; recovers by scanning for STOP messages (ADR-010)
-- **Two communication planes** — MCP control plane + Redis Streams data plane, fail independently (ADR-013)
+- **Two communication planes** — Temporal control plane + Redis Streams data plane, fail independently (ADR-013)
 - **Transport abstraction** — `ReasoningStream` interface decouples agents from backend; Redis for dev, Kafka for prod (ADR-012)
 
 ## Project Structure
 
 ```
 docs/
-  decisions/               — 13 individual MADR v3.0 ADR files + index + template
-  domain/                  — Observation schema spec, OBX code registry (31 codes), claim lifecycle DMN, ERD
-  api/openapi.yaml         — 11 REST endpoint paths (Claims, Runs, Verdicts, Audit, System)
-  architecture/            — C4 containers, agent topology, MCP topology, DFD, stream lifecycle
-  diagrams/sequence/       — 6 Mermaid sequence diagrams (ingestion, fanout, synthesis, etc.)
+  decisions/               — 17 MADR v3.0 ADR files (ADR-0003 through ADR-0021) + index + template
+  domain/                  — Observation schema spec, OBX code registry, claim lifecycle DMN, ERD, SBVR business rules
+  api/openapi.yaml         — REST endpoint paths (Sessions, Verdicts, Audit, System)
+  architecture/            — System architecture diagram, agent topology, DFD, stream lifecycle
+  diagrams/sequence/       — Mermaid sequence diagrams (ingestion, fanout, synthesis, etc.)
   diagrams/state/          — Claim lifecycle + observation result status state machines
   features/                — 5 Gherkin files (65 scenarios)
-  requirements/nfrs/       — 27 individual NFR files (Planguage + SEI QAS) + index + template
+  requirements/nfrs/       — 32 individual NFR files (SEI QAS + Planguage) + index + template
   infrastructure/          — docker-compose.yml, topology diagram
+deploy/
+  ecs/                     — ECS task definitions, CloudFormation templates
+  k8s/                     — Helm chart for minikube demo
 ```
 
-## The 10 Agents
+## The 11 Agents
 
-Agents communicate via JSON observations published to Redis Streams. Each owns a subset of codes from `docs/domain/obx-code-registry.json`:
+Agents communicate via JSON observations published to Redis Streams. Each owns a subset of codes from `docs/domain/obx-code-registry.json`. Each agent runs as a Temporal worker in the Agent Service.
 
 1. **ingestion-agent** — Claim intake, entity extraction, check-worthiness gate
 2. **claim-detector** — Check-worthiness scoring, claim normalization
@@ -51,9 +61,10 @@ Agents communicate via JSON observations published to Redis Streams. Each owns a
 5. **coverage-left** — Left-leaning source analysis
 6. **coverage-center** — Centrist source analysis
 7. **coverage-right** — Right-leaning source analysis
-8. **domain-evidence** — Domain-specific evidence gathering
-9. **blindspot-detector** — Identifies coverage gaps (uses MCP pull pattern)
-10. **synthesizer** — Observation resolution, confidence scoring, verdict emission
+8. **domain-evidence** — Domain-specific evidence gathering (CDC, SEC, WHO, PubMed, etc.)
+9. **source-validator** — Link extraction, URL validation, source convergence, citation aggregation
+10. **blindspot-detector** — Identifies coverage gaps across agents
+11. **synthesizer** — Observation resolution, confidence scoring, verdict emission with annotated sources
 
 ## Observation Stream Format
 
@@ -63,6 +74,7 @@ Each agent's reasoning session follows: `START → OBS[1..N] → STOP`
 - Full schema spec: `docs/domain/observation-schema-spec.md`
 - Agent identity is in the `agent` field of each observation
 - Stream key format: `reasoning:{runId}:{agent}`
+- Progress stream: `progress:{runId}` — user-friendly messages relayed via SSE
 
 ## Code Style
 
@@ -82,7 +94,10 @@ Each agent's reasoning session follows: `START → OBS[1..N] → STOP`
 
 ## Environment
 
-- Entry point: `docker compose -f docs/infrastructure/docker-compose.yml up`
-- Consumer API: `http://localhost:8000`
+- Entry point: `docker compose up`
+- Backend API: `http://localhost:3000`
+- Frontend: `http://localhost:5173` (Vite dev server)
+- Temporal UI: `http://localhost:8233`
 - Redis: `redis://localhost:6379` (dev only)
+- PostgreSQL: `postgresql://localhost:5432/swarm` (dev only)
 - Required env vars: `ANTHROPIC_API_KEY`, `GOOGLE_FACTCHECK_API_KEY`, `NEWSAPI_KEY`

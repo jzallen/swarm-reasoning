@@ -1,0 +1,89 @@
+%% System Architecture — swarm-reasoning
+%% Three-service architecture with Cloudflare edge proxy and AWS deployment
+
+graph TB
+    subgraph Edge["Cloudflare (Free Tier)"]
+        CF[DNS Proxy<br/>DDoS Protection<br/>SSL Termination<br/>Rate Limiting<br/>Bot Protection]
+    end
+
+    subgraph AWS["AWS"]
+        subgraph CDN["S3 + CloudFront"]
+            FE_STATIC[Static React Build<br/>+ Verdict HTML Snapshots]
+        end
+
+        ALB[Application Load Balancer]
+
+        subgraph ECS_Backend["ECS Fargate — Backend"]
+            BE[NestJS API<br/>Clean Architecture<br/>TypeORM]
+        end
+
+        subgraph ECS_Agent["ECS Fargate — Agent Service"]
+            ORCH[Orchestrator<br/>Temporal Workflow]
+            W1[ingestion-agent<br/>Worker]
+            W2[claim-detector<br/>Worker]
+            W3[entity-extractor<br/>Worker]
+            W4[claimreview-matcher<br/>Worker]
+            W5[coverage-left<br/>Worker]
+            W6[coverage-center<br/>Worker]
+            W7[coverage-right<br/>Worker]
+            W8[domain-evidence<br/>Worker]
+            W9[source-validator<br/>Worker]
+            W10[blindspot-detector<br/>Worker]
+            W11[synthesizer<br/>Worker]
+        end
+
+        subgraph ECS_Temporal["ECS Fargate — Temporal"]
+            TS[Temporal Server<br/>+ Temporal UI]
+        end
+
+        subgraph Data["Managed Data Stores"]
+            PG[(Aurora Serverless v2<br/>PostgreSQL)]
+            REDIS[(ElastiCache<br/>Redis)]
+        end
+    end
+
+    subgraph External["External APIs"]
+        GFCT[Google Fact Check<br/>Tools API]
+        NEWS[NewsAPI]
+        GOV[Domain Sources<br/>CDC / SEC / WHO<br/>PubMed / FEC]
+    end
+
+    USER((User)) -->|HTTPS| CF
+    CF -->|Proxy| ALB
+    CF -->|Static Assets| CDN
+    ALB -->|REST + SSE| BE
+
+    BE -->|Start Workflow| TS
+    BE -->|Read Progress Stream| REDIS
+    BE -->|CRUD| PG
+    BE -->|Store/Serve Snapshots| FE_STATIC
+
+    TS -->|Dispatch Activities| ORCH
+    ORCH -->|Schedule| W1 & W2 & W3 & W4 & W5 & W6 & W7 & W8 & W9 & W10 & W11
+
+    W1 & W2 & W3 -->|Observations + Progress| REDIS
+    W4 -->|Observations + Progress| REDIS
+    W4 -->|Query| GFCT
+    W5 & W6 & W7 -->|Observations + Progress| REDIS
+    W5 & W6 & W7 -->|Query| NEWS
+    W8 -->|Observations + Progress| REDIS
+    W8 -->|Query| GOV
+    W9 -->|Observations + Progress| REDIS
+    W10 & W11 -->|Observations + Progress| REDIS
+
+    BE -.->|SSE: progress events| USER
+
+    classDef service fill:#4A90D9,stroke:#2C5F8A,color:#fff
+    classDef data fill:#50C878,stroke:#2E8B57,color:#fff
+    classDef external fill:#FFB347,stroke:#CC8E36,color:#333
+    classDef edge fill:#9B59B6,stroke:#7D3C98,color:#fff
+    classDef worker fill:#85C1E9,stroke:#5499C7,color:#333
+    classDef user fill:#E74C3C,stroke:#C0392B,color:#fff
+
+    class CF edge
+    class BE,ORCH service
+    class PG,REDIS data
+    class GFCT,NEWS,GOV external
+    class W1,W2,W3,W4,W5,W6,W7,W8,W9,W10,W11 worker
+    class USER user
+    class FE_STATIC,ALB,TS service

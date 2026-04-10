@@ -23,9 +23,9 @@ Developer onboarding friction must be minimized. A single-command setup ensures 
 |----------|-------|
 | **Scale**  | Number of commands required to start the full stack from a fresh clone |
 | **Meter**  | Count of manual steps from clone to accepting a test claim |
-| **Must**   | One command (`docker compose up`); test claim reaches PUBLISHED within 5 minutes |
-| **Plan**   | One command; test claim reaches PUBLISHED within 3 minutes |
-| **Wish**   | One command; test claim reaches PUBLISHED within 2 minutes |
+| **Must**   | One command (`docker compose up`); test claim reaches completed within 5 minutes |
+| **Plan**   | One command; test claim reaches completed within 3 minutes |
+| **Wish**   | One command; test claim reaches completed within 2 minutes |
 
 ## Stimulus Scenario
 
@@ -34,11 +34,11 @@ Developer onboarding friction must be minimized. A single-command setup ensures 
 | **Source**         | Developer |
 | **Stimulus**       | Clones the repository on a machine with Docker installed |
 | **Environment**    | macOS or Linux, Docker 24+, 16GB RAM |
-| **Artifact**       | Docker Compose stack (all 13 containers) |
-| **Response**       | All 13 containers start and the system accepts a test claim submission |
-| **Response Measure** | `docker compose -f docs/infrastructure/docker-compose.yml up` completes without error and a test claim reaches PUBLISHED state within 5 minutes of first startup |
+| **Artifact**       | Docker Compose stack (all 8 services) |
+| **Response**       | All 8 services start and the system accepts a test claim submission |
+| **Response Measure** | `docker compose up` completes without error and a test claim reaches completed state within 5 minutes of first startup |
 
 ## Verification
 
 - **Automated**: TBD
-- **Manual**: Fresh clone, run docker compose up, submit test claim, verify PUBLISHED state
+- **Manual**: Fresh clone, run docker compose up, submit test claim, verify completed state

@@ -6,7 +6,7 @@ category: maintainability
 subcategory: modifiability
 priority: must
 components: [orchestrator, all-agents]
-adrs: [ADR-009]
+adrs: [ADR-016]
 tests: []
 date: 2026-04-09
 ---

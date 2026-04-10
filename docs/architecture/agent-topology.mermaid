@@ -9,7 +9,7 @@ graph TD
 
   subgraph LEGEND["Legend"]
     direction LR
-    L1["─── MCP control plane"]
+    L1["─── Temporal control plane"]
     L2["··· Redis Streams data plane"]
   end
 
@@ -17,7 +17,13 @@ graph TD
   %% Claim entry point
   %% ============================================================
 
-  CLAIM_IN(["Claim submitted\nHTTP POST"])
+  CLAIM_IN(["Claim submitted\nHTTP POST → NestJS Backend"])
+
+  %% ============================================================
+  %% Temporal Workflow
+  %% ============================================================
+
+  TEMPORAL["Temporal Workflow\n───────────────\nFact-Check Orchestrator\nDispatches activities\nTracks phase gates"]
 
   %% ============================================================
   %% Phase 1 — Sequential ingestion
@@ -40,6 +46,7 @@ graph TD
     A6["⑥ Coverage\nAgent — Center\n───────────────\nCenter-spectrum\narticle analysis\nFraming"]
     A7["⑦ Coverage\nAgent — Right\n───────────────\nRight-spectrum\narticle analysis\nFraming"]
     A9["⑧ Domain\nEvidence Agent\n───────────────\nCDC · SEC · WHO\nCourt records\nPrimary alignment"]
+    A11["⑨ Source\nValidator\n───────────────\nLink extraction\nURL validation\nSource convergence\nCitation aggregation"]
   end
 
   %% ============================================================
@@ -48,34 +55,37 @@ graph TD
 
   subgraph PHASE3["Phase 3 — Aggregation"]
     direction LR
-    A8["⑨ Blindspot\nDetector\n───────────────\nReads ⑤ ⑥ ⑦\nCoverage asymmetry\nCross-spectrum check"]
-    A10["⑩ Synthesizer\n───────────────\nReads full obs log\nResolves F/C entries\nConfidence score\nVerdict emission"]
+    A8["⑩ Blindspot\nDetector\n───────────────\nReads ⑤ ⑥ ⑦\nCoverage asymmetry\nCross-spectrum check"]
+    A10["⑪ Synthesizer\n───────────────\nReads full obs log\nResolves F/C entries\nConfidence score\nVerdict emission"]
   end
 
   %% ============================================================
   %% Output
   %% ============================================================
 
-  CONSUMER(["Consumer API\nJSON verdict\n+ audit trail"])
+  CONSUMER(["NestJS Backend\nJSON verdict\n+ audit trail\n+ SSE progress"])
 
   %% ============================================================
-  %% MCP control plane edges (solid)
+  %% Temporal control plane edges (solid)
   %% ============================================================
 
-  CLAIM_IN -->|"HTTP"| A1
-  A1 -->|"MCP: orchestrator dispatches"| A2
-  A2 -->|"MCP: orchestrator dispatches"| A3
-  A3 -->|"MCP: orchestrator fans out"| A4
-  A3 -->|"MCP: orchestrator fans out"| A5
-  A3 -->|"MCP: orchestrator fans out"| A6
-  A3 -->|"MCP: orchestrator fans out"| A7
-  A3 -->|"MCP: orchestrator fans out"| A9
-  A5 -->|"MCP: orchestrator gates ⑨\nafter ⑤⑥⑦ complete"| A8
+  CLAIM_IN -->|"HTTP → Temporal\nstart workflow"| TEMPORAL
+  TEMPORAL -->|"activity dispatch"| A1
+  A1 -->|"Temporal: sequential"| A2
+  A2 -->|"Temporal: sequential"| A3
+  A3 -->|"Temporal: fan-out"| A4
+  A3 -->|"Temporal: fan-out"| A5
+  A3 -->|"Temporal: fan-out"| A6
+  A3 -->|"Temporal: fan-out"| A7
+  A3 -->|"Temporal: fan-out"| A9
+  A3 -->|"Temporal: fan-out"| A11
+  A5 -->|"Temporal: gates ⑩\nafter ⑤⑥⑦ complete"| A8
   A6 --> A8
   A7 --> A8
-  A4 -->|"MCP: orchestrator gates ⑩\nafter all parallel complete"| A10
+  A4 -->|"Temporal: gates ⑪\nafter all parallel complete"| A10
   A8 --> A10
   A9 --> A10
+  A11 --> A10
   A10 -->|"JSON via API"| CONSUMER
 
   %% ============================================================
@@ -98,6 +108,13 @@ graph TD
   A8 -.->|"publishes obs P→F\nmay emit C corrections"| LOG
   A9 -.->|"publishes obs P→F"| LOG
   A10 -.->|"publishes VERDICT\nCONFIDENCE_SCORE\nVERDICT_NARRATIVE F"| LOG
+  A11 -.->|"publishes obs P→F"| LOG
+
+  %% ============================================================
+  %% Progress stream for SSE relay
+  %% ============================================================
+
+  LOG -.->|"progress:{runId}\nSSE relay to frontend"| CONSUMER
 
   %% ============================================================
   %% Styling
@@ -107,8 +124,10 @@ graph TD
   classDef io fill:#fff7ed,stroke:#ea580c,color:#431407
   classDef store fill:#fef9c3,stroke:#ca8a04,color:#713f12
   classDef cancel fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef temporal fill:#ede9fe,stroke:#7c3aed,color:#2e1065
 
-  class A1,A2,A3,A4,A5,A6,A7,A8,A9,A10 agent
+  class A1,A2,A3,A4,A5,A6,A7,A8,A9,A10,A11 agent
   class CLAIM_IN,CONSUMER io
   class LOG store
   class CANCEL cancel
+  class TEMPORAL temporal

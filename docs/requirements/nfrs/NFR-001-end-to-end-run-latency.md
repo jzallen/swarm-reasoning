@@ -5,8 +5,8 @@ status: accepted
 category: performance
 subcategory: time-behaviour
 priority: must
-components: [orchestrator, consumer-api]
-adrs: [ADR-009, ADR-010]
+components: [backend-api, orchestrator, agent-workers, temporal-server]
+adrs: [ADR-014, ADR-016]
 tests: []
 date: 2026-04-09
 ---
@@ -21,8 +21,8 @@ The system must deliver verdicts within a bounded time window so that operators 
 
 | Field    | Value |
 |----------|-------|
-| **Scale**  | Elapsed wall-clock time from POST acceptance to PUBLISHED status |
-| **Meter**  | Timer from HTTP 202 response to PUBLISHED state transition |
+| **Scale**  | Elapsed wall-clock time from POST acceptance to completed status |
+| **Meter**  | Timer from HTTP 202 response to completed state transition |
 | **Must**   | <= 120 seconds |
 | **Plan**   | <= 90 seconds |
 | **Wish**   | <= 60 seconds |
@@ -32,13 +32,13 @@ The system must deliver verdicts within a bounded time window so that operators 
 | Part               | Value |
 |--------------------|-------|
 | **Source**         | Operator |
-| **Stimulus**       | Submits a check-worthy claim via POST /claims |
-| **Environment**    | Normal operation, all 10 agents healthy, external APIs reachable |
-| **Artifact**       | Orchestrator, all agents, consumer-api |
-| **Response**       | System processes the claim to PUBLISHED state |
-| **Response Measure** | Elapsed time from POST acceptance to PUBLISHED status is under 120 seconds |
+| **Stimulus**       | Submits a check-worthy claim via POST /sessions/:id/claims |
+| **Environment**    | Normal operation, all 11 agents healthy, external APIs reachable |
+| **Artifact**       | Orchestrator, all agents, backend-api |
+| **Response**       | System processes the claim to completed state |
+| **Response Measure** | Elapsed time from POST acceptance to completed status is under 120 seconds |
 
 ## Verification
 
 - **Automated**: TBD
-- **Manual**: Submit a claim and measure elapsed time to PUBLISHED state
+- **Manual**: Submit a claim and measure elapsed time to completed state

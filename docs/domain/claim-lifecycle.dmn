@@ -3,18 +3,18 @@
              xmlns:dmndi="https://www.omg.org/spec/DMN/20191111/DMNDI/"
              xmlns:dc="http://www.omg.org/spec/DMN/20180521/DC/"
              id="ClaimLifecycle"
-             name="Claim Lifecycle Decisions"
+             name="Claim and Session Lifecycle Decisions"
              namespace="http://swarm-reasoning/dmn">
 
   <!-- ============================================================
-       DECISION 1: DetermineClaimTransition
-       Inputs:  current_status, check_worthy_score, terminal_obx_count,
-                expected_agent_count, claimreview_match, synthesis_complete
+       DECISION 1: DetermineRunTransition
+       Inputs:  current_status, check_worthy_score, terminal_obs_count,
+                expected_agent_count, synthesis_complete
        Output:  next_status
        ============================================================ -->
 
-  <decision id="DetermineClaimTransition" name="DetermineClaimTransition">
-    <decisionTable id="dt_claim_transition"
+  <decision id="DetermineRunTransition" name="DetermineRunTransition">
+    <decisionTable id="dt_run_transition"
                    hitPolicy="FIRST"
                    preferredOrientation="Rule-as-Row">
 
@@ -23,7 +23,7 @@
           <text>current_status</text>
         </inputExpression>
         <inputValues>
-          <text>"INGESTED","ANALYZING","SYNTHESIZED","PUBLISHED","CANCELLED"</text>
+          <text>"pending","ingesting","analyzing","synthesizing","completed","failed","cancelled"</text>
         </inputValues>
       </input>
 
@@ -33,9 +33,9 @@
         </inputExpression>
       </input>
 
-      <input id="i_terminal_obx" label="terminal_obx_count">
+      <input id="i_terminal_obs" label="terminal_obs_count">
         <inputExpression typeRef="number">
-          <text>terminal_obx_count</text>
+          <text>terminal_obs_count</text>
         </inputExpression>
       </input>
 
@@ -53,101 +53,195 @@
 
       <output id="o_next_status" label="next_status" typeRef="string">
         <outputValues>
-          <text>"INGESTED","ANALYZING","SYNTHESIZED","PUBLISHED","CANCELLED"</text>
+          <text>"pending","ingesting","analyzing","synthesizing","completed","failed","cancelled"</text>
         </outputValues>
       </output>
 
       <output id="o_reason" label="transition_reason" typeRef="string"/>
 
-      <!-- Rule 1: Claim not check-worthy — cancel immediately -->
+      <!-- Rule 1: Claim not check-worthy — cancel run -->
       <rule id="r1">
-        <inputEntry id="r1_i1"><text>"INGESTED"</text></inputEntry>
+        <inputEntry id="r1_i1"><text>"ingesting"</text></inputEntry>
         <inputEntry id="r1_i2"><text>&lt; 0.4</text></inputEntry>
         <inputEntry id="r1_i3"><text>-</text></inputEntry>
         <inputEntry id="r1_i4"><text>-</text></inputEntry>
         <inputEntry id="r1_i5"><text>-</text></inputEntry>
-        <outputEntry id="r1_o1"><text>"CANCELLED"</text></outputEntry>
+        <outputEntry id="r1_o1"><text>"cancelled"</text></outputEntry>
         <outputEntry id="r1_o2"><text>"Check-worthy score below threshold (0.4)"</text></outputEntry>
       </rule>
 
-      <!-- Rule 2: Claim is check-worthy — begin analysis -->
+      <!-- Rule 2: Claim is check-worthy — begin parallel analysis -->
       <rule id="r2">
-        <inputEntry id="r2_i1"><text>"INGESTED"</text></inputEntry>
+        <inputEntry id="r2_i1"><text>"ingesting"</text></inputEntry>
         <inputEntry id="r2_i2"><text>&gt;= 0.4</text></inputEntry>
         <inputEntry id="r2_i3"><text>-</text></inputEntry>
         <inputEntry id="r2_i4"><text>-</text></inputEntry>
         <inputEntry id="r2_i5"><text>-</text></inputEntry>
-        <outputEntry id="r2_o1"><text>"ANALYZING"</text></outputEntry>
-        <outputEntry id="r2_o2"><text>"Claim check-worthy, agents dispatched"</text></outputEntry>
+        <outputEntry id="r2_o1"><text>"analyzing"</text></outputEntry>
+        <outputEntry id="r2_o2"><text>"Claim check-worthy, Phase 2 agents dispatched via Temporal"</text></outputEntry>
       </rule>
 
       <!-- Rule 3: Analyzing — not all agents complete yet -->
       <rule id="r3">
-        <inputEntry id="r3_i1"><text>"ANALYZING"</text></inputEntry>
+        <inputEntry id="r3_i1"><text>"analyzing"</text></inputEntry>
         <inputEntry id="r3_i2"><text>-</text></inputEntry>
         <inputEntry id="r3_i3"><text>&lt; expected_agent_count</text></inputEntry>
         <inputEntry id="r3_i4"><text>-</text></inputEntry>
         <inputEntry id="r3_i5"><text>-</text></inputEntry>
-        <outputEntry id="r3_o1"><text>"ANALYZING"</text></outputEntry>
-        <outputEntry id="r3_o2"><text>"Awaiting terminal OBX from remaining agents"</text></outputEntry>
+        <outputEntry id="r3_o1"><text>"analyzing"</text></outputEntry>
+        <outputEntry id="r3_o2"><text>"Awaiting terminal observations from remaining agents"</text></outputEntry>
       </rule>
 
       <!-- Rule 4: Analyzing — all agents complete, synthesis not yet done -->
       <rule id="r4">
-        <inputEntry id="r4_i1"><text>"ANALYZING"</text></inputEntry>
+        <inputEntry id="r4_i1"><text>"analyzing"</text></inputEntry>
         <inputEntry id="r4_i2"><text>-</text></inputEntry>
         <inputEntry id="r4_i3"><text>&gt;= expected_agent_count</text></inputEntry>
         <inputEntry id="r4_i4"><text>-</text></inputEntry>
         <inputEntry id="r4_i5"><text>false</text></inputEntry>
-        <outputEntry id="r4_o1"><text>"ANALYZING"</text></outputEntry>
-        <outputEntry id="r4_o2"><text>"All agents complete, awaiting synthesizer"</text></outputEntry>
+        <outputEntry id="r4_o1"><text>"synthesizing"</text></outputEntry>
+        <outputEntry id="r4_o2"><text>"All Phase 2 agents complete, Phase 3 synthesis dispatched"</text></outputEntry>
       </rule>
 
-      <!-- Rule 5: Analyzing — all agents complete and synthesis done -->
+      <!-- Rule 5: Synthesizing — synthesis complete, verdict emitted -->
       <rule id="r5">
-        <inputEntry id="r5_i1"><text>"ANALYZING"</text></inputEntry>
+        <inputEntry id="r5_i1"><text>"synthesizing"</text></inputEntry>
         <inputEntry id="r5_i2"><text>-</text></inputEntry>
-        <inputEntry id="r5_i3"><text>&gt;= expected_agent_count</text></inputEntry>
+        <inputEntry id="r5_i3"><text>-</text></inputEntry>
         <inputEntry id="r5_i4"><text>-</text></inputEntry>
         <inputEntry id="r5_i5"><text>true</text></inputEntry>
-        <outputEntry id="r5_o1"><text>"SYNTHESIZED"</text></outputEntry>
-        <outputEntry id="r5_o2"><text>"Synthesis complete, verdict emitted"</text></outputEntry>
+        <outputEntry id="r5_o1"><text>"completed"</text></outputEntry>
+        <outputEntry id="r5_o2"><text>"Synthesis complete, verdict persisted, session finalization triggered"</text></outputEntry>
       </rule>
 
-      <!-- Rule 6: Synthesized — promote to published -->
+      <!-- Rule 6: Terminal states — no transition -->
       <rule id="r6">
-        <inputEntry id="r6_i1"><text>"SYNTHESIZED"</text></inputEntry>
+        <inputEntry id="r6_i1"><text>"completed","failed","cancelled"</text></inputEntry>
         <inputEntry id="r6_i2"><text>-</text></inputEntry>
         <inputEntry id="r6_i3"><text>-</text></inputEntry>
         <inputEntry id="r6_i4"><text>-</text></inputEntry>
         <inputEntry id="r6_i5"><text>-</text></inputEntry>
-        <outputEntry id="r6_o1"><text>"PUBLISHED"</text></outputEntry>
-        <outputEntry id="r6_o2"><text>"Edge serialization complete, JSON delivered to consumer"</text></outputEntry>
-      </rule>
-
-      <!-- Rule 7: Terminal states — no transition -->
-      <rule id="r7">
-        <inputEntry id="r7_i1"><text>"PUBLISHED","CANCELLED"</text></inputEntry>
-        <inputEntry id="r7_i2"><text>-</text></inputEntry>
-        <inputEntry id="r7_i3"><text>-</text></inputEntry>
-        <inputEntry id="r7_i4"><text>-</text></inputEntry>
-        <inputEntry id="r7_i5"><text>-</text></inputEntry>
-        <outputEntry id="r7_o1"><text>current_status</text></outputEntry>
-        <outputEntry id="r7_o2"><text>"Terminal state — no transition permitted"</text></outputEntry>
+        <outputEntry id="r6_o1"><text>current_status</text></outputEntry>
+        <outputEntry id="r6_o2"><text>"Terminal state — no transition permitted"</text></outputEntry>
       </rule>
 
     </decisionTable>
   </decision>
 
   <!-- ============================================================
-       DECISION 2: DetermineOBXResolution
-       Inputs:  obs_code, observations (count of F/C entries for this code)
-       Output:  authoritative_entry_index (the seq number of the
-                authoritative observation), resolution_method
+       DECISION 2: DetermineSessionTransition
+       Inputs:  current_session_status, run_status, days_since_frozen
+       Output:  next_session_status
        ============================================================ -->
 
-  <decision id="DetermineOBXResolution" name="DetermineOBXResolution">
-    <decisionTable id="dt_obx_resolution"
+  <decision id="DetermineSessionTransition" name="DetermineSessionTransition">
+    <decisionTable id="dt_session_transition"
+                   hitPolicy="FIRST"
+                   preferredOrientation="Rule-as-Row">
+
+      <input id="s_current_status" label="current_session_status">
+        <inputExpression typeRef="string">
+          <text>current_session_status</text>
+        </inputExpression>
+        <inputValues>
+          <text>"active","frozen","expired"</text>
+        </inputValues>
+      </input>
+
+      <input id="s_run_status" label="run_status">
+        <inputExpression typeRef="string">
+          <text>run_status</text>
+        </inputExpression>
+      </input>
+
+      <input id="s_days_frozen" label="days_since_frozen">
+        <inputExpression typeRef="number">
+          <text>days_since_frozen</text>
+        </inputExpression>
+      </input>
+
+      <output id="s_next_status" label="next_session_status" typeRef="string">
+        <outputValues>
+          <text>"active","frozen","expired"</text>
+        </outputValues>
+      </output>
+
+      <output id="s_action" label="action" typeRef="string"/>
+
+      <!-- Rule S1: Active session, run completed — freeze session -->
+      <rule id="s1">
+        <inputEntry id="s1_i1"><text>"active"</text></inputEntry>
+        <inputEntry id="s1_i2"><text>"completed"</text></inputEntry>
+        <inputEntry id="s1_i3"><text>-</text></inputEntry>
+        <outputEntry id="s1_o1"><text>"frozen"</text></outputEntry>
+        <outputEntry id="s1_o2"><text>"Render static HTML snapshot, close SSE connection, serve snapshot on revisit"</text></outputEntry>
+      </rule>
+
+      <!-- Rule S2: Active session, run cancelled — freeze session -->
+      <rule id="s2">
+        <inputEntry id="s2_i1"><text>"active"</text></inputEntry>
+        <inputEntry id="s2_i2"><text>"cancelled"</text></inputEntry>
+        <inputEntry id="s2_i3"><text>-</text></inputEntry>
+        <outputEntry id="s2_o1"><text>"frozen"</text></outputEntry>
+        <outputEntry id="s2_o2"><text>"Render cancellation snapshot, close SSE connection"</text></outputEntry>
+      </rule>
+
+      <!-- Rule S3: Active session, run failed — freeze session -->
+      <rule id="s3">
+        <inputEntry id="s3_i1"><text>"active"</text></inputEntry>
+        <inputEntry id="s3_i2"><text>"failed"</text></inputEntry>
+        <inputEntry id="s3_i3"><text>-</text></inputEntry>
+        <outputEntry id="s3_o1"><text>"frozen"</text></outputEntry>
+        <outputEntry id="s3_o2"><text>"Render error snapshot, close SSE connection"</text></outputEntry>
+      </rule>
+
+      <!-- Rule S4: Active session, run still in progress — stay active -->
+      <rule id="s4">
+        <inputEntry id="s4_i1"><text>"active"</text></inputEntry>
+        <inputEntry id="s4_i2"><text>"pending","ingesting","analyzing","synthesizing"</text></inputEntry>
+        <inputEntry id="s4_i3"><text>-</text></inputEntry>
+        <outputEntry id="s4_o1"><text>"active"</text></outputEntry>
+        <outputEntry id="s4_o2"><text>"Continue streaming progress events via SSE"</text></outputEntry>
+      </rule>
+
+      <!-- Rule S5: Frozen session, TTL not exceeded — stay frozen -->
+      <rule id="s5">
+        <inputEntry id="s5_i1"><text>"frozen"</text></inputEntry>
+        <inputEntry id="s5_i2"><text>-</text></inputEntry>
+        <inputEntry id="s5_i3"><text>&lt; 3</text></inputEntry>
+        <outputEntry id="s5_o1"><text>"frozen"</text></outputEntry>
+        <outputEntry id="s5_o2"><text>"Serve static HTML snapshot on revisit"</text></outputEntry>
+      </rule>
+
+      <!-- Rule S6: Frozen session, TTL exceeded — expire -->
+      <rule id="s6">
+        <inputEntry id="s6_i1"><text>"frozen"</text></inputEntry>
+        <inputEntry id="s6_i2"><text>-</text></inputEntry>
+        <inputEntry id="s6_i3"><text>&gt;= 3</text></inputEntry>
+        <outputEntry id="s6_o1"><text>"expired"</text></outputEntry>
+        <outputEntry id="s6_o2"><text>"Delete session, snapshot, database rows, and Redis stream data"</text></outputEntry>
+      </rule>
+
+      <!-- Rule S7: Expired — terminal, no transition -->
+      <rule id="s7">
+        <inputEntry id="s7_i1"><text>"expired"</text></inputEntry>
+        <inputEntry id="s7_i2"><text>-</text></inputEntry>
+        <inputEntry id="s7_i3"><text>-</text></inputEntry>
+        <outputEntry id="s7_o1"><text>"expired"</text></outputEntry>
+        <outputEntry id="s7_o2"><text>"Terminal state — all data deleted, session ID returns 404"</text></outputEntry>
+      </rule>
+
+    </decisionTable>
+  </decision>
+
+  <!-- ============================================================
+       DECISION 3: DetermineObservationResolution
+       Inputs:  f_status_count, c_status_count, x_status_count
+       Output:  resolution_method
+       ============================================================ -->
+
+  <decision id="DetermineObservationResolution" name="DetermineObservationResolution">
+    <decisionTable id="dt_obs_resolution"
                    hitPolicy="FIRST"
                    preferredOrientation="Rule-as-Row">
 
@@ -171,7 +265,7 @@
 
       <output id="k_method" label="resolution_method" typeRef="string">
         <outputValues>
-          <text>"LATEST_C","LATEST_F","CANCELLED","PENDING","CONFLICTED"</text>
+          <text>"LATEST_C","LATEST_F","CANCELLED","PENDING"</text>
         </outputValues>
       </output>
 

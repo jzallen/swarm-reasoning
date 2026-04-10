@@ -17,7 +17,7 @@ Feature: Claim Ingestion
   # ---------------------------------------------------------------------------
 
   Scenario: Operator submits a valid claim
-    When an operator POSTs to "/claims" with body:
+    When an operator POSTs to "/sessions/{sessionId}/claims" with body:
       """
       {
         "claim_text": "Biden issued a federal vaccine mandate for all private employers.",
@@ -27,12 +27,12 @@ Feature: Claim Ingestion
       """
     Then the response status is 202
     And the response body contains a "run_id"
-    And the response body contains "status": "INGESTED"
+    And the response body contains "status": "pending"
     And the response body contains a "poll_url"
-    And a run record exists with status "INGESTED"
+    And a run record exists with status "pending"
 
   Scenario: Submission is rejected if claim_text is missing
-    When an operator POSTs to "/claims" with body:
+    When an operator POSTs to "/sessions/{sessionId}/claims" with body:
       """
       {
         "source_url": "https://example.com/article"
@@ -41,8 +41,8 @@ Feature: Claim Ingestion
     Then the response status is 422
     And the response body contains an error referencing "claim_text"
 
-  Scenario: Submission is rejected if claim_text exceeds 1000 characters
-    When an operator POSTs to "/claims" with a claim_text of 1001 characters
+  Scenario: Submission is rejected if claim_text exceeds 2000 characters
+    When an operator POSTs to "/sessions/{sessionId}/claims" with a claim_text of 2001 characters
     Then the response status is 422
     And the response body contains an error referencing "claim_text"
 
@@ -92,7 +92,7 @@ Feature: Claim Ingestion
     When the claim-detector emits CHECK_WORTHY_SCORE = 0.31
     Then the run status transitions to "CANCELLED"
     And no further agents are dispatched
-    And GET "/runs/RUN-001" returns status "CANCELLED"
+    And GET "/sessions/{sessionId}" returns run status "cancelled"
     And the observation streams for "RUN-001" are retained in Redis
 
   Scenario: Claim detector publishes normalized claim text
@@ -122,9 +122,10 @@ Feature: Claim Ingestion
   Scenario: Completion of entity extraction triggers Phase 2 fan-out
     Given the entity-extractor has completed for run "RUN-001"
     When the orchestrator receives the entity-extractor STOP message
-    Then the orchestrator dispatches claimreview-matcher via MCP
-    And the orchestrator dispatches coverage-left via MCP
-    And the orchestrator dispatches coverage-center via MCP
-    And the orchestrator dispatches coverage-right via MCP
-    And the orchestrator dispatches domain-evidence via MCP
-    And all five dispatches occur within 500ms of one another
+    Then the orchestrator dispatches claimreview-matcher via Temporal
+    And the orchestrator dispatches coverage-left via Temporal
+    And the orchestrator dispatches coverage-center via Temporal
+    And the orchestrator dispatches coverage-right via Temporal
+    And the orchestrator dispatches domain-evidence via Temporal
+    And all five Phase 2a dispatches occur within 500ms of one another
+    And after Phase 2a completes, the orchestrator dispatches source-validator via Temporal in Phase 2b

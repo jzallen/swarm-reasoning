@@ -1,21 +1,14 @@
-openapi: 3.1.0
+openapi: 3.0.3
 
 info:
-  title: swarm-reasoning Consumer API
-  version: 0.2.0
+  title: swarm-reasoning Session API
+  version: 1.0.0
   description: |
-    REST API for claim submission, run lifecycle management, verdict
-    retrieval, and audit log access.
+    Session-based REST API for claim submission, real-time progress streaming,
+    verdict retrieval, and observation audit access.
 
-    All endpoints are served by the Consumer API. The Consumer API
-    sits in the DMZ and is the only system boundary exposed to external
-    operators and analysts. All internal orchestrator, agent, and Redis
-    communication is not exposed via this API.
-
-    ## Authentication
-    Authentication is out of scope for the prototype. All endpoints are
-    treated as trusted-caller in local development. Production deployments
-    should add OAuth2 or API key authentication at the reverse proxy layer.
+    All endpoints are served by the NestJS backend. No authentication is
+    required for the prototype.
 
   contact:
     name: swarm-reasoning
@@ -23,237 +16,164 @@ info:
     name: MIT
 
 servers:
-  - url: http://localhost:8000
-    description: Local development (Docker Compose)
+  - url: http://localhost:3000
+    description: NestJS backend (local development)
 
 tags:
-  - name: Claims
-    description: Claim submission and retrieval
-  - name: Runs
-    description: Run lifecycle and status monitoring
+  - name: Sessions
+    description: Session lifecycle and claim submission
   - name: Verdicts
-    description: Published fact-check verdict retrieval
-  - name: Audit
-    description: Observation stream audit log access
+    description: Verdict retrieval with citations
+  - name: Observations
+    description: Observation stream audit log
   - name: System
-    description: Health checks and registry inspection
+    description: Health checks
 
 paths:
 
   # ---------------------------------------------------------------------------
-  # Claims
+  # Sessions
   # ---------------------------------------------------------------------------
 
-  /claims:
+  /sessions:
     post:
-      tags: [Claims]
-      operationId: submitClaim
-      summary: Submit a claim for fact-checking
+      tags: [Sessions]
+      operationId: createSession
+      summary: Create a new session
       description: |
-        Accepts a claim text and source metadata. Validates input, assigns
-        a claim_id (or reuses an existing one for duplicate claim text),
-        creates a new run_id, and initiates the ingestion agent via the
-        orchestrator. Returns 202 immediately; use GET /runs/{run_id} to
-        poll status.
+        Creates a new session and returns the generated session ID. The session
+        starts in `active` status.
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}:
+    get:
+      tags: [Sessions]
+      operationId: getSession
+      summary: Get session status
+      description: |
+        Returns session data. If the session is `active`, returns the full
+        session object. If the session is `frozen`, includes a `snapshotUrl`
+        pointing to the immutable snapshot.
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '200':
+          description: Session data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/claims:
+    post:
+      tags: [Sessions]
+      operationId: submitClaim
+      summary: Submit a claim to a session
+      description: |
+        Submits a claim for fact-checking within the given session. The claim
+        is validated, a run is initiated, and processing begins immediately.
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ClaimSubmission'
+              $ref: '#/components/schemas/Claim'
             example:
-              claim_text: "Biden issued a federal vaccine mandate for all private employers."
-              source_url: "https://example.com/article/12345"
-              source_date: "20211104"
+              claimText: "Biden issued a federal vaccine mandate for all private employers."
+              sourceUrl: "https://example.com/article/12345"
+              sourceDate: "2021-11-04"
       responses:
         '202':
           description: Claim accepted, run initiated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ClaimAccepted'
+                $ref: '#/components/schemas/Session'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '422':
           description: Validation error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ValidationError'
-        '503':
-          description: Orchestrator unavailable
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceError'
+                $ref: '#/components/schemas/ErrorResponse'
 
+  /sessions/{sessionId}/events:
     get:
-      tags: [Claims]
-      operationId: listClaims
-      summary: List submitted claims
-      description: Returns a paginated list of claims, ordered by ingestion date descending.
-      parameters:
-        - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/offset'
-        - name: domain
-          in: query
-          schema:
-            $ref: '#/components/schemas/ClaimDomain'
-          description: Filter by claim domain
-      responses:
-        '200':
-          description: Paginated claim list
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClaimList'
-
-  /claims/{claim_id}:
-    get:
-      tags: [Claims]
-      operationId: getClaim
-      summary: Get a claim by ID
-      parameters:
-        - $ref: '#/components/parameters/claim_id'
-      responses:
-        '200':
-          description: Claim record
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Claim'
-        '404':
-          description: Claim not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NotFoundError'
-
-  /claims/{claim_id}/runs:
-    get:
-      tags: [Claims]
-      operationId: getRunsForClaim
-      summary: Get all runs for a claim
-      description: Returns all runs initiated for this claim, ordered by created_at descending.
-      parameters:
-        - $ref: '#/components/parameters/claim_id'
-      responses:
-        '200':
-          description: List of runs for this claim
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/RunSummary'
-        '404':
-          description: Claim not found
-
-  # ---------------------------------------------------------------------------
-  # Runs
-  # ---------------------------------------------------------------------------
-
-  /runs:
-    get:
-      tags: [Runs]
-      operationId: listRuns
-      summary: List runs
-      parameters:
-        - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/offset'
-        - name: status
-          in: query
-          schema:
-            $ref: '#/components/schemas/RunStatus'
-          description: Filter by run status
-      responses:
-        '200':
-          description: Paginated run list
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RunList'
-
-  /runs/{run_id}:
-    get:
-      tags: [Runs]
-      operationId: getRun
-      summary: Get run status and completion register
+      tags: [Sessions]
+      operationId: getSessionEvents
+      summary: SSE endpoint for real-time progress
       description: |
-        Returns the current run status, completion register (which agents
-        have emitted terminal OBX status), and timestamps. Use this endpoint
-        to poll run progress after submitting a claim.
+        Server-Sent Events stream that emits real-time progress updates for
+        the session's active run. Event types: `progress`, `verdict`, `close`.
       parameters:
-        - $ref: '#/components/parameters/run_id'
+        - $ref: '#/components/parameters/sessionId'
       responses:
         '200':
-          description: Run detail
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/ProgressEvent'
+
+  /sessions/{sessionId}/verdict:
+    get:
+      tags: [Verdicts]
+      operationId: getVerdict
+      summary: Get verdict with citations
+      description: |
+        Returns the finalized verdict for the session's run, including
+        factuality score, rating label, narrative, and citations.
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '200':
+          description: Verdict with citations
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RunDetail'
-              example:
-                run_id: "RUN-20260406-a3f7"
-                claim_id: "CLAIM-20260406-001"
-                status: "ANALYZING"
-                created_at: "2026-04-06T12:00:00Z"
-                updated_at: "2026-04-06T12:00:45Z"
-                expected_agent_count: 10
-                terminal_obx_count: 6
-                agents:
-                  - name: "ingestion-agent"
-                    status: "COMPLETE"
-                  - name: "claim-detector"
-                    status: "COMPLETE"
-                  - name: "entity-extractor"
-                    status: "COMPLETE"
-                  - name: "claimreview-matcher"
-                    status: "COMPLETE"
-                  - name: "coverage-left"
-                    status: "COMPLETE"
-                  - name: "coverage-center"
-                    status: "ACTIVE"
-                  - name: "coverage-right"
-                    status: "ACTIVE"
-                  - name: "domain-evidence"
-                    status: "COMPLETE"
-                  - name: "blindspot-detector"
-                    status: "IDLE"
-                  - name: "synthesizer"
-                    status: "IDLE"
+                $ref: '#/components/schemas/Verdict'
         '404':
-          description: Run not found
+          description: Session or verdict not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
-  /runs/{run_id}/observations:
+  /sessions/{sessionId}/observations:
     get:
-      tags: [Runs, Audit]
-      operationId: getRunObservations
-      summary: Retrieve the full observation log for a run
+      tags: [Observations]
+      operationId: getObservations
+      summary: Get full observation log for a session's run
       description: |
-        Returns all observations from all agent streams for the run.
-        Available at any lifecycle state — partial logs are returned for
-        runs still in ANALYZING state. The response is a JSON array of
-        all stream messages (START, OBS, STOP) in temporal order.
-
-        This endpoint is the primary audit and dispute resolution mechanism.
-        The observation streams are the authoritative record; the JSON
-        verdict is derived from them.
+        Returns all observations from all agent streams for the session's run.
+        The observation log is the authoritative audit record.
       parameters:
-        - $ref: '#/components/parameters/run_id'
-        - name: agent
-          in: query
-          schema:
-            type: string
-          description: Filter by agent name
-        - name: code
-          in: query
-          schema:
-            type: string
-          description: Filter by observation code
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [P, F, C, X]
-          description: Filter by epistemic status
+        - $ref: '#/components/parameters/sessionId'
       responses:
         '200':
           description: Observation log
@@ -262,122 +182,13 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
-              example:
-                - type: "START"
-                  runId: "claim-4821-run-003"
-                  agent: "ingestion-agent"
-                  phase: "ingestion"
-                  timestamp: "2026-04-06T12:00:00Z"
-                - type: "OBS"
-                  observation:
-                    runId: "claim-4821-run-003"
-                    agent: "ingestion-agent"
-                    seq: 1
-                    code: "CLAIM_TEXT"
-                    value: "Biden issued a federal vaccine mandate for all private employers."
-                    valueType: "ST"
-                    status: "F"
-                    timestamp: "2026-04-06T12:00:01Z"
-                - type: "STOP"
-                  runId: "claim-4821-run-003"
-                  agent: "ingestion-agent"
-                  finalStatus: "F"
-                  observationCount: 4
-                  timestamp: "2026-04-06T12:00:05Z"
+                  $ref: '#/components/schemas/Observation'
         '404':
-          description: Run not found
-
-  # ---------------------------------------------------------------------------
-  # Verdicts
-  # ---------------------------------------------------------------------------
-
-  /verdicts:
-    get:
-      tags: [Verdicts]
-      operationId: listVerdicts
-      summary: List published verdicts
-      parameters:
-        - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/offset'
-        - name: run_id
-          in: query
-          schema:
-            type: string
-          description: Filter by run_id
-        - name: claim_id
-          in: query
-          schema:
-            type: string
-          description: Filter by claim_id — returns all published verdicts for the claim
-        - name: verdict
-          in: query
-          schema:
-            $ref: '#/components/schemas/VerdictValue'
-          description: Filter by verdict value
-        - name: domain
-          in: query
-          schema:
-            $ref: '#/components/schemas/ClaimDomain'
-      responses:
-        '200':
-          description: Paginated verdict list
+          description: Session not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VerdictList'
-
-  /verdicts/{verdict_id}:
-    get:
-      tags: [Verdicts]
-      operationId: getVerdict
-      summary: Get a published verdict by ID
-      parameters:
-        - name: verdict_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Published verdict
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Verdict'
-              example:
-                verdict_id: "VRD-20260406-001"
-                run_id: "RUN-20260406-a3f7"
-                claim_id: "CLAIM-20260406-001"
-                claim_text: "Biden issued a federal vaccine mandate for all private employers."
-                verdict: "MOSTLY_FALSE"
-                confidence_score: 0.31
-                narrative: "OSHA issued an Emergency Temporary Standard requiring..."
-                coverage:
-                  left:
-                    article_count: 12
-                    framing: "SUPPORTIVE"
-                    top_source: "DailyKos"
-                  center:
-                    article_count: 8
-                    framing: "CRITICAL"
-                    top_source: "Associated Press"
-                  right:
-                    article_count: 11
-                    framing: "CRITICAL"
-                    top_source: "Fox News"
-                blindspot_score: 0.12
-                blindspot_direction: "NONE"
-                claimreview_match: true
-                claimreview_source: "PolitiFact"
-                claimreview_verdict: "MOSTLY_FALSE"
-                domain_evidence_alignment: "CONTRADICTS"
-                synthesis_signal_count: 28
-                synthesis_override_reason: ""
-                audit_stream_prefix: "reasoning:RUN-20260406-a3f7"
-                generated_at: "2026-04-06T12:01:48Z"
-        '404':
-          description: Verdict not found
+                $ref: '#/components/schemas/ErrorResponse'
 
   # ---------------------------------------------------------------------------
   # System
@@ -387,46 +198,21 @@ paths:
     get:
       tags: [System]
       operationId: healthCheck
-      summary: System health check
-      description: Returns health status of the Consumer API and connectivity to the orchestrator.
+      summary: Health check
+      description: Returns health status of the backend and its dependent services.
       responses:
         '200':
           description: Healthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthStatus'
+                $ref: '#/components/schemas/HealthResponse'
         '503':
           description: Unhealthy
-
-  /agents:
-    get:
-      tags: [System]
-      operationId: listAgents
-      summary: List registered agent bundles and their current status
-      responses:
-        '200':
-          description: Agent registry
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/AgentStatus'
-
-  /codes:
-    get:
-      tags: [System]
-      operationId: listObxCodes
-      summary: List the OBX code registry
-      description: Returns the full contents of the OBX code registry loaded from obx-code-registry.json.
-      responses:
-        '200':
-          description: OBX code registry
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OBXCodeRegistry'
+                $ref: '#/components/schemas/HealthResponse'
 
 # ---------------------------------------------------------------------------
 # Components
@@ -435,339 +221,184 @@ paths:
 components:
 
   parameters:
-    run_id:
-      name: run_id
+    sessionId:
+      name: sessionId
       in: path
       required: true
       schema:
         type: string
-      example: "RUN-20260406-a3f7"
-    claim_id:
-      name: claim_id
-      in: path
-      required: true
-      schema:
-        type: string
-      example: "CLAIM-20260406-001"
-    limit:
-      name: limit
-      in: query
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 100
-        default: 20
-    offset:
-      name: offset
-      in: query
-      schema:
-        type: integer
-        minimum: 0
-        default: 0
+        format: uuid
+      description: Unique session identifier
 
   schemas:
 
-    ClaimSubmission:
+    Session:
       type: object
-      required: [claim_text]
+      required: [sessionId, status, createdAt]
       properties:
-        claim_text:
+        sessionId:
           type: string
-          minLength: 10
-          maxLength: 1000
-          description: The claim text to be fact-checked.
-        source_url:
-          type: string
-          format: uri
-          description: URL of the article or document the claim was taken from.
-        source_date:
-          type: string
-          pattern: '^\d{8}$'
-          description: Publication date of the source in YYYYMMDD format.
-
-    ClaimAccepted:
-      type: object
-      properties:
-        run_id:
-          type: string
-        claim_id:
-          type: string
+          format: uuid
         status:
           type: string
-          enum: [INGESTED]
-        poll_url:
+          enum: [active, frozen, expired]
+        claim:
+          type: string
+          description: The claim text submitted to this session
+        createdAt:
+          type: string
+          format: date-time
+        frozenAt:
+          type: string
+          format: date-time
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        snapshotUrl:
           type: string
           format: uri
+          nullable: true
 
     Claim:
       type: object
+      required: [claimText]
       properties:
-        claim_id:
+        claimText:
           type: string
-        claim_text:
-          type: string
-        claim_slug:
-          type: string
-        source_url:
-          type: string
-        source_date:
-          type: string
-        domain:
-          $ref: '#/components/schemas/ClaimDomain'
-        ingested_at:
-          type: string
-          format: date-time
-
-    ClaimList:
-      type: object
-      properties:
-        total:
-          type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Claim'
-
-    ClaimDomain:
-      type: string
-      enum: [HEALTHCARE, ECONOMICS, POLICY, SCIENCE, ELECTION, CRIME, OTHER]
-
-    RunStatus:
-      type: string
-      enum: [INGESTED, ANALYZING, SYNTHESIZED, PUBLISHED, CANCELLED]
-
-    RunSummary:
-      type: object
-      properties:
-        run_id:
-          type: string
-        status:
-          $ref: '#/components/schemas/RunStatus'
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-
-    RunDetail:
-      allOf:
-        - $ref: '#/components/schemas/RunSummary'
-        - type: object
-          properties:
-            claim_id:
-              type: string
-            expected_agent_count:
-              type: integer
-            terminal_obx_count:
-              type: integer
-            agents:
-              type: array
-              items:
-                $ref: '#/components/schemas/AgentRunStatus'
-
-    RunList:
-      type: object
-      properties:
-        total:
-          type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/RunSummary'
-
-    AgentRunStatus:
-      type: object
-      properties:
-        name:
-          type: string
-        status:
-          type: string
-          enum: [IDLE, ACTIVE, COMPLETE, ERROR]
-
-    VerdictValue:
-      type: string
-      enum: ["TRUE", MOSTLY_TRUE, HALF_TRUE, MOSTLY_FALSE, "FALSE", PANTS_FIRE, UNVERIFIABLE]
-
-    CoverageSegment:
-      type: object
-      properties:
-        article_count:
-          type: integer
-        framing:
-          type: string
-          enum: [SUPPORTIVE, CRITICAL, NEUTRAL, ABSENT]
-        top_source:
-          type: string
-        top_source_url:
+          maxLength: 2000
+          description: The claim text to be fact-checked.
+        sourceUrl:
           type: string
           format: uri
+          description: URL of the source article or document.
+        sourceDate:
+          type: string
+          format: date
+          description: Publication date of the source.
 
     Verdict:
       type: object
+      required: [verdictId, factualityScore, ratingLabel, narrative, signalCount, citations, finalizedAt]
       properties:
-        verdict_id:
+        verdictId:
           type: string
-        run_id:
-          type: string
-        claim_id:
-          type: string
-        claim_text:
-          type: string
-        verdict:
-          $ref: '#/components/schemas/VerdictValue'
-        confidence_score:
+        factualityScore:
           type: number
           minimum: 0.0
           maximum: 1.0
+        ratingLabel:
+          type: string
+          enum: ["true", mostly-true, half-true, mostly-false, "false", pants-on-fire]
         narrative:
           type: string
-        coverage:
-          type: object
-          properties:
-            left:
-              $ref: '#/components/schemas/CoverageSegment'
-            center:
-              $ref: '#/components/schemas/CoverageSegment'
-            right:
-              $ref: '#/components/schemas/CoverageSegment'
-        blindspot_score:
-          type: number
-          minimum: 0.0
-          maximum: 1.0
-        blindspot_direction:
-          type: string
-          enum: [LEFT, RIGHT, CENTER, NONE]
-        claimreview_match:
-          type: boolean
-        claimreview_source:
-          type: string
-        claimreview_verdict:
-          type: string
-        domain_evidence_alignment:
-          type: string
-          enum: [SUPPORTS, CONTRADICTS, PARTIAL, ABSENT]
-        synthesis_signal_count:
+        signalCount:
           type: integer
-        synthesis_override_reason:
-          type: string
-        audit_log_ref:
-          type: string
-        generated_at:
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Citation'
+        finalizedAt:
           type: string
           format: date-time
 
-    VerdictList:
+    Citation:
       type: object
+      required: [sourceUrl, sourceName, agent, observationCode, validationStatus, convergenceCount]
       properties:
-        total:
+        sourceUrl:
+          type: string
+          format: uri
+        sourceName:
+          type: string
+        agent:
+          type: string
+        observationCode:
+          type: string
+        validationStatus:
+          type: string
+          enum: [live, dead, redirect, soft-404, timeout, not-validated]
+        convergenceCount:
           type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Verdict'
 
-    AgentStatus:
+    Observation:
       type: object
+      required: [runId, agent, seq, code, value, valueType, status, timestamp]
       properties:
-        name:
+        runId:
           type: string
-        mcp_endpoint:
+        agent:
           type: string
-        stream_prefix:
+        seq:
+          type: integer
+        code:
           type: string
+        value:
+          type: string
+        valueType:
+          type: string
+        units:
+          type: string
+          nullable: true
+        referenceRange:
+          type: string
+          nullable: true
         status:
           type: string
-          enum: [IDLE, ACTIVE, COMPLETE, ERROR]
-        last_heartbeat:
+          enum: [P, F, C, X]
+          description: "Epistemic status: P (preliminary), F (final), C (corrected), X (cancelled)"
+        timestamp:
           type: string
           format: date-time
-        owned_codes:
-          type: array
-          items:
-            type: string
+        method:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
 
-    OBXCodeRegistry:
+    ProgressEvent:
       type: object
       properties:
-        version:
+        runId:
           type: string
-        coding_system:
+        agent:
           type: string
-        codes:
-          type: array
-          items:
-            type: object
-            properties:
-              code:
-                type: string
-              display:
-                type: string
-              owner_agent:
-                type: string
-              value_type:
-                type: string
-              units:
-                type: string
-                nullable: true
-              reference_range:
-                type: string
-                nullable: true
-              description:
-                type: string
+        phase:
+          type: string
+        type:
+          type: string
+          enum: [progress, verdict, close]
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
 
-    HealthStatus:
+    HealthResponse:
       type: object
       properties:
         status:
           type: string
           enum: [healthy, degraded, unhealthy]
-        orchestrator:
-          type: string
-          enum: [reachable, unreachable]
-        redis:
-          type: string
-          enum: [reachable, unreachable]
-        checked_at:
-          type: string
-          format: date-time
+        services:
+          type: object
+          properties:
+            temporal:
+              type: string
+              enum: [reachable, unreachable]
+            postgresql:
+              type: string
+              enum: [reachable, unreachable]
+            redis:
+              type: string
+              enum: [reachable, unreachable]
 
-    ValidationError:
+    ErrorResponse:
       type: object
       properties:
         error:
           type: string
-        field:
-          type: string
-        message:
-          type: string
-
-    NotFoundError:
-      type: object
-      properties:
-        error:
-          type: string
-          example: "not_found"
-        message:
-          type: string
-
-    ServiceError:
-      type: object
-      properties:
-        error:
-          type: string
-          example: "service_unavailable"
         message:
           type: string
