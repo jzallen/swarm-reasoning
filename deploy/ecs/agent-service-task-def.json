@@ -1,0 +1,49 @@
+{
+  "family": "swarm-reasoning-agent-service",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": { "Ref": "ECSExecutionRole" },
+  "taskRoleArn": { "Ref": "AgentServiceTaskRole" },
+  "containerDefinitions": [
+    {
+      "name": "agent-service",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/swarm-reasoning/agent-service:latest",
+      "essential": true,
+      "environment": [
+        { "name": "TEMPORAL_NAMESPACE", "value": "swarm-reasoning" }
+      ],
+      "secrets": [
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/swarm-reasoning/anthropic-api-key"
+        },
+        {
+          "name": "GOOGLE_FACTCHECK_API_KEY",
+          "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/swarm-reasoning/google-factcheck-api-key"
+        },
+        {
+          "name": "NEWSAPI_KEY",
+          "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/swarm-reasoning/newsapi-key"
+        },
+        {
+          "name": "REDIS_URL",
+          "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/swarm-reasoning/redis-url"
+        },
+        {
+          "name": "TEMPORAL_ADDRESS",
+          "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/swarm-reasoning/temporal-address"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/swarm-reasoning/agent-service",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "agent-service"
+        }
+      }
+    }
+  ]
+}

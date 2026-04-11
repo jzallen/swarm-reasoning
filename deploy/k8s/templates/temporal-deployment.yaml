@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal
+  labels:
+    {{- include "swarm-reasoning.labels" . | nindent 4 }}
+    app.kubernetes.io/name: temporal
+spec:
+  replicas: {{ .Values.replicas.temporal }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: temporal
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: temporal
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: temporal
+          image: "{{ .Values.images.temporal.repository }}:{{ .Values.images.temporal.tag }}"
+          imagePullPolicy: {{ .Values.images.temporal.pullPolicy }}
+          ports:
+            - containerPort: 7233
+          env:
+            - name: DB
+              value: postgresql
+            - name: DB_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: temporal
+            - name: POSTGRES_PWD
+              value: temporal
+            - name: POSTGRES_SEEDS
+              value: temporal-db
+            - name: TEMPORAL_NAMESPACE
+              value: {{ .Values.config.temporalNamespace }}
+          readinessProbe:
+            tcpSocket:
+              port: 7233
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources.temporal | nindent 12 }}

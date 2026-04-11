@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  swarm-reasoning — Data stores: Aurora Serverless v2, ElastiCache Redis,
+  S3 snapshot bucket, SSM Parameter Store entries.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: swarm-reasoning
+  VPCId:
+    Type: String
+  PrivateSubnet1Id:
+    Type: String
+  PrivateSubnet2Id:
+    Type: String
+  AuroraSecurityGroupId:
+    Type: String
+  RedisSecurityGroupId:
+    Type: String
+  DBMasterUsername:
+    Type: String
+    Default: swarm
+    NoEcho: true
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Aurora Serverless v2 — Application Database
+  # ---------------------------------------------------------------------------
+  AuroraSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for Aurora
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: !Sub "${EnvironmentName}-aurora"
+      Engine: aurora-postgresql
+      EngineVersion: "16.1"
+      DatabaseName: swarm
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0.5
+        MaxCapacity: 4
+      DBSubnetGroupName: !Ref AuroraSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref AuroraSecurityGroupId
+      StorageEncrypted: true
+      DeletionProtection: false
+      BackupRetentionPeriod: 7
+
+  AuroraInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+
+  # ---------------------------------------------------------------------------
+  # ElastiCache Redis
+  # ---------------------------------------------------------------------------
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Private subnets for Redis
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      ClusterName: !Sub "${EnvironmentName}-redis"
+      Engine: redis
+      EngineVersion: "7.1"
+      CacheNodeType: cache.t4g.micro
+      NumCacheNodes: 1
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref RedisSecurityGroupId
+
+  # ---------------------------------------------------------------------------
+  # S3 — Snapshot Storage
+  # ---------------------------------------------------------------------------
+  SnapshotBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${EnvironmentName}-snapshots-${AWS::AccountId}"
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteSnapshotsAfter3Days
+            Prefix: snapshots/
+            Status: Enabled
+            ExpirationInDays: 3
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  SnapshotBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SnapshotBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOAIRead
+            Effect: Allow
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOAI.S3CanonicalUserId
+            Action: s3:GetObject
+            Resource: !Sub "${SnapshotBucket.Arn}/*"
+
+  CloudFrontOAI:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub "OAI for ${EnvironmentName} snapshot bucket"
+
+  # ---------------------------------------------------------------------------
+  # SSM Parameter Store — Connection strings and API keys
+  # ---------------------------------------------------------------------------
+  SSMDatabaseUrl:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${EnvironmentName}/database-url"
+      Type: SecureString
+      Value: !Sub "postgresql://${DBMasterUsername}:${DBMasterPassword}@${AuroraCluster.Endpoint.Address}:${AuroraCluster.Endpoint.Port}/swarm"
+
+  SSMRedisUrl:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${EnvironmentName}/redis-url"
+      Type: SecureString
+      Value: !Sub "redis://${RedisCluster.RedisEndpoint.Address}:${RedisCluster.RedisEndpoint.Port}"
+
+  SSMTemporalAddress:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${EnvironmentName}/temporal-address"
+      Type: String
+      Value: "temporal.internal:7233"
+
+Outputs:
+  AuroraEndpoint:
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+    Export:
+      Name: !Sub "${EnvironmentName}-AuroraEndpoint"
+  RedisEndpoint:
+    Value: !GetAtt RedisCluster.RedisEndpoint.Address
+    Export:
+      Name: !Sub "${EnvironmentName}-RedisEndpoint"
+  SnapshotBucketName:
+    Value: !Ref SnapshotBucket
+    Export:
+      Name: !Sub "${EnvironmentName}-SnapshotBucketName"
+  SnapshotBucketArn:
+    Value: !GetAtt SnapshotBucket.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-SnapshotBucketArn"
+  CloudFrontOAIId:
+    Value: !Ref CloudFrontOAI
+    Export:
+      Name: !Sub "${EnvironmentName}-CloudFrontOAIId"

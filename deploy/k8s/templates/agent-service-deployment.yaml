@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-service
+  labels:
+    {{- include "swarm-reasoning.labels" . | nindent 4 }}
+    app.kubernetes.io/name: agent-service
+spec:
+  replicas: {{ .Values.replicas.agentService }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-service
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-service
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: agent-service
+          image: "{{ .Values.images.agentService.repository }}:{{ .Values.images.agentService.tag }}"
+          imagePullPolicy: {{ .Values.images.agentService.pullPolicy }}
+          resources:
+            {{- toYaml .Values.resources.agentService | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: agent-service-config
+            - secretRef:
+                name: api-keys

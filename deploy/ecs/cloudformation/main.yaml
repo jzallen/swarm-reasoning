@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  swarm-reasoning — Root stack importing nested stacks for networking,
+  IAM, data stores, compute, and CDN.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: swarm-reasoning
+  ACMCertificateArn:
+    Type: String
+    Description: ARN of ACM certificate for HTTPS on ALB
+  CloudFrontACMCertificateArn:
+    Type: String
+    Description: ARN of ACM certificate (us-east-1) for CloudFront
+    Default: ""
+  DomainName:
+    Type: String
+    Description: Custom domain name (optional)
+    Default: ""
+  DBMasterUsername:
+    Type: String
+    Default: swarm
+    NoEcho: true
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+  BackendImageUri:
+    Type: String
+    Description: ECR image URI for backend service
+  AgentServiceImageUri:
+    Type: String
+    Description: ECR image URI for agent service
+  TemplatesBucket:
+    Type: String
+    Description: S3 bucket containing nested CloudFormation templates
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Networking — VPC, subnets, NAT, security groups
+  # ---------------------------------------------------------------------------
+  NetworkingStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${TemplatesBucket}.s3.amazonaws.com/vpc.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+
+  # ---------------------------------------------------------------------------
+  # IAM — Execution roles, task roles, OIDC, ECR repos
+  # ---------------------------------------------------------------------------
+  IAMStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: DataStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplatesBucket}.s3.amazonaws.com/iam.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        SnapshotBucketArn: !GetAtt DataStack.Outputs.SnapshotBucketArn
+
+  # ---------------------------------------------------------------------------
+  # Data Stores — Aurora, ElastiCache, S3, SSM
+  # ---------------------------------------------------------------------------
+  DataStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: NetworkingStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplatesBucket}.s3.amazonaws.com/data.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VPCId: !GetAtt NetworkingStack.Outputs.VPCId
+        PrivateSubnet1Id: !GetAtt NetworkingStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt NetworkingStack.Outputs.PrivateSubnet2Id
+        AuroraSecurityGroupId: !GetAtt NetworkingStack.Outputs.AuroraSecurityGroupId
+        RedisSecurityGroupId: !GetAtt NetworkingStack.Outputs.RedisSecurityGroupId
+        DBMasterUsername: !Ref DBMasterUsername
+        DBMasterPassword: !Ref DBMasterPassword
+
+  # ---------------------------------------------------------------------------
+  # Compute — ECS cluster, services, ALB, auto-scaling
+  # ---------------------------------------------------------------------------
+  ComputeStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - NetworkingStack
+      - IAMStack
+      - DataStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplatesBucket}.s3.amazonaws.com/ecs.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ACMCertificateArn: !Ref ACMCertificateArn
+        BackendImageUri: !Ref BackendImageUri
+        AgentServiceImageUri: !Ref AgentServiceImageUri
+        VPCId: !GetAtt NetworkingStack.Outputs.VPCId
+        PublicSubnet1Id: !GetAtt NetworkingStack.Outputs.PublicSubnet1Id
+        PublicSubnet2Id: !GetAtt NetworkingStack.Outputs.PublicSubnet2Id
+        PrivateSubnet1Id: !GetAtt NetworkingStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt NetworkingStack.Outputs.PrivateSubnet2Id
+        ALBSecurityGroupId: !GetAtt NetworkingStack.Outputs.ALBSecurityGroupId
+        BackendSecurityGroupId: !GetAtt NetworkingStack.Outputs.BackendSecurityGroupId
+        AgentServiceSecurityGroupId: !GetAtt NetworkingStack.Outputs.AgentServiceSecurityGroupId
+        TemporalSecurityGroupId: !GetAtt NetworkingStack.Outputs.TemporalSecurityGroupId
+        ECSExecutionRoleArn: !GetAtt IAMStack.Outputs.ECSExecutionRoleArn
+        BackendTaskRoleArn: !GetAtt IAMStack.Outputs.BackendTaskRoleArn
+        AgentServiceTaskRoleArn: !GetAtt IAMStack.Outputs.AgentServiceTaskRoleArn
+
+  # ---------------------------------------------------------------------------
+  # CDN — CloudFront for frontend SPA and snapshots
+  # ---------------------------------------------------------------------------
+  CDNStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: DataStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplatesBucket}.s3.amazonaws.com/cdn.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        DomainName: !Ref DomainName
+        ACMCertificateArn: !Ref CloudFrontACMCertificateArn
+        SnapshotBucketDomainName: !Sub "${EnvironmentName}-snapshots-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
+        FrontendBucketDomainName: !Sub "${EnvironmentName}-frontend-${AWS::AccountId}.s3.${AWS::Region}.amazonaws.com"
+        CloudFrontOAIId: !GetAtt DataStack.Outputs.CloudFrontOAIId
+
+Outputs:
+  ALBDNSName:
+    Description: ALB DNS name for Cloudflare CNAME
+    Value: !GetAtt ComputeStack.Outputs.ALBDNSName
+  CloudFrontDomain:
+    Description: CloudFront distribution domain for frontend
+    Value: !GetAtt CDNStack.Outputs.DistributionDomainName
+  AuroraEndpoint:
+    Description: Aurora cluster endpoint
+    Value: !GetAtt DataStack.Outputs.AuroraEndpoint
+  RedisEndpoint:
+    Description: ElastiCache Redis endpoint
+    Value: !GetAtt DataStack.Outputs.RedisEndpoint

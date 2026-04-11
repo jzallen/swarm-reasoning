@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  swarm-reasoning — CloudFront distributions for frontend SPA and snapshot serving.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: swarm-reasoning
+  DomainName:
+    Type: String
+    Description: Custom domain for the application (e.g., swarm.example.com)
+    Default: ""
+  ACMCertificateArn:
+    Type: String
+    Description: ARN of ACM certificate (us-east-1) for CloudFront
+    Default: ""
+  SnapshotBucketDomainName:
+    Type: String
+    Description: S3 bucket regional domain name for snapshots
+  FrontendBucketDomainName:
+    Type: String
+    Description: S3 bucket regional domain name for frontend SPA
+  CloudFrontOAIId:
+    Type: String
+    Description: CloudFront Origin Access Identity ID
+
+Conditions:
+  HasCustomDomain: !Not [!Equals [!Ref DomainName, ""]]
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Frontend SPA — S3 bucket
+  # ---------------------------------------------------------------------------
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${EnvironmentName}-frontend-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOAIRead
+            Effect: Allow
+            Principal:
+              CanonicalUser: !GetAtt FrontendOAI.S3CanonicalUserId
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+
+  FrontendOAI:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub "OAI for ${EnvironmentName} frontend bucket"
+
+  # ---------------------------------------------------------------------------
+  # CloudFront Distribution
+  # ---------------------------------------------------------------------------
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Aliases: !If
+          - HasCustomDomain
+          - [!Ref DomainName]
+          - !Ref "AWS::NoValue"
+        ViewerCertificate: !If
+          - HasCustomDomain
+          - AcmCertificateArn: !Ref ACMCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+
+        Origins:
+          # Frontend SPA origin
+          - Id: frontend-s3
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${FrontendOAI}"
+
+          # Snapshot bucket origin
+          - Id: snapshots-s3
+            DomainName: !Ref SnapshotBucketDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${CloudFrontOAIId}"
+
+        DefaultCacheBehavior:
+          TargetOriginId: frontend-s3
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          Compress: true
+
+        CacheBehaviors:
+          # Static assets — long cache
+          - PathPattern: /assets/*
+            TargetOriginId: frontend-s3
+            ViewerProtocolPolicy: redirect-to-https
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            Compress: true
+
+          # Snapshots — short cache (content has 3-day TTL in S3)
+          - PathPattern: /snapshots/*
+            TargetOriginId: snapshots-s3
+            ViewerProtocolPolicy: redirect-to-https
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            Compress: true
+
+        # SPA fallback — return index.html for 403/404
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+
+        Comment: !Sub "${EnvironmentName} frontend and snapshots"
+
+Outputs:
+  DistributionDomainName:
+    Value: !GetAtt Distribution.DomainName
+    Export:
+      Name: !Sub "${EnvironmentName}-CloudFrontDomain"
+  DistributionId:
+    Value: !Ref Distribution
+    Export:
+      Name: !Sub "${EnvironmentName}-CloudFrontDistributionId"
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub "${EnvironmentName}-FrontendBucketName"

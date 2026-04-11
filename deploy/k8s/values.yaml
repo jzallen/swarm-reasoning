@@ -1,0 +1,143 @@
+# ---------------------------------------------------------------------------
+# swarm-reasoning Helm values — minikube demo configuration
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Image tags
+# ---------------------------------------------------------------------------
+images:
+  backend:
+    repository: swarm-reasoning/backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: swarm-reasoning/frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  agentService:
+    repository: swarm-reasoning/agent-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  temporal:
+    repository: temporalio/auto-setup
+    tag: latest
+    pullPolicy: IfNotPresent
+  temporalUi:
+    repository: temporalio/ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  temporalDb:
+    repository: postgres
+    tag: "16"
+    pullPolicy: IfNotPresent
+  postgresql:
+    repository: postgres
+    tag: "16"
+    pullPolicy: IfNotPresent
+  redis:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Replica counts
+# ---------------------------------------------------------------------------
+replicas:
+  backend: 1
+  frontend: 1
+  agentService: 1
+  temporal: 1
+  temporalUi: 1
+  temporalDb: 1
+  postgresql: 1
+  redis: 1
+
+# ---------------------------------------------------------------------------
+# Resource limits
+# ---------------------------------------------------------------------------
+resources:
+  backend:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  frontend:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  agentService:
+    limits:
+      cpu: "2"
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  temporal:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  temporalUi:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  temporalDb:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  postgresql:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  redis:
+    limits:
+      cpu: 250m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# ---------------------------------------------------------------------------
+# Environment configuration
+# ---------------------------------------------------------------------------
+config:
+  databaseUrl: "postgresql://swarm:swarm@postgresql:5432/swarm"
+  redisUrl: "redis://redis:6379"
+  temporalAddress: "temporal:7233"
+  temporalNamespace: "swarm-reasoning"
+  nodeEnv: "production"
+
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
+persistence:
+  postgresql:
+    size: 5Gi
+    storageClass: standard
+  temporalDb:
+    size: 5Gi
+    storageClass: standard
+
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  host: swarm-reasoning.local

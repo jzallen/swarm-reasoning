@@ -1,0 +1,229 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  swarm-reasoning — IAM roles for ECS execution and task-level permissions.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: swarm-reasoning
+  SnapshotBucketArn:
+    Type: String
+    Description: ARN of the S3 snapshot bucket
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # ECS Execution Role — shared by all task definitions
+  # Permissions: pull ECR images, read SSM parameters, write CloudWatch logs
+  # ---------------------------------------------------------------------------
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-ecs-execution"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SSMReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${EnvironmentName}/*"
+
+  # ---------------------------------------------------------------------------
+  # Backend Task Role — S3 write for snapshots
+  # ---------------------------------------------------------------------------
+  BackendTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-backend-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3SnapshotWrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource: !Sub "${SnapshotBucketArn}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Ref SnapshotBucketArn
+
+  # ---------------------------------------------------------------------------
+  # Agent Service Task Role — Redis and Temporal access (network-level)
+  # ---------------------------------------------------------------------------
+  AgentServiceTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-agent-service-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions OIDC — for CI/CD deploy workflow
+  # ---------------------------------------------------------------------------
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-github-actions"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringLike:
+                token.actions.githubusercontent.com:sub: "repo:*:ref:refs/heads/main"
+      Policies:
+        - PolicyName: DeployAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                  - ecs:RegisterTaskDefinition
+                  - ecs:DescribeTaskDefinition
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${EnvironmentName}-frontend-${AWS::AccountId}"
+                  - !Sub "arn:aws:s3:::${EnvironmentName}-frontend-${AWS::AccountId}/*"
+              - Effect: Allow
+                Action:
+                  - cloudfront:CreateInvalidation
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt ECSExecutionRole.Arn
+                  - !GetAtt BackendTaskRole.Arn
+                  - !GetAtt AgentServiceTaskRole.Arn
+
+  # ---------------------------------------------------------------------------
+  # ECR Repositories
+  # ---------------------------------------------------------------------------
+  BackendECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: swarm-reasoning/backend
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+  AgentServiceECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: swarm-reasoning/agent-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+Outputs:
+  ECSExecutionRoleArn:
+    Value: !GetAtt ECSExecutionRole.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-ECSExecutionRoleArn"
+  BackendTaskRoleArn:
+    Value: !GetAtt BackendTaskRole.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-BackendTaskRoleArn"
+  AgentServiceTaskRoleArn:
+    Value: !GetAtt AgentServiceTaskRole.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-AgentServiceTaskRoleArn"
+  GitHubActionsRoleArn:
+    Value: !GetAtt GitHubActionsRole.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-GitHubActionsRoleArn"
+  BackendECRRepoUri:
+    Value: !GetAtt BackendECRRepo.RepositoryUri
+    Export:
+      Name: !Sub "${EnvironmentName}-BackendECRRepoUri"
+  AgentServiceECRRepoUri:
+    Value: !GetAtt AgentServiceECRRepo.RepositoryUri
+    Export:
+      Name: !Sub "${EnvironmentName}-AgentServiceECRRepoUri"

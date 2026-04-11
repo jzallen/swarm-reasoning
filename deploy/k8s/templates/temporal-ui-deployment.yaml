@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-ui
+  labels:
+    {{- include "swarm-reasoning.labels" . | nindent 4 }}
+    app.kubernetes.io/name: temporal-ui
+spec:
+  replicas: {{ .Values.replicas.temporalUi }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: temporal-ui
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: temporal-ui
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: temporal-ui
+          image: "{{ .Values.images.temporalUi.repository }}:{{ .Values.images.temporalUi.tag }}"
+          imagePullPolicy: {{ .Values.images.temporalUi.pullPolicy }}
+          ports:
+            - containerPort: 8233
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: {{ .Values.config.temporalAddress }}
+          resources:
+            {{- toYaml .Values.resources.temporalUi | nindent 12 }}

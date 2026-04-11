@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-db
+  labels:
+    {{- include "swarm-reasoning.labels" . | nindent 4 }}
+    app.kubernetes.io/name: temporal-db
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: temporal-db
+    app.kubernetes.io/instance: {{ .Release.Name }}

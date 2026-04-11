@@ -1,0 +1,26 @@
+{
+  "description": "Cloudflare cache rules — cache static assets, bypass API and SSE",
+  "rules": [
+    {
+      "description": "Cache static frontend assets (JS, CSS, images)",
+      "expression": "(http.request.uri.path matches \"^/assets/.*\")",
+      "action": "cache",
+      "cache_settings": {
+        "edge_ttl": 86400,
+        "browser_ttl": 86400
+      }
+    },
+    {
+      "description": "Bypass cache for API endpoints",
+      "expression": "(http.request.uri.path matches \"^/sessions/.*\" or http.request.uri.path eq \"/health\")",
+      "action": "bypass_cache"
+    },
+    {
+      "description": "Bypass cache for SSE streams (X-Accel-Buffering: no)",
+      "expression": "(http.request.uri.path matches \"^/sessions/.*/stream$\")",
+      "action": "bypass_cache",
+      "comment": "SSE endpoints must not be buffered or cached"
+    }
+  ],
+  "setup_instructions": "Create via Cloudflare dashboard: Caching > Cache Rules. Or via API: POST /zones/{zone_id}/rulesets (phase: http_request_cache_settings)"
+}

@@ -1,0 +1,22 @@
+{
+  "description": "Cloudflare rate limiting — POST /sessions/*/claims capped at 10 req/min/IP",
+  "rules": [
+    {
+      "description": "Rate limit claim submissions to prevent LLM abuse",
+      "expression": "(http.request.method eq \"POST\" and http.request.uri.path matches \"^/sessions/[^/]+/claims$\")",
+      "action": "block",
+      "ratelimit": {
+        "characteristics": ["ip.src"],
+        "period": 60,
+        "requests_per_period": 10,
+        "mitigation_timeout": 60
+      },
+      "response": {
+        "status_code": 429,
+        "content_type": "application/json",
+        "content": "{\"error\":\"Rate limit exceeded. Maximum 10 claim submissions per minute.\"}"
+      }
+    }
+  ],
+  "setup_instructions": "Create via Cloudflare dashboard: Security > WAF > Rate limiting rules. Free tier allows 1 rate limiting rule. Or via API: POST /zones/{zone_id}/rulesets (phase: http_ratelimit)"
+}

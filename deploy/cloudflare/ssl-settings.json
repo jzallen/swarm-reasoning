@@ -1,0 +1,19 @@
+{
+  "description": "Cloudflare SSL/TLS settings — Full (Strict) mode with HSTS",
+  "ssl": {
+    "value": "full_strict",
+    "comment": "Origin has valid ACM certificate on ALB; Cloudflare verifies it"
+  },
+  "min_tls_version": {
+    "value": "1.2",
+    "comment": "Minimum TLS 1.2 — disables TLS 1.0 and 1.1"
+  },
+  "hsts": {
+    "enabled": true,
+    "max_age": 31536000,
+    "include_subdomains": true,
+    "nosniff": true,
+    "comment": "Strict-Transport-Security: max-age=31536000; includeSubDomains"
+  },
+  "setup_instructions": "Apply via Cloudflare dashboard: SSL/TLS > Overview (Full Strict), Edge Certificates (min TLS 1.2, HSTS). Or via API: PATCH /zones/{zone_id}/settings/ssl, PATCH /zones/{zone_id}/settings/min_tls_version"
+}

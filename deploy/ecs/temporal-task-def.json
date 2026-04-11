@@ -1,0 +1,55 @@
+{
+  "family": "swarm-reasoning-temporal",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": { "Ref": "ECSExecutionRole" },
+  "containerDefinitions": [
+    {
+      "name": "temporal",
+      "image": "temporalio/auto-setup:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 7233,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "DB", "value": "postgresql" },
+        { "name": "DB_PORT", "value": "5432" },
+        { "name": "TEMPORAL_NAMESPACE", "value": "swarm-reasoning" }
+      ],
+      "secrets": [
+        {
+          "name": "POSTGRES_USER",
+          "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/swarm-reasoning/temporal-db-user"
+        },
+        {
+          "name": "POSTGRES_PWD",
+          "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/swarm-reasoning/temporal-db-password"
+        },
+        {
+          "name": "POSTGRES_SEEDS",
+          "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/swarm-reasoning/temporal-db-host"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/7233'"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 5,
+        "startPeriod": 60
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/swarm-reasoning/temporal",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "temporal"
+        }
+      }
+    }
+  ]
+}

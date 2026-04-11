@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-service-config
+  labels:
+    {{- include "swarm-reasoning.labels" . | nindent 4 }}
+data:
+  REDIS_URL: {{ .Values.config.redisUrl | quote }}
+  TEMPORAL_ADDRESS: {{ .Values.config.temporalAddress | quote }}
+  TEMPORAL_NAMESPACE: {{ .Values.config.temporalNamespace | quote }}

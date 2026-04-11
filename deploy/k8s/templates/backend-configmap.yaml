@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  labels:
+    {{- include "swarm-reasoning.labels" . | nindent 4 }}
+data:
+  DATABASE_URL: {{ .Values.config.databaseUrl | quote }}
+  REDIS_URL: {{ .Values.config.redisUrl | quote }}
+  TEMPORAL_ADDRESS: {{ .Values.config.temporalAddress | quote }}
+  NODE_ENV: {{ .Values.config.nodeEnv | quote }}

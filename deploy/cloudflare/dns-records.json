@@ -1,0 +1,20 @@
+{
+  "description": "Cloudflare DNS records — CNAME to ALB/CloudFront with proxy enabled",
+  "records": [
+    {
+      "type": "CNAME",
+      "name": "api",
+      "content": "<ALB_DNS_NAME>",
+      "proxied": true,
+      "comment": "Backend API — proxied through Cloudflare for DDoS/rate-limiting"
+    },
+    {
+      "type": "CNAME",
+      "name": "@",
+      "content": "<CLOUDFRONT_DISTRIBUTION_DOMAIN>",
+      "proxied": true,
+      "comment": "Frontend SPA — proxied through Cloudflare"
+    }
+  ],
+  "setup_instructions": "Replace <ALB_DNS_NAME> and <CLOUDFRONT_DISTRIBUTION_DOMAIN> with actual values from CloudFormation outputs. Create records via Cloudflare dashboard or API: POST /zones/{zone_id}/dns_records"
+}
