@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from swarm_reasoning.agents.coverage_core import CoverageHandler
-from swarm_reasoning.config import RedisConfig
 
 AGENT_NAME = "coverage-left"
 

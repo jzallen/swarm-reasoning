@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import redis.asyncio as aioredis
 from temporalio import activity
 
+from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityResult
 from swarm_reasoning.config import RedisConfig
 from swarm_reasoning.models.observation import Observation, ObservationCode, ValueType
 from swarm_reasoning.models.status import EpistemicStatus
@@ -63,12 +64,8 @@ class FanoutBase(abc.ABC):
         self._redis_config = redis_config or RedisConfig()
         self._seq = 0
 
-    async def run(self, input: "AgentActivityInput") -> "AgentActivityResult":
+    async def run(self, input: AgentActivityInput) -> AgentActivityResult:
         """Execute the fanout agent: load context, run logic, publish results."""
-        from swarm_reasoning.activities.run_agent import (
-            AgentActivityInput,
-            AgentActivityResult,
-        )
 
         start = time.monotonic()
         run_id = input.run_id
@@ -115,7 +112,9 @@ class FanoutBase(abc.ABC):
                 logger.warning("Agent %s timed out after %ds", self.AGENT_NAME, INTERNAL_TIMEOUT_S)
                 final_status = "X"
                 await self._publish_obs(
-                    stream, sk, run_id,
+                    stream,
+                    sk,
+                    run_id,
                     code=self._primary_code(),
                     value=self._timeout_value(),
                     value_type=self._primary_value_type(),
@@ -140,7 +139,8 @@ class FanoutBase(abc.ABC):
 
             # Progress: done
             await self._publish_progress(
-                redis_client, run_id,
+                redis_client,
+                run_id,
                 f"Agent {self.AGENT_NAME} completed ({self._seq} observations)",
             )
 
@@ -180,9 +180,7 @@ class FanoutBase(abc.ABC):
         """Return a fallback value for timeout scenarios."""
         return "ABSENT^Timeout^FCK"
 
-    async def _load_upstream_context(
-        self, stream: ReasoningStream, run_id: str
-    ) -> ClaimContext:
+    async def _load_upstream_context(self, stream: ReasoningStream, run_id: str) -> ClaimContext:
         """Read claim context from Phase 1 agent streams."""
         ctx = ClaimContext()
 
@@ -197,9 +195,7 @@ class FanoutBase(abc.ABC):
                 ctx.normalized_claim = obs.value
 
         if not ctx.normalized_claim:
-            raise StreamNotFoundError(
-                f"No CLAIM_NORMALIZED in stream {detector_key}"
-            )
+            raise StreamNotFoundError(f"No CLAIM_NORMALIZED in stream {detector_key}")
 
         # Read from ingestion-agent: CLAIM_DOMAIN
         ingestion_key = stream_key(run_id, "ingestion-agent")

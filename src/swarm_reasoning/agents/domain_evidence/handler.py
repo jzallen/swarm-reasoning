@@ -26,13 +26,52 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "domain-evidence"
 
 # Stop words for query derivation
-_STOP_WORDS = frozenset({
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "shall", "can", "to", "of", "in", "for",
-    "on", "with", "at", "by", "from", "as", "and", "but", "or", "not",
-    "that", "this", "it", "its",
-})
+_STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "shall",
+        "can",
+        "to",
+        "of",
+        "in",
+        "for",
+        "on",
+        "with",
+        "at",
+        "by",
+        "from",
+        "as",
+        "and",
+        "but",
+        "or",
+        "not",
+        "that",
+        "this",
+        "it",
+        "its",
+    }
+)
 
 # Negation patterns for alignment detection
 _NEGATION_PATTERNS = re.compile(
@@ -199,9 +238,7 @@ class DomainEvidenceHandler(FanoutBase):
         domain = context.domain.upper()
         sources = self._routes.get(domain, self._routes.get("OTHER", []))
 
-        await self._publish_progress(
-            redis_client, run_id, "Consulting domain sources..."
-        )
+        await self._publish_progress(redis_client, run_id, "Consulting domain sources...")
 
         # Try sources in priority order (max 2 attempts)
         source_name = "N/A"
@@ -230,18 +267,16 @@ class DomainEvidenceHandler(FanoutBase):
         confidence = score_confidence(alignment, fallback_depth=fallback_depth)
 
         if source_name != "N/A":
-            await self._publish_progress(
-                redis_client, run_id, f"Found evidence from {source_name}"
-            )
+            await self._publish_progress(redis_client, run_id, f"Found evidence from {source_name}")
         else:
-            await self._publish_progress(
-                redis_client, run_id, "No relevant domain sources found"
-            )
+            await self._publish_progress(redis_client, run_id, "No relevant domain sources found")
 
         # Publish 4 observations (always, with N/A for absent)
         # 1. DOMAIN_SOURCE_NAME
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.DOMAIN_SOURCE_NAME,
             value=source_name,
             value_type=ValueType.ST,
@@ -250,7 +285,9 @@ class DomainEvidenceHandler(FanoutBase):
 
         # 2. DOMAIN_SOURCE_URL
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.DOMAIN_SOURCE_URL,
             value=source_url,
             value_type=ValueType.ST,
@@ -259,7 +296,9 @@ class DomainEvidenceHandler(FanoutBase):
 
         # 3. DOMAIN_EVIDENCE_ALIGNMENT
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.DOMAIN_EVIDENCE_ALIGNMENT,
             value=alignment,
             value_type=ValueType.CWE,
@@ -268,7 +307,9 @@ class DomainEvidenceHandler(FanoutBase):
 
         # 4. DOMAIN_CONFIDENCE
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.DOMAIN_CONFIDENCE,
             value=f"{confidence:.2f}",
             value_type=ValueType.NM,

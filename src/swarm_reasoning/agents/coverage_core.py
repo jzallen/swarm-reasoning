@@ -26,43 +26,212 @@ logger = logging.getLogger(__name__)
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
 # Common stop words for query building
-_STOP_WORDS = frozenset({
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "shall", "can", "to", "of", "in", "for",
-    "on", "with", "at", "by", "from", "as", "into", "through", "during",
-    "before", "after", "and", "but", "or", "not", "so", "yet", "that",
-    "this", "these", "those", "it", "its", "he", "she", "they", "them",
-})
+_STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "shall",
+        "can",
+        "to",
+        "of",
+        "in",
+        "for",
+        "on",
+        "with",
+        "at",
+        "by",
+        "from",
+        "as",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "and",
+        "but",
+        "or",
+        "not",
+        "so",
+        "yet",
+        "that",
+        "this",
+        "these",
+        "those",
+        "it",
+        "its",
+        "he",
+        "she",
+        "they",
+        "them",
+    }
+)
 
 # Simplified VADER-style lexicon for headline sentiment
-_POSITIVE_WORDS = frozenset({
-    "good", "great", "best", "better", "positive", "success", "successful",
-    "gain", "gains", "rise", "rises", "rising", "grew", "grow", "growth",
-    "improve", "improved", "improvement", "strong", "strength", "boost",
-    "boosted", "win", "wins", "winning", "won", "progress", "achievement",
-    "benefit", "benefits", "effective", "approve", "approved", "support",
-    "supports", "supported", "helpful", "increase", "increased", "up",
-    "record", "high", "correct", "true", "confirmed", "proven", "accurate",
-    "safe", "recover", "recovery", "surge", "surging", "soar", "soaring",
-})
+_POSITIVE_WORDS = frozenset(
+    {
+        "good",
+        "great",
+        "best",
+        "better",
+        "positive",
+        "success",
+        "successful",
+        "gain",
+        "gains",
+        "rise",
+        "rises",
+        "rising",
+        "grew",
+        "grow",
+        "growth",
+        "improve",
+        "improved",
+        "improvement",
+        "strong",
+        "strength",
+        "boost",
+        "boosted",
+        "win",
+        "wins",
+        "winning",
+        "won",
+        "progress",
+        "achievement",
+        "benefit",
+        "benefits",
+        "effective",
+        "approve",
+        "approved",
+        "support",
+        "supports",
+        "supported",
+        "helpful",
+        "increase",
+        "increased",
+        "up",
+        "record",
+        "high",
+        "correct",
+        "true",
+        "confirmed",
+        "proven",
+        "accurate",
+        "safe",
+        "recover",
+        "recovery",
+        "surge",
+        "surging",
+        "soar",
+        "soaring",
+    }
+)
 
-_NEGATIVE_WORDS = frozenset({
-    "bad", "worst", "worse", "negative", "fail", "failed", "failure",
-    "loss", "losses", "fall", "falls", "falling", "fell", "decline",
-    "declined", "weak", "weakness", "drop", "dropped", "lose", "losing",
-    "lost", "crisis", "problem", "problems", "damage", "damaged", "threat",
-    "threatens", "risk", "risks", "dangerous", "danger", "wrong", "false",
-    "lie", "lies", "misleading", "debunked", "denied", "deny", "reject",
-    "rejected", "crash", "crashed", "collapse", "collapsed", "cut", "cuts",
-    "killed", "dead", "death", "harm", "harmful", "concern", "concerns",
-    "warning", "warned", "fears", "fear", "down", "low", "record-low",
-})
+_NEGATIVE_WORDS = frozenset(
+    {
+        "bad",
+        "worst",
+        "worse",
+        "negative",
+        "fail",
+        "failed",
+        "failure",
+        "loss",
+        "losses",
+        "fall",
+        "falls",
+        "falling",
+        "fell",
+        "decline",
+        "declined",
+        "weak",
+        "weakness",
+        "drop",
+        "dropped",
+        "lose",
+        "losing",
+        "lost",
+        "crisis",
+        "problem",
+        "problems",
+        "damage",
+        "damaged",
+        "threat",
+        "threatens",
+        "risk",
+        "risks",
+        "dangerous",
+        "danger",
+        "wrong",
+        "false",
+        "lie",
+        "lies",
+        "misleading",
+        "debunked",
+        "denied",
+        "deny",
+        "reject",
+        "rejected",
+        "crash",
+        "crashed",
+        "collapse",
+        "collapsed",
+        "cut",
+        "cuts",
+        "killed",
+        "dead",
+        "death",
+        "harm",
+        "harmful",
+        "concern",
+        "concerns",
+        "warning",
+        "warned",
+        "fears",
+        "fear",
+        "down",
+        "low",
+        "record-low",
+    }
+)
 
-_NEGATION_WORDS = frozenset({
-    "not", "no", "never", "neither", "nor", "hardly", "barely", "doesn't",
-    "don't", "didn't", "won't", "wouldn't", "couldn't", "shouldn't",
-})
+_NEGATION_WORDS = frozenset(
+    {
+        "not",
+        "no",
+        "never",
+        "neither",
+        "nor",
+        "hardly",
+        "barely",
+        "doesn't",
+        "don't",
+        "didn't",
+        "won't",
+        "wouldn't",
+        "couldn't",
+        "shouldn't",
+    }
+)
 
 _WORD_RE = re.compile(r"[a-z'-]+")
 
@@ -149,9 +318,7 @@ def classify_framing(compound: float) -> str:
         return "NEUTRAL^Neutral^FCK"
 
 
-def select_top_source(
-    articles: list[dict], sources: list[dict]
-) -> tuple[str, str] | None:
+def select_top_source(articles: list[dict], sources: list[dict]) -> tuple[str, str] | None:
     """Select the article from the highest-credibility-ranked source.
 
     Returns (source_name, article_url) or None if no articles.
@@ -254,13 +421,16 @@ class CoverageHandler(FanoutBase):
 
         article_count = len(articles)
         await self._publish_progress(
-            redis_client, run_id,
+            redis_client,
+            run_id,
             f"Found {article_count} articles from {self.SPECTRUM} sources",
         )
 
         # 1. COVERAGE_ARTICLE_COUNT
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.COVERAGE_ARTICLE_COUNT,
             value=str(article_count),
             value_type=ValueType.NM,
@@ -271,7 +441,9 @@ class CoverageHandler(FanoutBase):
         if article_count == 0:
             # 2. COVERAGE_FRAMING (ABSENT)
             await self._publish_obs(
-                stream, sk, run_id,
+                stream,
+                sk,
+                run_id,
                 code=ObservationCode.COVERAGE_FRAMING,
                 value="ABSENT^Not Covered^FCK",
                 value_type=ValueType.CWE,
@@ -286,7 +458,9 @@ class CoverageHandler(FanoutBase):
 
         # 2. COVERAGE_FRAMING
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.COVERAGE_FRAMING,
             value=framing,
             value_type=ValueType.CWE,
@@ -299,7 +473,9 @@ class CoverageHandler(FanoutBase):
             name, url = top
             # 3. COVERAGE_TOP_SOURCE
             await self._publish_obs(
-                stream, sk, run_id,
+                stream,
+                sk,
+                run_id,
                 code=ObservationCode.COVERAGE_TOP_SOURCE,
                 value=name,
                 value_type=ValueType.ST,
@@ -307,7 +483,9 @@ class CoverageHandler(FanoutBase):
             )
             # 4. COVERAGE_TOP_SOURCE_URL
             await self._publish_obs(
-                stream, sk, run_id,
+                stream,
+                sk,
+                run_id,
                 code=ObservationCode.COVERAGE_TOP_SOURCE_URL,
                 value=url,
                 value_type=ValueType.ST,
@@ -342,7 +520,9 @@ class CoverageHandler(FanoutBase):
     ) -> None:
         """Publish X-status observations for API failure."""
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.COVERAGE_ARTICLE_COUNT,
             value="0",
             value_type=ValueType.NM,
@@ -352,7 +532,9 @@ class CoverageHandler(FanoutBase):
             units="count",
         )
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.COVERAGE_FRAMING,
             value="ABSENT^Not Covered^FCK",
             value_type=ValueType.CWE,
