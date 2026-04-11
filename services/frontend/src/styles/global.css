@@ -1,0 +1,42 @@
+:root {
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --color-text: #1e293b;
+  --color-text-secondary: #64748b;
+  --color-primary: #2563eb;
+  --color-primary-light: rgba(37, 99, 235, 0.15);
+  --color-primary-dark: #1d4ed8;
+  --color-user-bubble: #2563eb;
+
+  /* PolitiFact rating palette */
+  --color-rating-green: #16a34a;
+  --color-rating-yellow: #d97706;
+  --color-rating-orange: #ea580c;
+  --color-rating-red: #dc2626;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+}
