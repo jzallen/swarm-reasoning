@@ -1,0 +1,7 @@
+[
+  {"id": "huffington-post", "name": "HuffPost", "credibility_rank": 65},
+  {"id": "msnbc", "name": "MSNBC", "credibility_rank": 60},
+  {"id": "the-nation", "name": "The Nation", "credibility_rank": 55},
+  {"id": "mother-jones", "name": "Mother Jones", "credibility_rank": 62},
+  {"id": "the-intercept", "name": "The Intercept", "credibility_rank": 68}
+]

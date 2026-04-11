@@ -1,0 +1,7 @@
+[
+  {"id": "reuters", "name": "Reuters", "credibility_rank": 95},
+  {"id": "associated-press", "name": "Associated Press", "credibility_rank": 94},
+  {"id": "the-hill", "name": "The Hill", "credibility_rank": 72},
+  {"id": "axios", "name": "Axios", "credibility_rank": 80},
+  {"id": "bloomberg", "name": "Bloomberg", "credibility_rank": 90}
+]

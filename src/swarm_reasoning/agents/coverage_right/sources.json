@@ -1,0 +1,7 @@
+[
+  {"id": "fox-news", "name": "Fox News", "credibility_rank": 55},
+  {"id": "breitbart-news", "name": "Breitbart News", "credibility_rank": 35},
+  {"id": "the-blaze", "name": "The Blaze", "credibility_rank": 40},
+  {"id": "daily-caller", "name": "Daily Caller", "credibility_rank": 42},
+  {"id": "washington-times", "name": "Washington Times", "credibility_rank": 50}
+]
