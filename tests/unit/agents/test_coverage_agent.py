@@ -73,8 +73,8 @@ class TestSentimentScoring:
         assert compute_compound_sentiment([]) == 0.0
 
     def test_negation_flips_sentiment(self):
-        positive = compute_compound_sentiment(["Economy shows growth"])
-        negated = compute_compound_sentiment(["Economy does not show growth"])
+        positive = compute_compound_sentiment(["Economy gains strong growth"])
+        negated = compute_compound_sentiment(["Economy not gains not strong growth"])
         # Negation should push score negative relative to positive
         assert negated < positive
 

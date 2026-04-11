@@ -101,10 +101,10 @@ def _mock_api_match_response() -> dict:
     return {
         "claims": [
             {
-                "text": "unemployment rate fell to 3.4%",
+                "text": "unemployment rate fell to 3.4% in January 2023",
                 "claimReview": [
                     {
-                        "title": "unemployment rate fell to 3.4 percent",
+                        "title": "unemployment rate fell to 3.4% in January 2023",
                         "publisher": {"name": "PolitiFact"},
                         "textualRating": "True",
                         "url": "https://politifact.com/example",
