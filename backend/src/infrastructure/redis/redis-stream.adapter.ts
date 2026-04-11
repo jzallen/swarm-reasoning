@@ -1,11 +1,19 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { v4 as uuidv4 } from 'uuid';
 import { ProgressEvent } from '../../domain/entities/progress-event.entity.js';
+import { ProgressPhase } from '../../domain/enums/progress-phase.enum.js';
+import { ProgressType } from '../../domain/enums/progress-type.enum.js';
 import type { StreamReader } from '../../application/interfaces/stream-reader.interface.js';
 
+const CONSUMER_GROUP = 'sse-consumers';
+const BLOCK_MS = 5000;
+const BATCH_SIZE = 10;
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+
 @Injectable()
-export class RedisStreamAdapter implements StreamReader {
+export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
   private readonly logger = new Logger(RedisStreamAdapter.name);
   private redis: Redis;
 
@@ -17,54 +25,27 @@ export class RedisStreamAdapter implements StreamReader {
     this.redis = new Redis(redisUrl);
   }
 
+  async onModuleDestroy() {
+    await this.redis.quit();
+  }
+
   async *readProgress(
     runId: string,
-    lastId = '0-0',
+    lastEventId?: string,
   ): AsyncGenerator<ProgressEvent, void, unknown> {
     const streamKey = `progress:${runId}`;
-    let currentId = lastId;
+    const consumerId = `sse-${runId}-${uuidv4()}`;
 
-    while (true) {
-      try {
-        const results = await this.redis.call(
-          'XREAD',
-          'BLOCK',
-          '5000',
-          'COUNT',
-          '10',
-          'STREAMS',
-          streamKey,
-          currentId,
-        ) as [string, [string, string[]][]][] | null;
+    await this.ensureConsumerGroup(streamKey);
 
-        if (!results) continue;
-
-        for (const [, entries] of results) {
-          for (const [entryId, fields] of entries) {
-            currentId = entryId;
-            const data = this.parseFields(fields);
-            const event = new ProgressEvent({
-              runId: data.runId ?? runId,
-              agent: data.agent ?? '',
-              phase: data.phase ?? '',
-              type: (data.type as 'progress' | 'verdict' | 'close') ?? 'progress',
-              message: data.message ?? '',
-              timestamp: data.timestamp
-                ? new Date(data.timestamp)
-                : new Date(),
-            });
-
-            yield event;
-
-            if (event.type === 'close' || event.type === 'verdict') {
-              return;
-            }
-          }
-        }
-      } catch (error) {
-        this.logger.error(`Error reading progress stream: ${error}`);
-        return;
+    try {
+      if (lastEventId) {
+        yield* this.replayFromId(streamKey, lastEventId);
       }
+
+      yield* this.consumeStream(streamKey, consumerId);
+    } finally {
+      await this.removeConsumer(streamKey, consumerId);
     }
   }
 
@@ -82,6 +63,140 @@ export class RedisStreamAdapter implements StreamReader {
     }
 
     return observations;
+  }
+
+  private async ensureConsumerGroup(streamKey: string): Promise<void> {
+    try {
+      await this.redis.xgroup('CREATE', streamKey, CONSUMER_GROUP, '0', 'MKSTREAM');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (!message.includes('BUSYGROUP')) {
+        throw error;
+      }
+    }
+  }
+
+  private async *replayFromId(
+    streamKey: string,
+    fromId: string,
+  ): AsyncGenerator<ProgressEvent, void, unknown> {
+    const entries = await this.redis.xrange(streamKey, this.nextId(fromId), '+');
+
+    for (const [entryId, fields] of entries) {
+      const event = this.parseEvent(entryId, fields);
+      if (!event) continue;
+      yield event;
+    }
+  }
+
+  private async *consumeStream(
+    streamKey: string,
+    consumerId: string,
+  ): AsyncGenerator<ProgressEvent, void, unknown> {
+    let lastActivity = Date.now();
+
+    while (true) {
+      if (Date.now() - lastActivity > IDLE_TIMEOUT_MS) {
+        this.logger.warn(
+          `Idle timeout reached for stream ${streamKey}, consumer ${consumerId}`,
+        );
+        return;
+      }
+
+      try {
+        const results = await this.redis.call(
+          'XREADGROUP',
+          'GROUP',
+          CONSUMER_GROUP,
+          consumerId,
+          'BLOCK',
+          String(BLOCK_MS),
+          'COUNT',
+          String(BATCH_SIZE),
+          'STREAMS',
+          streamKey,
+          '>',
+        ) as [string, [string, string[]][]][] | null;
+
+        if (!results) continue;
+
+        for (const [, entries] of results) {
+          for (const [entryId, fields] of entries) {
+            lastActivity = Date.now();
+
+            const event = this.parseEvent(entryId, fields);
+
+            await this.redis.xack(streamKey, CONSUMER_GROUP, entryId);
+
+            if (!event) continue;
+
+            yield event;
+
+            if (
+              event.type === ProgressType.SessionFrozen ||
+              event.type === ProgressType.VerdictReady
+            ) {
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.error(`Error reading progress stream: ${error}`);
+        return;
+      }
+    }
+  }
+
+  private async removeConsumer(
+    streamKey: string,
+    consumerId: string,
+  ): Promise<void> {
+    try {
+      await this.redis.xgroup('DELCONSUMER', streamKey, CONSUMER_GROUP, consumerId);
+    } catch (error) {
+      this.logger.warn(`Failed to remove consumer ${consumerId}: ${error}`);
+    }
+  }
+
+  private parseEvent(entryId: string, fields: string[]): ProgressEvent | null {
+    const data = this.parseFields(fields);
+
+    const type = this.toProgressType(data.type);
+    if (!type) {
+      this.logger.warn(`Unknown progress type "${data.type}" in entry ${entryId}, skipping`);
+      return null;
+    }
+
+    return new ProgressEvent({
+      runId: data.runId ?? '',
+      agent: data.agent ?? '',
+      phase: this.toProgressPhase(data.phase),
+      type,
+      message: data.message ?? '',
+      timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+      entryId,
+    });
+  }
+
+  private toProgressType(value: string | undefined): ProgressType | null {
+    if (!value) return null;
+    const values = Object.values(ProgressType) as string[];
+    return values.includes(value) ? (value as ProgressType) : null;
+  }
+
+  private toProgressPhase(value: string | undefined): ProgressPhase {
+    if (!value) return ProgressPhase.Ingestion;
+    const values = Object.values(ProgressPhase) as string[];
+    return values.includes(value)
+      ? (value as ProgressPhase)
+      : ProgressPhase.Ingestion;
+  }
+
+  private nextId(entryId: string): string {
+    const parts = entryId.split('-');
+    if (parts.length !== 2) return entryId;
+    const seq = parseInt(parts[1], 10);
+    return `${parts[0]}-${seq + 1}`;
   }
 
   private parseFields(fields: string[]): Record<string, string> {

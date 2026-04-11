@@ -1,5 +1,11 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  NotFoundException,
+  GoneException,
+} from '@nestjs/common';
 import { ProgressEvent } from '../../domain/entities/progress-event.entity.js';
+import { SessionStatus } from '../../domain/enums/session-status.enum.js';
 import { SESSION_REPOSITORY } from '../interfaces/session.repository.js';
 import { RUN_REPOSITORY } from '../interfaces/run.repository.js';
 import { STREAM_READER } from '../interfaces/stream-reader.interface.js';
@@ -20,10 +26,15 @@ export class StreamProgressUseCase {
 
   async *execute(
     sessionId: string,
+    lastEventId?: string,
   ): AsyncGenerator<ProgressEvent, void, unknown> {
     const session = await this.sessionRepository.findById(sessionId);
     if (!session) {
       throw new NotFoundException(`Session ${sessionId} not found`);
+    }
+
+    if (session.status === SessionStatus.Expired) {
+      throw new GoneException(`Session ${sessionId} has expired`);
     }
 
     const run = await this.runRepository.findBySessionId(sessionId);
@@ -31,6 +42,6 @@ export class StreamProgressUseCase {
       throw new NotFoundException(`No run found for session ${sessionId}`);
     }
 
-    yield* this.streamReader.readProgress(run.runId);
+    yield* this.streamReader.readProgress(run.runId, lastEventId);
   }
 }
