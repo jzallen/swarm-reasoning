@@ -10,7 +10,6 @@
     "commit-commands@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
-    "semgrep@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true
   },
   "teammateMode": "auto"
