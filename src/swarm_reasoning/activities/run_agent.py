@@ -33,6 +33,7 @@ class AgentActivityInput:
     claim_id: str
     session_id: str
     claim_text: str
+    cross_agent_data: dict[str, Any] | None = None
 
 
 @dataclass
