@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import {
   SessionOrmEntity,
@@ -13,6 +14,8 @@ import { TypeOrmCitationRepository } from '../typeorm/repositories/typeorm-citat
 import { RedisStreamAdapter } from '../redis/redis-stream.adapter';
 import { TemporalClientAdapter } from '../temporal/temporal-client.adapter';
 import { LocalSnapshotStore } from '../snapshot/local-snapshot.store';
+import { S3SnapshotStore } from '../snapshot/s3-snapshot.store';
+import { StaticHtmlRenderer } from '../renderers/static-html.renderer';
 import {
   SESSION_REPOSITORY,
   RUN_REPOSITORY,
@@ -55,11 +58,19 @@ const temporalClientProvider = {
 
 const snapshotStoreProvider = {
   provide: SNAPSHOT_STORE,
-  useClass: LocalSnapshotStore,
+  useFactory: (configService: ConfigService) => {
+    const storeType = configService.get<string>('SNAPSHOT_STORE', 'local');
+    if (storeType === 's3') {
+      return new S3SnapshotStore(configService);
+    }
+    return new LocalSnapshotStore();
+  },
+  inject: [ConfigService],
 };
 
 @Module({
   imports: [
+    ConfigModule,
     TypeOrmModule.forFeature([
       SessionOrmEntity,
       RunOrmEntity,
@@ -75,6 +86,7 @@ const snapshotStoreProvider = {
     streamReaderProvider,
     temporalClientProvider,
     snapshotStoreProvider,
+    StaticHtmlRenderer,
   ],
   exports: [
     sessionRepoProvider,
@@ -84,6 +96,7 @@ const snapshotStoreProvider = {
     streamReaderProvider,
     temporalClientProvider,
     snapshotStoreProvider,
+    StaticHtmlRenderer,
   ],
 })
 export class InfrastructureModule {}

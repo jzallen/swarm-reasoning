@@ -67,7 +67,13 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
 
   private async ensureConsumerGroup(streamKey: string): Promise<void> {
     try {
-      await this.redis.xgroup('CREATE', streamKey, CONSUMER_GROUP, '0', 'MKSTREAM');
+      await this.redis.xgroup(
+        'CREATE',
+        streamKey,
+        CONSUMER_GROUP,
+        '0',
+        'MKSTREAM',
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       if (!message.includes('BUSYGROUP')) {
@@ -80,7 +86,11 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
     streamKey: string,
     fromId: string,
   ): AsyncGenerator<ProgressEvent, void, unknown> {
-    const entries = await this.redis.xrange(streamKey, this.nextId(fromId), '+');
+    const entries = await this.redis.xrange(
+      streamKey,
+      this.nextId(fromId),
+      '+',
+    );
 
     for (const [entryId, fields] of entries) {
       const event = this.parseEvent(entryId, fields);
@@ -104,7 +114,7 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
       }
 
       try {
-        const results = await this.redis.call(
+        const results = (await this.redis.call(
           'XREADGROUP',
           'GROUP',
           CONSUMER_GROUP,
@@ -116,7 +126,7 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
           'STREAMS',
           streamKey,
           '>',
-        ) as [string, [string, string[]][]][] | null;
+        )) as [string, [string, string[]][]][] | null;
 
         if (!results) continue;
 
@@ -152,7 +162,12 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
     consumerId: string,
   ): Promise<void> {
     try {
-      await this.redis.xgroup('DELCONSUMER', streamKey, CONSUMER_GROUP, consumerId);
+      await this.redis.xgroup(
+        'DELCONSUMER',
+        streamKey,
+        CONSUMER_GROUP,
+        consumerId,
+      );
     } catch (error) {
       this.logger.warn(`Failed to remove consumer ${consumerId}: ${error}`);
     }
@@ -163,7 +178,9 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
 
     const type = this.toProgressType(data.type);
     if (!type) {
-      this.logger.warn(`Unknown progress type "${data.type}" in entry ${entryId}, skipping`);
+      this.logger.warn(
+        `Unknown progress type "${data.type}" in entry ${entryId}, skipping`,
+      );
       return null;
     }
 
@@ -197,6 +214,46 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
     if (parts.length !== 2) return entryId;
     const seq = parseInt(parts[1], 10);
     return `${parts[0]}-${seq + 1}`;
+  }
+
+  async readAllProgressEvents(runId: string): Promise<ProgressEvent[]> {
+    const streamKey = `progress:${runId}`;
+    const events: ProgressEvent[] = [];
+
+    try {
+      const entries = await this.redis.xrange(streamKey, '-', '+');
+
+      for (const [entryId, fields] of entries) {
+        const event = this.parseEvent(entryId, fields);
+        if (event) {
+          events.push(event);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to read all progress events for ${runId}: ${error}`,
+      );
+    }
+
+    return events;
+  }
+
+  async deleteStreams(runId: string): Promise<void> {
+    try {
+      // Delete progress stream
+      await this.redis.del(`progress:${runId}`);
+
+      // Delete all reasoning streams
+      const pattern = `reasoning:${runId}:*`;
+      const keys = await this.redis.keys(pattern);
+      if (keys.length > 0) {
+        await this.redis.del(...keys);
+      }
+
+      this.logger.log(`Deleted ${keys.length + 1} streams for run ${runId}`);
+    } catch (error) {
+      this.logger.warn(`Failed to delete streams for ${runId}: ${error}`);
+    }
   }
 
   private parseFields(fields: string[]): Record<string, string> {
