@@ -1,0 +1,300 @@
+"""Unit tests for ClaimDetectorHandler."""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from swarm_reasoning.agents.claim_detector.handler import (
+    AGENT_NAME,
+    ClaimDetectorHandler,
+    StreamNotFoundError,
+)
+from swarm_reasoning.models.observation import Observation, ObservationCode, ValueType
+from swarm_reasoning.models.stream import ObsMessage, StartMessage, StopMessage
+from swarm_reasoning.temporal.activities import AgentActivityInput
+
+
+def _make_input(run_id: str = "run-001", claim_text: str = "Test claim") -> AgentActivityInput:
+    return AgentActivityInput(
+        run_id=run_id,
+        claim_text=claim_text,
+        agent_name="claim-detector",
+        phase="ingestion",
+    )
+
+
+def _mock_ingestion_stream(
+    claim_text: str = "Biden signed executive order 14042.",
+    entity_persons: list[str] | None = None,
+    entity_orgs: list[str] | None = None,
+) -> list:
+    """Build a mock ingestion stream read_range response."""
+    messages = [
+        MagicMock(type="START"),
+    ]
+
+    messages.append(
+        ObsMessage(
+            observation=Observation(
+                runId="run-001",
+                agent="ingestion-agent",
+                seq=1,
+                code=ObservationCode.CLAIM_TEXT,
+                value=claim_text,
+                valueType=ValueType.ST,
+                status="F",
+                timestamp="2026-04-10T12:00:00Z",
+                method="ingest_claim",
+            )
+        )
+    )
+
+    if entity_persons:
+        for i, person in enumerate(entity_persons):
+            messages.append(
+                ObsMessage(
+                    observation=Observation(
+                        runId="run-001",
+                        agent="ingestion-agent",
+                        seq=2 + i,
+                        code=ObservationCode.ENTITY_PERSON,
+                        value=person,
+                        valueType=ValueType.ST,
+                        status="F",
+                        timestamp="2026-04-10T12:00:01Z",
+                        method="extract_entities",
+                    )
+                )
+            )
+
+    if entity_orgs:
+        offset = 2 + len(entity_persons or [])
+        for i, org in enumerate(entity_orgs):
+            messages.append(
+                ObsMessage(
+                    observation=Observation(
+                        runId="run-001",
+                        agent="ingestion-agent",
+                        seq=offset + i,
+                        code=ObservationCode.ENTITY_ORG,
+                        value=org,
+                        valueType=ValueType.ST,
+                        status="F",
+                        timestamp="2026-04-10T12:00:01Z",
+                        method="extract_entities",
+                    )
+                )
+            )
+
+    messages.append(MagicMock(type="STOP"))
+    return messages
+
+
+def _mock_claude_response(score: float, rationale: str = "test rationale") -> MagicMock:
+    resp = MagicMock()
+    resp.content = [MagicMock(text=json.dumps({"score": score, "rationale": rationale}))]
+    return resp
+
+
+def _build_handler_mocks(
+    ingestion_messages: list | None = None,
+    claude_score: float = 0.82,
+):
+    """Build mocked stream, redis, anthropic for handler construction."""
+    stream_mock = AsyncMock()
+    stream_mock.read_range.return_value = ingestion_messages or _mock_ingestion_stream()
+    stream_mock.publish = AsyncMock()
+    stream_mock.close = AsyncMock()
+
+    redis_mock = AsyncMock()
+    redis_mock.xadd = AsyncMock()
+    redis_mock.aclose = AsyncMock()
+
+    anthropic_mock = AsyncMock()
+    resp = _mock_claude_response(claude_score)
+    anthropic_mock.messages.create = AsyncMock(return_value=resp)
+
+    return stream_mock, redis_mock, anthropic_mock
+
+
+class TestHappyPath:
+    @pytest.mark.asyncio
+    async def test_check_worthy_claim_returns_f_status(self):
+        stream, redis, anthropic = _build_handler_mocks(claude_score=0.82)
+
+        with (
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.RedisReasoningStream",
+                return_value=stream,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.aioredis.Redis",
+                return_value=redis,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.AsyncAnthropic",
+                return_value=anthropic,
+            ),
+            patch("swarm_reasoning.agents.claim_detector.handler.activity"),
+        ):
+            handler = ClaimDetectorHandler(anthropic_api_key="test-key")
+            result = await handler.run(_make_input())
+
+        assert result.terminal_status == "F"
+        assert result.observation_count == 3
+        assert result.check_worthiness_score == 0.82
+        assert result.agent_name == "claim-detector"
+
+    @pytest.mark.asyncio
+    async def test_stream_publishes_correct_sequence(self):
+        stream, redis, anthropic = _build_handler_mocks(claude_score=0.75)
+
+        with (
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.RedisReasoningStream",
+                return_value=stream,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.aioredis.Redis",
+                return_value=redis,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.AsyncAnthropic",
+                return_value=anthropic,
+            ),
+            patch("swarm_reasoning.agents.claim_detector.handler.activity"),
+        ):
+            handler = ClaimDetectorHandler(anthropic_api_key="test-key")
+            await handler.run(_make_input())
+
+        # Expect: START, CLAIM_NORMALIZED, CHECK_WORTHY_SCORE(P), CHECK_WORTHY_SCORE(F), STOP
+        calls = stream.publish.call_args_list
+        assert len(calls) == 5
+
+        # START
+        start_msg = calls[0][0][1]
+        assert isinstance(start_msg, StartMessage)
+        assert start_msg.agent == AGENT_NAME
+
+        # CLAIM_NORMALIZED (seq=1, F)
+        norm_msg = calls[1][0][1]
+        assert isinstance(norm_msg, ObsMessage)
+        assert norm_msg.observation.code == ObservationCode.CLAIM_NORMALIZED
+        assert norm_msg.observation.seq == 1
+        assert norm_msg.observation.status == "F"
+
+        # CHECK_WORTHY_SCORE (seq=2, P)
+        score_p = calls[2][0][1]
+        assert isinstance(score_p, ObsMessage)
+        assert score_p.observation.code == ObservationCode.CHECK_WORTHY_SCORE
+        assert score_p.observation.seq == 2
+        assert score_p.observation.status == "P"
+
+        # CHECK_WORTHY_SCORE (seq=3, F)
+        score_f = calls[3][0][1]
+        assert isinstance(score_f, ObsMessage)
+        assert score_f.observation.code == ObservationCode.CHECK_WORTHY_SCORE
+        assert score_f.observation.seq == 3
+        assert score_f.observation.status == "F"
+
+        # STOP
+        stop_msg = calls[4][0][1]
+        assert isinstance(stop_msg, StopMessage)
+        assert stop_msg.final_status == "F"
+        assert stop_msg.observation_count == 3
+
+
+class TestBelowThresholdCancellation:
+    @pytest.mark.asyncio
+    async def test_below_threshold_returns_x_status(self):
+        stream, redis, anthropic = _build_handler_mocks(claude_score=0.25)
+
+        with (
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.RedisReasoningStream",
+                return_value=stream,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.aioredis.Redis",
+                return_value=redis,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.AsyncAnthropic",
+                return_value=anthropic,
+            ),
+            patch("swarm_reasoning.agents.claim_detector.handler.activity"),
+        ):
+            handler = ClaimDetectorHandler(anthropic_api_key="test-key")
+            result = await handler.run(_make_input())
+
+        assert result.terminal_status == "X"
+        assert result.check_worthiness_score == 0.25
+
+        # STOP should have finalStatus="X"
+        stop_call = stream.publish.call_args_list[-1]
+        stop_msg = stop_call[0][1]
+        assert isinstance(stop_msg, StopMessage)
+        assert stop_msg.final_status == "X"
+
+
+class TestStreamNotFound:
+    @pytest.mark.asyncio
+    async def test_missing_ingestion_stream_raises(self):
+        stream, redis, anthropic = _build_handler_mocks()
+        stream.read_range.return_value = []  # Empty stream
+
+        with (
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.RedisReasoningStream",
+                return_value=stream,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.aioredis.Redis",
+                return_value=redis,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.AsyncAnthropic",
+                return_value=anthropic,
+            ),
+            patch("swarm_reasoning.agents.claim_detector.handler.activity"),
+        ):
+            handler = ClaimDetectorHandler(anthropic_api_key="test-key")
+            with pytest.raises(StreamNotFoundError):
+                await handler.run(_make_input())
+
+
+class TestProgressEvents:
+    @pytest.mark.asyncio
+    async def test_progress_events_published_in_order(self):
+        stream, redis, anthropic = _build_handler_mocks(claude_score=0.82)
+
+        with (
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.RedisReasoningStream",
+                return_value=stream,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.aioredis.Redis",
+                return_value=redis,
+            ),
+            patch(
+                "swarm_reasoning.agents.claim_detector.handler.AsyncAnthropic",
+                return_value=anthropic,
+            ),
+            patch("swarm_reasoning.agents.claim_detector.handler.activity"),
+        ):
+            handler = ClaimDetectorHandler(anthropic_api_key="test-key")
+            await handler.run(_make_input())
+
+        progress_calls = [c for c in redis.xadd.call_args_list if c[0][0].startswith("progress:")]
+
+        # Should have 4 progress events: normalizing, scoring, score value, gate decision
+        assert len(progress_calls) == 4
+        messages = [c[0][1]["message"] for c in progress_calls]
+        assert "Normalizing claim text..." in messages[0]
+        assert "Scoring check-worthiness..." in messages[1]
+        assert "Check-worthiness score:" in messages[2]
+        assert "check-worthy" in messages[3].lower()
