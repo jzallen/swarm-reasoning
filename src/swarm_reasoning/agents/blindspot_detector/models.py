@@ -33,7 +33,6 @@ class CoverageSnapshot:
         Missing source_convergence_score defaults to None.
         """
         coverage = data.get("coverage", {})
-        absent = SegmentCoverage(article_count=0, framing="ABSENT")
 
         def _parse_segment(name: str) -> SegmentCoverage:
             seg = coverage.get(name)

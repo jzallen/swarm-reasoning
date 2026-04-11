@@ -41,9 +41,7 @@ def compute_corroboration(coverage: CoverageSnapshot) -> tuple[str, str | None]:
     Returns (CWE coded string, optional note about convergence strength).
     """
     segments = [coverage.left, coverage.center, coverage.right]
-    all_present = all(
-        not _is_absent(seg.framing, seg.article_count) for seg in segments
-    )
+    all_present = all(not _is_absent(seg.framing, seg.article_count) for seg in segments)
     framings = {seg.framing for seg in segments}
     no_conflict = not ("SUPPORTIVE" in framings and "CRITICAL" in framings)
 
@@ -53,7 +51,8 @@ def compute_corroboration(coverage: CoverageSnapshot) -> tuple[str, str | None]:
             coverage.source_convergence_score is not None
             and coverage.source_convergence_score > 0.5
         ):
-            note = f"Strong corroboration: source convergence score {coverage.source_convergence_score:.2f}"
+            score = coverage.source_convergence_score
+            note = f"Strong corroboration: source convergence score {score:.2f}"
         return "TRUE^Corroborated^FCK", note
 
     return "FALSE^Not Corroborated^FCK", None

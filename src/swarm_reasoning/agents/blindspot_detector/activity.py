@@ -64,9 +64,7 @@ class BlindspotDetectorActivity(FanoutBase):
         context: ClaimContext,
     ) -> None:
         # Progress: starting
-        await self._publish_progress(
-            redis_client, run_id, "Analyzing coverage blindspots..."
-        )
+        await self._publish_progress(redis_client, run_id, "Analyzing coverage blindspots...")
 
         # Graceful degradation: empty coverage dict (all agents timed out)
         coverage_data = self._cross_agent_data.get("coverage", {})
@@ -140,7 +138,9 @@ class BlindspotDetectorActivity(FanoutBase):
     ) -> None:
         """Publish degraded observations when coverage data is empty."""
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.BLINDSPOT_SCORE,
             value="1.0",
             value_type=ValueType.NM,
@@ -148,23 +148,29 @@ class BlindspotDetectorActivity(FanoutBase):
             reference_range="0.0-1.0",
         )
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.BLINDSPOT_DIRECTION,
             value="NONE^No Blindspot^FCK",
             value_type=ValueType.CWE,
         )
         await self._publish_obs(
-            stream, sk, run_id,
+            stream,
+            sk,
+            run_id,
             code=ObservationCode.CROSS_SPECTRUM_CORROBORATION,
             value="FALSE^Not Corroborated^FCK",
             value_type=ValueType.CWE,
         )
         await self._publish_progress(
-            redis_client, run_id,
+            redis_client,
+            run_id,
             "Blindspot score: 1.00, direction: NONE (no coverage data)",
         )
         await self._publish_progress(
-            redis_client, run_id,
+            redis_client,
+            run_id,
             "Cross-spectrum corroboration: FALSE",
         )
 
