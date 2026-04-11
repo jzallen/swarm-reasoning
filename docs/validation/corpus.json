@@ -1,0 +1,605 @@
+{
+  "version": "1.0",
+  "claims": [
+    {
+      "id": "pf-2024-001",
+      "claim_text": "The United States has the largest economy in the world by nominal GDP.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jan/15/us-economy-gdp/",
+      "captured_date": "2024-01-15",
+      "speaker": "Joe Biden",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-002",
+      "claim_text": "More Americans have health insurance coverage now than at any point in history.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/feb/10/health-insurance-coverage/",
+      "captured_date": "2024-02-10",
+      "speaker": "Kamala Harris",
+      "domain": "healthcare"
+    },
+    {
+      "id": "pf-2024-003",
+      "claim_text": "The unemployment rate has been below 4 percent for over two years.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/05/unemployment-rate-streak/",
+      "captured_date": "2024-03-05",
+      "speaker": "Joe Biden",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-004",
+      "claim_text": "The United States produces more oil than any other country in history.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jan/22/us-oil-production-record/",
+      "captured_date": "2024-01-22",
+      "speaker": "Joe Biden",
+      "domain": "energy"
+    },
+    {
+      "id": "pf-2024-005",
+      "claim_text": "NATO countries have significantly increased their defense spending since 2014.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/feb/20/nato-defense-spending/",
+      "captured_date": "2024-02-20",
+      "speaker": "Jens Stoltenberg",
+      "domain": "defense"
+    },
+    {
+      "id": "pf-2024-006",
+      "claim_text": "Renewable energy now accounts for over 20 percent of U.S. electricity generation.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/apr/12/renewable-energy-share/",
+      "captured_date": "2024-04-12",
+      "speaker": "Jennifer Granholm",
+      "domain": "energy"
+    },
+    {
+      "id": "pf-2024-007",
+      "claim_text": "The federal minimum wage has not been raised since 2009.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/may/03/federal-minimum-wage-unchanged/",
+      "captured_date": "2024-05-03",
+      "speaker": "Bernie Sanders",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-008",
+      "claim_text": "The U.S. has added over 15 million jobs since January 2021.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/15/jobs-added-since-2021/",
+      "captured_date": "2024-03-15",
+      "speaker": "Joe Biden",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-009",
+      "claim_text": "Insulin prices have been capped at $35 per month for Medicare recipients.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/apr/01/insulin-cap-medicare/",
+      "captured_date": "2024-04-01",
+      "speaker": "Joe Biden",
+      "domain": "healthcare"
+    },
+    {
+      "id": "pf-2024-010",
+      "claim_text": "The child poverty rate dropped by nearly half after the expanded child tax credit.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "TRUE_MOSTLY_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/feb/28/child-poverty-tax-credit/",
+      "captured_date": "2024-02-28",
+      "speaker": "Rosa DeLauro",
+      "domain": "social-policy"
+    },
+    {
+      "id": "pf-2024-011",
+      "claim_text": "Immigrants are responsible for the majority of violent crimes in America.",
+      "ground_truth": "FALSE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jan/18/immigrants-violent-crime/",
+      "captured_date": "2024-01-18",
+      "speaker": "Donald Trump",
+      "domain": "immigration"
+    },
+    {
+      "id": "pf-2024-012",
+      "claim_text": "The 2020 presidential election was stolen through widespread voter fraud.",
+      "ground_truth": "PANTS_FIRE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/feb/05/2020-election-fraud-claims/",
+      "captured_date": "2024-02-05",
+      "speaker": "Donald Trump",
+      "domain": "elections"
+    },
+    {
+      "id": "pf-2024-013",
+      "claim_text": "Crime rates are at an all-time high in the United States.",
+      "ground_truth": "FALSE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/10/crime-rates-all-time-high/",
+      "captured_date": "2024-03-10",
+      "speaker": "Donald Trump",
+      "domain": "public-safety"
+    },
+    {
+      "id": "pf-2024-014",
+      "claim_text": "The Affordable Care Act included death panels that decided who would live or die.",
+      "ground_truth": "PANTS_FIRE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jan/30/aca-death-panels/",
+      "captured_date": "2024-01-30",
+      "speaker": "Social media posts",
+      "domain": "healthcare"
+    },
+    {
+      "id": "pf-2024-015",
+      "claim_text": "Windmills cause cancer and kill all the birds.",
+      "ground_truth": "PANTS_FIRE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/apr/18/windmills-cancer-birds/",
+      "captured_date": "2024-04-18",
+      "speaker": "Donald Trump",
+      "domain": "energy"
+    },
+    {
+      "id": "pf-2024-016",
+      "claim_text": "Vaccines have been proven to cause autism in children.",
+      "ground_truth": "PANTS_FIRE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/may/15/vaccines-autism-claim/",
+      "captured_date": "2024-05-15",
+      "speaker": "Robert F. Kennedy Jr.",
+      "domain": "healthcare"
+    },
+    {
+      "id": "pf-2024-017",
+      "claim_text": "The government is controlling the weather with chemtrails.",
+      "ground_truth": "PANTS_FIRE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jun/02/chemtrails-weather-control/",
+      "captured_date": "2024-06-02",
+      "speaker": "Social media posts",
+      "domain": "science"
+    },
+    {
+      "id": "pf-2024-018",
+      "claim_text": "Electric vehicles cost more in total lifetime expenses than gas-powered cars.",
+      "ground_truth": "FALSE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/25/ev-lifetime-cost/",
+      "captured_date": "2024-03-25",
+      "speaker": "Viral blog post",
+      "domain": "energy"
+    },
+    {
+      "id": "pf-2024-019",
+      "claim_text": "The national debt doubled under the Biden administration.",
+      "ground_truth": "FALSE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/apr/30/national-debt-doubled-biden/",
+      "captured_date": "2024-04-30",
+      "speaker": "Social media posts",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-020",
+      "claim_text": "FEMA spent all its disaster relief money on housing undocumented immigrants.",
+      "ground_truth": "FALSE",
+      "categories": [
+        "FALSE_PANTS_FIRE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/oct/05/fema-funds-immigrants/",
+      "captured_date": "2024-10-05",
+      "speaker": "Social media posts",
+      "domain": "immigration"
+    },
+    {
+      "id": "pf-2024-021",
+      "claim_text": "The infrastructure law includes funding for broadband in rural areas, but most of the money has not yet been deployed.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/feb/15/infrastructure-broadband-rural/",
+      "captured_date": "2024-02-15",
+      "speaker": "Ted Cruz",
+      "domain": "infrastructure"
+    },
+    {
+      "id": "pf-2024-022",
+      "claim_text": "The Inflation Reduction Act will reduce the deficit by hundreds of billions of dollars.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/01/ira-deficit-reduction/",
+      "captured_date": "2024-03-01",
+      "speaker": "Joe Biden",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-023",
+      "claim_text": "Social Security will be completely insolvent by 2035.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jan/25/social-security-insolvent-2035/",
+      "captured_date": "2024-01-25",
+      "speaker": "Nikki Haley",
+      "domain": "social-policy"
+    },
+    {
+      "id": "pf-2024-024",
+      "claim_text": "The border wall was nearly completed before the Biden administration halted construction.",
+      "ground_truth": "MOSTLY_FALSE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/feb/22/border-wall-completion/",
+      "captured_date": "2024-02-22",
+      "speaker": "Donald Trump",
+      "domain": "immigration"
+    },
+    {
+      "id": "pf-2024-025",
+      "claim_text": "Manufacturing jobs have returned to pre-pandemic levels under the current administration.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/18/manufacturing-jobs-recovery/",
+      "captured_date": "2024-03-18",
+      "speaker": "Gina Raimondo",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-026",
+      "claim_text": "China owns a significant portion of U.S. farmland, threatening food security.",
+      "ground_truth": "MOSTLY_FALSE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/apr/08/china-us-farmland/",
+      "captured_date": "2024-04-08",
+      "speaker": "Tom Cotton",
+      "domain": "agriculture"
+    },
+    {
+      "id": "pf-2024-027",
+      "claim_text": "Student loan forgiveness primarily benefits wealthy professionals.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/may/10/student-loan-forgiveness-wealthy/",
+      "captured_date": "2024-05-10",
+      "speaker": "Mitch McConnell",
+      "domain": "education"
+    },
+    {
+      "id": "pf-2024-028",
+      "claim_text": "The U.S. spends more on its military than the next 10 countries combined.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/28/military-spending-comparison/",
+      "captured_date": "2024-03-28",
+      "speaker": "Bernie Sanders",
+      "domain": "defense"
+    },
+    {
+      "id": "pf-2024-029",
+      "claim_text": "Drug prices in the U.S. are two to three times higher than in other developed countries.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/apr/22/drug-prices-comparison/",
+      "captured_date": "2024-04-22",
+      "speaker": "Elizabeth Warren",
+      "domain": "healthcare"
+    },
+    {
+      "id": "pf-2024-030",
+      "claim_text": "Most federal employees work remotely and never come into the office.",
+      "ground_truth": "MOSTLY_FALSE",
+      "categories": [
+        "HALF_TRUE"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/may/20/federal-employees-remote-work/",
+      "captured_date": "2024-05-20",
+      "speaker": "Viral social media",
+      "domain": "government"
+    },
+    {
+      "id": "pf-2024-031",
+      "claim_text": "Google Fact Check Tools has indexed this claim about carbon emissions from data centers.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jun/10/data-center-emissions/",
+      "captured_date": "2024-06-10",
+      "speaker": "Environmental group report",
+      "domain": "technology"
+    },
+    {
+      "id": "pf-2024-032",
+      "claim_text": "The U.S. Postal Service has lost money every year for the past 15 years.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/feb/12/usps-financial-losses/",
+      "captured_date": "2024-02-12",
+      "speaker": "Ron Johnson",
+      "domain": "government"
+    },
+    {
+      "id": "pf-2024-033",
+      "claim_text": "More people have died from fentanyl overdoses than in the Vietnam War.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/20/fentanyl-deaths-vietnam/",
+      "captured_date": "2024-03-20",
+      "speaker": "Marco Rubio",
+      "domain": "public-health"
+    },
+    {
+      "id": "pf-2024-034",
+      "claim_text": "The border patrol union endorsed Donald Trump for president.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/apr/05/border-patrol-union-endorsement/",
+      "captured_date": "2024-04-05",
+      "speaker": "Donald Trump",
+      "domain": "politics"
+    },
+    {
+      "id": "pf-2024-035",
+      "claim_text": "The national debt crossed $34 trillion for the first time in early 2024.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jan/10/national-debt-34-trillion/",
+      "captured_date": "2024-01-10",
+      "speaker": "Kevin McCarthy",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-036",
+      "claim_text": "Illegal border crossings reached record levels in December 2023.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jan/08/border-crossings-december-record/",
+      "captured_date": "2024-01-08",
+      "speaker": "News reports",
+      "domain": "immigration"
+    },
+    {
+      "id": "pf-2024-037",
+      "claim_text": "Artificial intelligence could eliminate millions of jobs in the next decade.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/may/25/ai-job-elimination/",
+      "captured_date": "2024-05-25",
+      "speaker": "Tech industry analysis",
+      "domain": "technology"
+    },
+    {
+      "id": "pf-2024-038",
+      "claim_text": "The U.S. government gave $150 billion to Iran as part of the nuclear deal.",
+      "ground_truth": "MOSTLY_FALSE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/feb/18/iran-nuclear-deal-money/",
+      "captured_date": "2024-02-18",
+      "speaker": "Social media posts",
+      "domain": "foreign-policy"
+    },
+    {
+      "id": "pf-2024-039",
+      "claim_text": "Congress members are exempt from insider trading laws.",
+      "ground_truth": "FALSE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/apr/15/congress-insider-trading-exempt/",
+      "captured_date": "2024-04-15",
+      "speaker": "Viral social media",
+      "domain": "government"
+    },
+    {
+      "id": "pf-2024-040",
+      "claim_text": "5G cell towers spread COVID-19 and cause radiation sickness.",
+      "ground_truth": "PANTS_FIRE",
+      "categories": [
+        "CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/30/5g-covid-radiation/",
+      "captured_date": "2024-03-30",
+      "speaker": "Social media posts",
+      "domain": "science"
+    },
+    {
+      "id": "pf-2024-041",
+      "claim_text": "The average teacher salary in the United States is below the national median household income.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jun/15/teacher-salary-comparison/",
+      "captured_date": "2024-06-15",
+      "speaker": "National Education Association",
+      "domain": "education"
+    },
+    {
+      "id": "pf-2024-042",
+      "claim_text": "The CHIPS Act has attracted over $200 billion in private semiconductor investment.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jul/01/chips-act-investment/",
+      "captured_date": "2024-07-01",
+      "speaker": "Gina Raimondo",
+      "domain": "technology"
+    },
+    {
+      "id": "pf-2024-043",
+      "claim_text": "The United States has no federal paid family leave policy, unlike every other developed nation.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/may/05/no-federal-paid-family-leave/",
+      "captured_date": "2024-05-05",
+      "speaker": "Kirsten Gillibrand",
+      "domain": "social-policy"
+    },
+    {
+      "id": "pf-2024-044",
+      "claim_text": "Florida banned all books about Black history from public schools.",
+      "ground_truth": "FALSE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/feb/25/florida-black-history-books-ban/",
+      "captured_date": "2024-02-25",
+      "speaker": "Social media posts",
+      "domain": "education"
+    },
+    {
+      "id": "pf-2024-045",
+      "claim_text": "Homelessness in the United States reached a record high in 2023.",
+      "ground_truth": "TRUE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jan/20/homelessness-record-2023/",
+      "captured_date": "2024-01-20",
+      "speaker": "HUD report",
+      "domain": "social-policy"
+    },
+    {
+      "id": "pf-2024-046",
+      "claim_text": "Solar energy is now cheaper than coal in most parts of the world.",
+      "ground_truth": "MOSTLY_TRUE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jun/20/solar-cheaper-than-coal/",
+      "captured_date": "2024-06-20",
+      "speaker": "John Kerry",
+      "domain": "energy"
+    },
+    {
+      "id": "pf-2024-047",
+      "claim_text": "The top 1 percent of earners pay more in federal income taxes than the bottom 90 percent combined.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/apr/20/top-1-percent-taxes/",
+      "captured_date": "2024-04-20",
+      "speaker": "Rand Paul",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-048",
+      "claim_text": "Illegal immigrants can vote in federal elections.",
+      "ground_truth": "PANTS_FIRE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/may/30/illegal-immigrants-voting/",
+      "captured_date": "2024-05-30",
+      "speaker": "Social media posts",
+      "domain": "elections"
+    },
+    {
+      "id": "pf-2024-049",
+      "claim_text": "The Inflation Reduction Act contains no measures to reduce inflation.",
+      "ground_truth": "MOSTLY_FALSE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/mar/08/ira-no-inflation-reduction/",
+      "captured_date": "2024-03-08",
+      "speaker": "Ted Cruz",
+      "domain": "economics"
+    },
+    {
+      "id": "pf-2024-050",
+      "claim_text": "The U.S. has deported more people under Biden than under Trump.",
+      "ground_truth": "HALF_TRUE",
+      "categories": [
+        "NOT_CLAIMREVIEW_INDEXED"
+      ],
+      "politifact_url": "https://www.politifact.com/factchecks/2024/jun/05/deportations-biden-trump/",
+      "captured_date": "2024-06-05",
+      "speaker": "Alejandro Mayorkas",
+      "domain": "immigration"
+    }
+  ]
+}
