@@ -69,7 +69,7 @@ class ClaimReviewMatcherHandler(FanoutBase):
         # Check API key
         if not self._api_key:
             logger.warning("GOOGLE_FACTCHECK_API_KEY not configured")
-            await self._publish_error(stream, sk, run_id, "API key not configured")
+            await self._publish_negative(stream, sk, run_id, status="X", note="API key not configured")
             return
 
         query = _build_query(context)
@@ -80,11 +80,11 @@ class ClaimReviewMatcherHandler(FanoutBase):
             results = await self._call_api(query)
         except Exception as exc:
             logger.warning("ClaimReview API error: %s", exc)
-            await self._publish_error(stream, sk, run_id, f"API error: {exc}")
+            await self._publish_negative(stream, sk, run_id, status="X", note=f"API error: {exc}")
             return
 
         if not results:
-            await self._publish_no_match(stream, sk, run_id)
+            await self._publish_negative(stream, sk, run_id)
             await self._publish_progress(redis_client, run_id, "No matching fact-checks found")
             return
 
@@ -92,7 +92,7 @@ class ClaimReviewMatcherHandler(FanoutBase):
         best_match, best_score = self._score_matches(results, context.normalized_claim)
 
         if best_score < MATCH_THRESHOLD:
-            await self._publish_no_match(stream, sk, run_id)
+            await self._publish_negative(stream, sk, run_id)
             await self._publish_progress(redis_client, run_id, "No matching fact-checks found")
             return
 
@@ -206,33 +206,15 @@ class ClaimReviewMatcherHandler(FanoutBase):
             reference_range="0.0-1.0",
         )
 
-    async def _publish_no_match(self, stream: ReasoningStream, sk: str, run_id: str) -> None:
-        """Publish 2 observations for no match."""
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.CLAIMREVIEW_MATCH,
-            value="FALSE^No Match^FCK",
-            value_type=ValueType.CWE,
-            method="lookup_claimreview",
-        )
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.CLAIMREVIEW_MATCH_SCORE,
-            value="0.0",
-            value_type=ValueType.NM,
-            method="compute_similarity",
-            units="score",
-            reference_range="0.0-1.0",
-        )
-
-    async def _publish_error(
-        self, stream: ReasoningStream, sk: str, run_id: str, error: str
+    async def _publish_negative(
+        self,
+        stream: ReasoningStream,
+        sk: str,
+        run_id: str,
+        status: str = "F",
+        note: str | None = None,
     ) -> None:
-        """Publish error observations with X status."""
+        """Publish 2 observations for no-match or error outcomes."""
         await self._publish_obs(
             stream,
             sk,
@@ -240,9 +222,9 @@ class ClaimReviewMatcherHandler(FanoutBase):
             code=ObservationCode.CLAIMREVIEW_MATCH,
             value="FALSE^No Match^FCK",
             value_type=ValueType.CWE,
-            status="X",
+            status=status,
             method="lookup_claimreview",
-            note=error,
+            note=note,
         )
         await self._publish_obs(
             stream,
@@ -251,7 +233,7 @@ class ClaimReviewMatcherHandler(FanoutBase):
             code=ObservationCode.CLAIMREVIEW_MATCH_SCORE,
             value="0.0",
             value_type=ValueType.NM,
-            status="X",
+            status=status,
             method="compute_similarity",
             units="score",
             reference_range="0.0-1.0",
