@@ -28,7 +28,7 @@ Fast-forward through artifact creation - generate everything needed to start imp
    ```bash
    openspec new change "<name>"
    ```
-   This creates a scaffolded change at `openspec/changes/<name>/`.
+   This creates a scaffolded change at `.openspec/changes/<name>/`.
 
 3. **Get the artifact build order**
    ```bash
