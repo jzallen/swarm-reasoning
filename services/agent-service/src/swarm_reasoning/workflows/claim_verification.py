@@ -20,8 +20,18 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
-    from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
-    from swarm_reasoning.activities.run_status import RunStatusInput, RunStatusResult
+    from swarm_reasoning.activities.run_agent import (
+        AgentActivityInput,
+        AgentActivityOutput,
+        run_agent_activity,
+    )
+    from swarm_reasoning.activities.run_status import (
+        RunStatusInput,
+        RunStatusResult,
+        cancel_run,
+        fail_run,
+        update_run_status,
+    )
     from swarm_reasoning.completion.register import CompletionRegister
     from swarm_reasoning.workflows.dag import DAG, PhaseMode
 
@@ -162,9 +172,8 @@ class ClaimVerificationWorkflow:
             claim_text=input.claim_text,
         )
         result = await workflow.execute_activity(
-            "run_agent_activity",
+            run_agent_activity,
             agent_input,
-            result_type=AgentActivityOutput,
             start_to_close_timeout=_START_TO_CLOSE,
             heartbeat_timeout=_HEARTBEAT_TIMEOUT,
             schedule_to_close_timeout=_SCHEDULE_TO_CLOSE,
@@ -185,9 +194,8 @@ class ClaimVerificationWorkflow:
     async def _update_status(self, run_id: str, new_status: str) -> None:
         """Update run status via activity."""
         await workflow.execute_activity(
-            "update_run_status",
+            update_run_status,
             RunStatusInput(run_id=run_id, new_status=new_status),
-            result_type=RunStatusResult,
             start_to_close_timeout=_STATUS_TIMEOUT,
             retry_policy=_RETRY_POLICY,
         )
@@ -195,9 +203,8 @@ class ClaimVerificationWorkflow:
     async def _cancel_run(self, run_id: str, reason: str) -> None:
         """Cancel the run via activity."""
         await workflow.execute_activity(
-            "cancel_run",
+            cancel_run,
             RunStatusInput(run_id=run_id, new_status="cancelled", reason=reason),
-            result_type=RunStatusResult,
             start_to_close_timeout=_STATUS_TIMEOUT,
             retry_policy=_RETRY_POLICY,
         )
@@ -205,9 +212,8 @@ class ClaimVerificationWorkflow:
     async def _fail_run(self, run_id: str, reason: str) -> None:
         """Fail the run via activity."""
         await workflow.execute_activity(
-            "fail_run",
+            fail_run,
             RunStatusInput(run_id=run_id, new_status="failed", reason=reason),
-            result_type=RunStatusResult,
             start_to_close_timeout=_STATUS_TIMEOUT,
             retry_policy=_RETRY_POLICY,
         )
