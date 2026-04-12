@@ -17,9 +17,12 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
+from swarm_reasoning.agents._utils import StreamNotFoundError
 from swarm_reasoning.models.stream import Phase as StreamPhase
 from swarm_reasoning.stream.key import stream_key
+from swarm_reasoning.temporal.errors import InvalidClaimError, MissingApiKeyError
 
 # Heartbeat interval and warning threshold
 HEARTBEAT_INTERVAL_S = 10
@@ -89,22 +92,9 @@ def set_stream_client(client: Any) -> None:
     _stream_client = client
 
 
-class MissingApiKeyError(Exception):
-    """Non-retryable: required API key is not configured."""
-
-
-class StreamNotFoundError(Exception):
-    """Non-retryable: expected Redis Stream does not exist."""
-
-
-class InvalidClaimError(Exception):
-    """Non-retryable: claim data is invalid or malformed."""
-
-
-# Retryable error types (LLM rate limits, timeouts, transient network)
-RETRYABLE_ERRORS = (TimeoutError, ConnectionError, OSError)
-
-# Non-retryable error types
+# Non-retryable error types: permanent failures that should not be retried
+# by Temporal. Caught at the activity boundary and re-raised as
+# ApplicationError(non_retryable=True).
 NON_RETRYABLE_ERRORS = (MissingApiKeyError, StreamNotFoundError, InvalidClaimError, ValueError)
 
 
@@ -198,7 +188,12 @@ async def _run_with_heartbeat(
             activity.heartbeat(f"{input.agent_name}:{stream_ts or 'no-activity'}")
             last_heartbeat = now
 
-    return task.result()
+    try:
+        return task.result()
+    except NON_RETRYABLE_ERRORS as exc:
+        raise ApplicationError(
+            str(exc), type=type(exc).__name__, non_retryable=True,
+        ) from exc
 
 
 async def _publish_progress(

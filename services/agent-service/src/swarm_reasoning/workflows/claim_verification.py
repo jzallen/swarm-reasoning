@@ -68,6 +68,7 @@ _RETRY_POLICY = RetryPolicy(
     maximum_attempts=3,
     non_retryable_error_types=[
         "InvalidClaimError",
+        "InvalidRunTransition",
         "MissingApiKeyError",
         "StreamNotFoundError",
     ],

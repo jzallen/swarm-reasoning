@@ -15,6 +15,7 @@ from pathlib import Path
 
 import httpx
 import redis.asyncio as aioredis
+from temporalio.exceptions import ApplicationError
 
 from swarm_reasoning.agents._utils import STOP_WORDS
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
@@ -450,7 +451,9 @@ class CoverageHandler(FanoutBase):
                 resp = await client.get(NEWSAPI_URL, params=params)
 
             if resp.status_code >= 400:
-                raise RuntimeError(f"HTTP {resp.status_code}")
+                raise ApplicationError(
+                    f"HTTP {resp.status_code}", non_retryable=True,
+                )
 
             data = resp.json()
             return data.get("articles", [])

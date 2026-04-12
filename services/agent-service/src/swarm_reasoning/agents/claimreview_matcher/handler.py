@@ -13,6 +13,7 @@ import os
 
 import httpx
 import redis.asyncio as aioredis
+from temporalio.exceptions import ApplicationError
 
 from swarm_reasoning.agents._utils import register_handler
 from swarm_reasoning.agents.claimreview_matcher.scorer import cosine_similarity
@@ -115,7 +116,9 @@ class ClaimReviewMatcherHandler(FanoutBase):
                 resp = await client.get(API_URL, params={"query": query, "key": self._api_key})
 
             if resp.status_code >= 400:
-                raise RuntimeError(f"HTTP {resp.status_code}")
+                raise ApplicationError(
+                    f"HTTP {resp.status_code}", non_retryable=True,
+                )
 
             data = resp.json()
             return data.get("claims", [])

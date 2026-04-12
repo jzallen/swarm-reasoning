@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 
 class RunStatusEnum(str, Enum):
@@ -100,7 +101,12 @@ async def update_run_status(input: RunStatusInput) -> RunStatusResult:
     """Validate transition and persist new run status."""
     current = _run_store.get(input.run_id, RunStatusEnum.PENDING)
     new_status = RunStatusEnum(input.new_status)
-    validate_transition(current, new_status)
+    try:
+        validate_transition(current, new_status)
+    except InvalidRunTransition as exc:
+        raise ApplicationError(
+            str(exc), type="InvalidRunTransition", non_retryable=True,
+        ) from exc
     _run_store[input.run_id] = new_status
     activity.logger.info(
         "Run %s: %s -> %s", input.run_id, current.value, new_status.value
