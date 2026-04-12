@@ -1,8 +1,9 @@
 name: CI
 
 on:
-  push:
-    branches: ["**"]
+  workflow_dispatch: # manually trigger only — inactive until re-enabled
+  # push:
+  #   branches: ["**"]
     paths:
       - "services/**"
       - "docker-compose.yml"
