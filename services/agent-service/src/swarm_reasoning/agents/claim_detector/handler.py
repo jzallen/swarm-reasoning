@@ -48,14 +48,14 @@ async def _publish_progress(redis_client: aioredis.Redis, run_id: str, message: 
     )
 
 
-async def _read_ingestion_observations(
+async def _read_claim_text(
     stream: ReasoningStream,
     run_id: str,
-) -> tuple[str, list[str], list[str]]:
-    """Read CLAIM_TEXT and entity observations from the ingestion-agent stream.
+) -> str:
+    """Read CLAIM_TEXT from the ingestion-agent stream.
 
     Returns:
-        (claim_text, entity_persons, entity_orgs)
+        The final claim text string.
 
     Raises:
         StreamNotFoundError: If the ingestion stream has no CLAIM_TEXT observation.
@@ -63,25 +63,14 @@ async def _read_ingestion_observations(
     ingestion_key = stream_key(run_id, "ingestion-agent")
     messages = await stream.read_range(ingestion_key)
 
-    claim_text: str | None = None
-    entity_persons: list[str] = []
-    entity_orgs: list[str] = []
-
     for msg in messages:
         if msg.type != "OBS":
             continue
         obs = msg.observation
         if obs.code == ObservationCode.CLAIM_TEXT and obs.status == "F":
-            claim_text = obs.value
-        elif obs.code == ObservationCode.ENTITY_PERSON and obs.status == "F":
-            entity_persons.append(obs.value)
-        elif obs.code == ObservationCode.ENTITY_ORG and obs.status == "F":
-            entity_orgs.append(obs.value)
+            return obs.value
 
-    if claim_text is None:
-        raise StreamNotFoundError(f"No CLAIM_TEXT observation found in stream {ingestion_key}")
-
-    return claim_text, entity_persons, entity_orgs
+    raise StreamNotFoundError(f"No CLAIM_TEXT observation found in stream {ingestion_key}")
 
 
 class ClaimDetectorHandler:
@@ -128,21 +117,15 @@ class ClaimDetectorHandler:
             )
 
             # Read from ingestion stream
-            claim_text, entity_persons, entity_orgs = await _read_ingestion_observations(
-                stream, run_id
-            )
+            claim_text = await _read_claim_text(stream, run_id)
 
             # Step 1: Normalize
             await _publish_progress(redis_client, run_id, "Normalizing claim text...")
-            norm_result = normalize_claim_text(claim_text, entity_persons, entity_orgs)
+            norm_result = normalize_claim_text(claim_text)
 
             note = None
             if norm_result.fallback_used:
                 note = "normalization: fallback to raw text"
-            elif not norm_result.pronouns_resolved and (entity_persons or entity_orgs):
-                note = None  # resolution attempted but nothing matched
-            elif not entity_persons and not entity_orgs:
-                note = "pronoun_resolution: skipped (no entity context)"
 
             # Publish CLAIM_NORMALIZED (seq=1, status=F)
             seq = 1

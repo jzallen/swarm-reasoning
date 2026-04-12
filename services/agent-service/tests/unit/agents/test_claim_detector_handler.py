@@ -28,15 +28,15 @@ def _make_input(run_id: str = "run-001", claim_text: str = "Test claim") -> Agen
 
 def _mock_ingestion_stream(
     claim_text: str = "Biden signed executive order 14042.",
-    entity_persons: list[str] | None = None,
-    entity_orgs: list[str] | None = None,
 ) -> list:
-    """Build a mock ingestion stream read_range response."""
-    messages = [
-        MagicMock(type="START"),
-    ]
+    """Build a mock ingestion stream read_range response.
 
-    messages.append(
+    The ingestion-agent stream only contains CLAIM_TEXT (plus CLAIM_SOURCE_URL,
+    CLAIM_SOURCE_DATE, and CLAIM_DOMAIN). Entity observations are published by
+    the entity-extractor agent to its own stream.
+    """
+    return [
+        MagicMock(type="START"),
         ObsMessage(
             observation=Observation(
                 runId="run-001",
@@ -49,48 +49,9 @@ def _mock_ingestion_stream(
                 timestamp="2026-04-10T12:00:00Z",
                 method="ingest_claim",
             )
-        )
-    )
-
-    if entity_persons:
-        for i, person in enumerate(entity_persons):
-            messages.append(
-                ObsMessage(
-                    observation=Observation(
-                        runId="run-001",
-                        agent="ingestion-agent",
-                        seq=2 + i,
-                        code=ObservationCode.ENTITY_PERSON,
-                        value=person,
-                        valueType=ValueType.ST,
-                        status="F",
-                        timestamp="2026-04-10T12:00:01Z",
-                        method="extract_entities",
-                    )
-                )
-            )
-
-    if entity_orgs:
-        offset = 2 + len(entity_persons or [])
-        for i, org in enumerate(entity_orgs):
-            messages.append(
-                ObsMessage(
-                    observation=Observation(
-                        runId="run-001",
-                        agent="ingestion-agent",
-                        seq=offset + i,
-                        code=ObservationCode.ENTITY_ORG,
-                        value=org,
-                        valueType=ValueType.ST,
-                        status="F",
-                        timestamp="2026-04-10T12:00:01Z",
-                        method="extract_entities",
-                    )
-                )
-            )
-
-    messages.append(MagicMock(type="STOP"))
-    return messages
+        ),
+        MagicMock(type="STOP"),
+    ]
 
 
 def _mock_claude_response(score: float, rationale: str = "test rationale") -> MagicMock:
