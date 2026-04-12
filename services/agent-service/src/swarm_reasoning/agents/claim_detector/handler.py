@@ -86,11 +86,13 @@ class ClaimDetectorHandler:
         if not api_key:
             raise MissingApiKeyError("ANTHROPIC_API_KEY is required for the claim-detector agent")
         self._api_key = api_key
+        self._seq = 0
 
     async def run(self, input: AgentActivityInput) -> AgentActivityOutput:
         """Execute the claim-detector: normalize claim, score check-worthiness, gate."""
         start = time.monotonic()
         run_id = input.run_id
+        self._seq = 0
 
         stream = RedisReasoningStream(self._redis_config)
         redis_client = aioredis.Redis(
@@ -128,75 +130,56 @@ class ClaimDetectorHandler:
                 note = "normalization: fallback to raw text"
 
             # Publish CLAIM_NORMALIZED (seq=1, status=F)
-            seq = 1
-            await stream.publish(
+            await self._publish_obs(
+                stream,
                 sk,
-                ObsMessage(
-                    observation=Observation(
-                        runId=run_id,
-                        agent=AGENT_NAME,
-                        seq=seq,
-                        code=ObservationCode.CLAIM_NORMALIZED,
-                        value=norm_result.normalized,
-                        valueType=ValueType.ST,
-                        status=EpistemicStatus.FINAL.value,
-                        timestamp=_now_iso(),
-                        method="normalize_claim",
-                        note=note,
-                    ),
-                ),
+                run_id,
+                code=ObservationCode.CLAIM_NORMALIZED,
+                value=norm_result.normalized,
+                value_type=ValueType.ST,
+                status=EpistemicStatus.FINAL.value,
+                method="normalize_claim",
+                note=note,
             )
 
             # Step 2: Score check-worthiness
             await _publish_progress(redis_client, run_id, "Scoring check-worthiness...")
             score_result = await score_claim_text(norm_result.normalized, anthropic_client)
 
+            score_note = (
+                f"LLM rationale: {score_result.rationale[:480]}"
+                if score_result.rationale
+                else None
+            )
+
             # Publish CHECK_WORTHY_SCORE with P status (seq=2)
-            seq = 2
-            await stream.publish(
+            await self._publish_obs(
+                stream,
                 sk,
-                ObsMessage(
-                    observation=Observation(
-                        runId=run_id,
-                        agent=AGENT_NAME,
-                        seq=seq,
-                        code=ObservationCode.CHECK_WORTHY_SCORE,
-                        value=f"{score_result.passes[0]:.2f}",
-                        valueType=ValueType.NM,
-                        units="score",
-                        referenceRange="0.0-1.0",
-                        status=EpistemicStatus.PRELIMINARY.value,
-                        timestamp=_now_iso(),
-                        method="score_claim",
-                        note=f"LLM rationale: {score_result.rationale[:480]}"
-                        if score_result.rationale
-                        else None,
-                    ),
-                ),
+                run_id,
+                code=ObservationCode.CHECK_WORTHY_SCORE,
+                value=f"{score_result.passes[0]:.2f}",
+                value_type=ValueType.NM,
+                units="score",
+                reference_range="0.0-1.0",
+                status=EpistemicStatus.PRELIMINARY.value,
+                method="score_claim",
+                note=score_note,
             )
 
             # Publish CHECK_WORTHY_SCORE with F status (seq=3, final score)
-            seq = 3
-            await stream.publish(
+            await self._publish_obs(
+                stream,
                 sk,
-                ObsMessage(
-                    observation=Observation(
-                        runId=run_id,
-                        agent=AGENT_NAME,
-                        seq=seq,
-                        code=ObservationCode.CHECK_WORTHY_SCORE,
-                        value=f"{score_result.score:.2f}",
-                        valueType=ValueType.NM,
-                        units="score",
-                        referenceRange="0.0-1.0",
-                        status=EpistemicStatus.FINAL.value,
-                        timestamp=_now_iso(),
-                        method="score_claim",
-                        note=f"LLM rationale: {score_result.rationale[:480]}"
-                        if score_result.rationale
-                        else None,
-                    ),
-                ),
+                run_id,
+                code=ObservationCode.CHECK_WORTHY_SCORE,
+                value=f"{score_result.score:.2f}",
+                value_type=ValueType.NM,
+                units="score",
+                reference_range="0.0-1.0",
+                status=EpistemicStatus.FINAL.value,
+                method="score_claim",
+                note=score_note,
             )
 
             await _publish_progress(
@@ -223,8 +206,6 @@ class ClaimDetectorHandler:
                     f"cancelling run",
                 )
 
-            observation_count = 3
-
             # Publish STOP
             await stream.publish(
                 sk,
@@ -232,7 +213,7 @@ class ClaimDetectorHandler:
                     runId=run_id,
                     agent=AGENT_NAME,
                     finalStatus=final_status,
-                    observationCount=observation_count,
+                    observationCount=self._seq,
                     timestamp=_now_iso(),
                 ),
             )
@@ -243,13 +224,50 @@ class ClaimDetectorHandler:
             return AgentActivityOutput(
                 agent_name=input.agent_name,
                 terminal_status=final_status,
-                observation_count=observation_count,
+                observation_count=self._seq,
                 duration_ms=duration_ms,
                 check_worthiness_score=score_result.score,
             )
         finally:
             await stream.close()
             await redis_client.aclose()
+
+    async def _publish_obs(
+        self,
+        stream: ReasoningStream,
+        sk: str,
+        run_id: str,
+        *,
+        code: ObservationCode,
+        value: str,
+        value_type: ValueType,
+        status: str = "F",
+        method: str | None = None,
+        note: str | None = None,
+        units: str | None = None,
+        reference_range: str | None = None,
+    ) -> None:
+        """Publish a single observation, auto-incrementing seq."""
+        self._seq += 1
+        await stream.publish(
+            sk,
+            ObsMessage(
+                observation=Observation(
+                    runId=run_id,
+                    agent=AGENT_NAME,
+                    seq=self._seq,
+                    code=code,
+                    value=value,
+                    valueType=value_type,
+                    status=status,
+                    timestamp=_now_iso(),
+                    method=method,
+                    note=note,
+                    units=units,
+                    referenceRange=reference_range,
+                ),
+            ),
+        )
 
     @staticmethod
     async def _heartbeat_loop() -> None:
