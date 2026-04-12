@@ -14,7 +14,7 @@
 - **Docker Compose** — Local development stack
 - **Cloudflare** — Edge proxy, DDoS protection, SSL termination, rate limiting (ADR-020)
 - **AWS ECS Fargate** — Production deployment, scale-to-zero (ADR-020)
-- **Gherkin / Cucumber** — BDD acceptance tests (65 scenarios across 5 feature files)
+- **Gherkin / Cucumber** — BDD acceptance tests (67 scenarios across 5 feature files)
 
 ## Architecture (Key Decisions)
 
@@ -35,20 +35,25 @@ ADRs in `docs/decisions/` as individual MADR v3.0 files (ADR-0003 through ADR-00
 ## Project Structure
 
 ```
+services/
+  agent-service/           — Python agent workers (LangChain, Temporal activities)
+  backend/                 — NestJS API server (Clean Architecture, TypeORM)
+  frontend/                — React SPA (Vite)
 docs/
   decisions/               — 17 MADR v3.0 ADR files (ADR-0003 through ADR-0021) + index + template
   domain/                  — Observation schema spec, OBX code registry, claim lifecycle DMN, ERD, SBVR business rules
   api/openapi.yaml         — REST endpoint paths (Sessions, Verdicts, Audit, System)
-  architecture/            — System architecture diagram, agent topology, DFD, stream lifecycle
+  architecture/            — System architecture diagram, agent topology, DFD, stream lifecycle, docker topology
   diagrams/sequence/       — Mermaid sequence diagrams (ingestion, fanout, synthesis, etc.)
   diagrams/state/          — Claim lifecycle + observation result status state machines
-  features/                — 5 Gherkin files (65 scenarios)
+  features/                — 5 Gherkin files (67 scenarios)
   requirements/nfrs/       — 32 individual NFR files (SEI QAS + Planguage) + index + template
-  architecture/            — …includes docker-topology.mermaid
-docker-compose.yml           — Full local development stack (8 services)
 deploy/
+  cloudflare/              — DNS, SSL, cache, and rate-limit rule configs
   ecs/                     — ECS task definitions, CloudFormation templates
   k8s/                     — Helm chart for minikube demo
+docker-compose.yml           — Full local development stack (8 services)
+.openspec/                   — OpenSpec change tracking (hidden directory)
 ```
 
 ## The 11 Agents
