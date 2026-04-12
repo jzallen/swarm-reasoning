@@ -16,6 +16,7 @@ from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivi
 from swarm_reasoning.agents.claim_detector.normalizer import normalize_claim_text
 from swarm_reasoning.agents.claim_detector.scorer import (
     CHECK_WORTHY_THRESHOLD,
+    ScoreResult,
     score_claim_text,
 )
 from swarm_reasoning.config import RedisConfig
@@ -142,69 +143,10 @@ class ClaimDetectorHandler:
                 note=note,
             )
 
-            # Step 2: Score check-worthiness
-            await _publish_progress(redis_client, run_id, "Scoring check-worthiness...")
-            score_result = await score_claim_text(norm_result.normalized, anthropic_client)
-
-            score_note = (
-                f"LLM rationale: {score_result.rationale[:480]}"
-                if score_result.rationale
-                else None
+            # Step 2: Score check-worthiness and gate
+            final_status, score_result = await self._score_and_gate(
+                stream, sk, run_id, redis_client, anthropic_client, norm_result.normalized,
             )
-
-            # Publish CHECK_WORTHY_SCORE with P status (seq=2)
-            await self._publish_obs(
-                stream,
-                sk,
-                run_id,
-                code=ObservationCode.CHECK_WORTHY_SCORE,
-                value=f"{score_result.passes[0]:.2f}",
-                value_type=ValueType.NM,
-                units="score",
-                reference_range="0.0-1.0",
-                status=EpistemicStatus.PRELIMINARY.value,
-                method="score_claim",
-                note=score_note,
-            )
-
-            # Publish CHECK_WORTHY_SCORE with F status (seq=3, final score)
-            await self._publish_obs(
-                stream,
-                sk,
-                run_id,
-                code=ObservationCode.CHECK_WORTHY_SCORE,
-                value=f"{score_result.score:.2f}",
-                value_type=ValueType.NM,
-                units="score",
-                reference_range="0.0-1.0",
-                status=EpistemicStatus.FINAL.value,
-                method="score_claim",
-                note=score_note,
-            )
-
-            await _publish_progress(
-                redis_client,
-                run_id,
-                f"Check-worthiness score: {score_result.score:.2f} "
-                f"(threshold: {CHECK_WORTHY_THRESHOLD})",
-            )
-
-            # Gate decision
-            final_status: str
-            if score_result.proceed:
-                final_status = "F"
-                await _publish_progress(
-                    redis_client, run_id, "Claim is check-worthy, proceeding to analysis"
-                )
-            else:
-                final_status = "X"
-                await _publish_progress(
-                    redis_client,
-                    run_id,
-                    f"Claim is not check-worthy "
-                    f"(score {score_result.score:.2f} < {CHECK_WORTHY_THRESHOLD}), "
-                    f"cancelling run",
-                )
 
             # Publish STOP
             await stream.publish(
@@ -231,6 +173,84 @@ class ClaimDetectorHandler:
         finally:
             await stream.close()
             await redis_client.aclose()
+
+    async def _score_and_gate(
+        self,
+        stream: ReasoningStream,
+        sk: str,
+        run_id: str,
+        redis_client: aioredis.Redis,
+        anthropic_client: AsyncAnthropic,
+        normalized_text: str,
+    ) -> tuple[str, ScoreResult]:
+        """Score check-worthiness and apply the gate decision.
+
+        Publishes CHECK_WORTHY_SCORE observations (preliminary + final) and
+        progress events. Returns (final_status, score_result).
+        """
+        await _publish_progress(redis_client, run_id, "Scoring check-worthiness...")
+        score_result = await score_claim_text(normalized_text, anthropic_client)
+
+        score_note = (
+            f"LLM rationale: {score_result.rationale[:480]}"
+            if score_result.rationale
+            else None
+        )
+
+        # Publish CHECK_WORTHY_SCORE with P status (preliminary pass-1 score)
+        await self._publish_obs(
+            stream,
+            sk,
+            run_id,
+            code=ObservationCode.CHECK_WORTHY_SCORE,
+            value=f"{score_result.passes[0]:.2f}",
+            value_type=ValueType.NM,
+            units="score",
+            reference_range="0.0-1.0",
+            status=EpistemicStatus.PRELIMINARY.value,
+            method="score_claim",
+            note=score_note,
+        )
+
+        # Publish CHECK_WORTHY_SCORE with F status (final resolved score)
+        await self._publish_obs(
+            stream,
+            sk,
+            run_id,
+            code=ObservationCode.CHECK_WORTHY_SCORE,
+            value=f"{score_result.score:.2f}",
+            value_type=ValueType.NM,
+            units="score",
+            reference_range="0.0-1.0",
+            status=EpistemicStatus.FINAL.value,
+            method="score_claim",
+            note=score_note,
+        )
+
+        await _publish_progress(
+            redis_client,
+            run_id,
+            f"Check-worthiness score: {score_result.score:.2f} "
+            f"(threshold: {CHECK_WORTHY_THRESHOLD})",
+        )
+
+        # Gate decision
+        if score_result.proceed:
+            final_status = "F"
+            await _publish_progress(
+                redis_client, run_id, "Claim is check-worthy, proceeding to analysis"
+            )
+        else:
+            final_status = "X"
+            await _publish_progress(
+                redis_client,
+                run_id,
+                f"Claim is not check-worthy "
+                f"(score {score_result.score:.2f} < {CHECK_WORTHY_THRESHOLD}), "
+                f"cancelling run",
+            )
+
+        return final_status, score_result
 
     async def _publish_obs(
         self,
