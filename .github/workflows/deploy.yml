@@ -3,6 +3,10 @@ name: Deploy
 on:
   push:
     branches: [main]
+    paths:
+      - "services/**"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy.yml"
 
 permissions:
   id-token: write

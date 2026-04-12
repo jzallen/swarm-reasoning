@@ -3,8 +3,16 @@ name: CI
 on:
   push:
     branches: ["**"]
+    paths:
+      - "services/**"
+      - "docker-compose.yml"
+      - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
+    paths:
+      - "services/**"
+      - "docker-compose.yml"
+      - ".github/workflows/ci.yml"
 
 jobs:
   lint-and-test-backend:
