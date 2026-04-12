@@ -8,8 +8,11 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-CORPUS_PATH = Path(__file__).parent.parent.parent / "docs" / "validation" / "corpus.json"
-SCHEMA_PATH = Path(__file__).parent.parent.parent / "docs" / "validation" / "corpus-schema.json"
+_AGENT_SERVICE_ROOT = Path(__file__).parent.parent.parent
+_REPO_ROOT = _AGENT_SERVICE_ROOT.parent.parent
+
+CORPUS_PATH = _REPO_ROOT / "docs" / "validation" / "corpus.json"
+SCHEMA_PATH = _REPO_ROOT / "docs" / "validation" / "corpus-schema.json"
 
 CATEGORIES = [
     "TRUE_MOSTLY_TRUE",
