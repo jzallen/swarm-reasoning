@@ -12,3 +12,6 @@ services/backend/dist/
 services/backend/node_modules/
 services/backend/snapshots/
 .env
+
+# Gas Town runtime state
+.runtime/
