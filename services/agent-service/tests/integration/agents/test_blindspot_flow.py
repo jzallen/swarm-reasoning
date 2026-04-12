@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from swarm_reasoning.agents.blindspot_detector.activity import (
-    BlindspotDetectorActivity,
+from swarm_reasoning.agents.blindspot_detector.handler import (
+    BlindspotDetectorHandler,
 )
 from swarm_reasoning.models.observation import ObservationCode
 from swarm_reasoning.models.stream import ObsMessage, StopMessage
@@ -100,7 +100,7 @@ class TestBlindspotDetectorFullFlow:
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
         ):
-            handler = BlindspotDetectorActivity()
+            handler = BlindspotDetectorHandler()
             result = await handler.run(_make_input(cross_data))
 
         assert result.terminal_status == "F"
@@ -137,7 +137,7 @@ class TestBlindspotDetectorFullFlow:
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
         ):
-            handler = BlindspotDetectorActivity()
+            handler = BlindspotDetectorHandler()
             result = await handler.run(_make_input({}))
 
         assert result.terminal_status == "F"
@@ -193,7 +193,7 @@ class TestBlindspotDetectorFullFlow:
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
         ):
-            handler = BlindspotDetectorActivity()
+            handler = BlindspotDetectorHandler()
             await handler.run(_make_input(cross_data))
 
         observations = _collect_obs(stream_mock)
@@ -231,7 +231,7 @@ class TestBlindspotDetectorFullFlow:
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
         ):
-            handler = BlindspotDetectorActivity()
+            handler = BlindspotDetectorHandler()
             await handler.run(_make_input(cross_data))
 
         observations = _collect_obs(stream_mock)
@@ -261,7 +261,7 @@ class TestBlindspotDetectorFullFlow:
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
         ):
-            handler = BlindspotDetectorActivity()
+            handler = BlindspotDetectorHandler()
             await handler.run(_make_input(cross_data))
 
         observations = _collect_obs(stream_mock)
@@ -291,7 +291,7 @@ class TestBlindspotDetectorFullFlow:
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
         ):
-            handler = BlindspotDetectorActivity()
+            handler = BlindspotDetectorHandler()
             await handler.run(_make_input(cross_data))
 
         progress_messages = []
@@ -332,7 +332,7 @@ class TestBlindspotDetectorFullFlow:
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
         ):
-            handler = BlindspotDetectorActivity()
+            handler = BlindspotDetectorHandler()
             await handler.run(_make_input(cross_data))
 
         observations = _collect_obs(stream_mock)
@@ -370,7 +370,7 @@ class TestBlindspotDetectorFullFlow:
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
         ):
-            handler = BlindspotDetectorActivity()
+            handler = BlindspotDetectorHandler()
             await handler.run(_make_input(cross_data))
 
         observations = _collect_obs(stream_mock)

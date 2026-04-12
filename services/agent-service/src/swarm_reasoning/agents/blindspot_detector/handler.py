@@ -1,4 +1,4 @@
-"""Blindspot detector Temporal activity -- coverage asymmetry analysis.
+"""Blindspot detector Temporal handler -- coverage asymmetry analysis.
 
 Phase 3 agent: receives cross-agent coverage data as Temporal activity input,
 computes BLINDSPOT_SCORE, BLINDSPOT_DIRECTION, and CROSS_SPECTRUM_CORROBORATION,
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "blindspot-detector"
 
 
-class BlindspotDetectorActivity(FanoutBase):
+class BlindspotDetectorHandler(FanoutBase):
     """Orchestrates coverage asymmetry analysis across spectrum segments."""
 
     AGENT_NAME = AGENT_NAME
@@ -126,11 +126,11 @@ class BlindspotDetectorActivity(FanoutBase):
 
 
 # Agent registry integration
-_HANDLER: BlindspotDetectorActivity | None = None
+_HANDLER: BlindspotDetectorHandler | None = None
 
 
-def get_handler() -> BlindspotDetectorActivity:
+def get_handler() -> BlindspotDetectorHandler:
     global _HANDLER
     if _HANDLER is None:
-        _HANDLER = BlindspotDetectorActivity()
+        _HANDLER = BlindspotDetectorHandler()
     return _HANDLER
