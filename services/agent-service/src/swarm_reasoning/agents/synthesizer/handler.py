@@ -1,4 +1,4 @@
-"""Synthesizer Temporal activity -- Phase 3 verdict synthesis.
+"""Synthesizer Temporal handler -- Phase 3 verdict synthesis.
 
 Final agent in the execution DAG: reads all 10 upstream agent streams,
 resolves observations, computes confidence score, maps verdict,
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "synthesizer"
 
 
-class SynthesizerActivity(FanoutBase):
+class SynthesizerHandler(FanoutBase):
     """Orchestrates verdict synthesis from upstream agent observations."""
 
     AGENT_NAME = AGENT_NAME
@@ -151,11 +151,11 @@ class SynthesizerActivity(FanoutBase):
 
 
 # Agent registry integration
-_HANDLER: SynthesizerActivity | None = None
+_HANDLER: SynthesizerHandler | None = None
 
 
-def get_handler() -> SynthesizerActivity:
+def get_handler() -> SynthesizerHandler:
     global _HANDLER
     if _HANDLER is None:
-        _HANDLER = SynthesizerActivity()
+        _HANDLER = SynthesizerHandler()
     return _HANDLER
