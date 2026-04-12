@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Valid framing values from coverage agents
-VALID_FRAMINGS = {"SUPPORTIVE", "CRITICAL", "NEUTRAL", "ABSENT"}
-
 
 @dataclass
 class SegmentCoverage:
