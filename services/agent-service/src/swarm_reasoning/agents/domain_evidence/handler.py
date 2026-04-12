@@ -16,6 +16,7 @@ from urllib.parse import quote_plus
 import httpx
 import redis.asyncio as aioredis
 
+from swarm_reasoning.agents._utils import STOP_WORDS
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
 from swarm_reasoning.config import RedisConfig
 from swarm_reasoning.models.observation import ObservationCode, ValueType
@@ -24,54 +25,6 @@ from swarm_reasoning.stream.base import ReasoningStream
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "domain-evidence"
-
-# Stop words for query derivation
-_STOP_WORDS = frozenset(
-    {
-        "a",
-        "an",
-        "the",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "have",
-        "has",
-        "had",
-        "do",
-        "does",
-        "did",
-        "will",
-        "would",
-        "could",
-        "should",
-        "may",
-        "might",
-        "shall",
-        "can",
-        "to",
-        "of",
-        "in",
-        "for",
-        "on",
-        "with",
-        "at",
-        "by",
-        "from",
-        "as",
-        "and",
-        "but",
-        "or",
-        "not",
-        "that",
-        "this",
-        "it",
-        "its",
-    }
-)
 
 # Negation patterns for alignment detection
 _NEGATION_PATTERNS = re.compile(
@@ -101,7 +54,7 @@ def derive_query(context: ClaimContext) -> str:
 
     # Add claim text minus stop words
     words = context.normalized_claim.lower().split()
-    filtered = [w for w in words if w not in _STOP_WORDS]
+    filtered = [w for w in words if w not in STOP_WORDS]
     parts.extend(filtered)
 
     # Append statistics verbatim
@@ -135,7 +88,7 @@ def score_alignment(content: str, context: ClaimContext) -> str:
 
     # Extract claim keywords
     claim_words = set(context.normalized_claim.lower().split())
-    claim_keywords = claim_words - _STOP_WORDS
+    claim_keywords = claim_words - STOP_WORDS
     if not claim_keywords:
         return "ABSENT^No Evidence Found^FCK"
 
@@ -209,7 +162,7 @@ def _is_relevant(content: str, context: ClaimContext) -> bool:
             return True
 
     # Check for claim keyword presence
-    claim_words = set(context.normalized_claim.lower().split()) - _STOP_WORDS
+    claim_words = set(context.normalized_claim.lower().split()) - STOP_WORDS
     matches = sum(1 for w in claim_words if w in content_lower)
     return matches >= 2
 

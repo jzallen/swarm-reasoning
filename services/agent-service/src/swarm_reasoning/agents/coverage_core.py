@@ -16,6 +16,7 @@ from pathlib import Path
 import httpx
 import redis.asyncio as aioredis
 
+from swarm_reasoning.agents._utils import STOP_WORDS
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
 from swarm_reasoning.config import RedisConfig
 from swarm_reasoning.models.observation import ObservationCode, ValueType
@@ -24,67 +25,6 @@ from swarm_reasoning.stream.base import ReasoningStream
 logger = logging.getLogger(__name__)
 
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
-
-# Common stop words for query building
-_STOP_WORDS = frozenset(
-    {
-        "a",
-        "an",
-        "the",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "have",
-        "has",
-        "had",
-        "do",
-        "does",
-        "did",
-        "will",
-        "would",
-        "could",
-        "should",
-        "may",
-        "might",
-        "shall",
-        "can",
-        "to",
-        "of",
-        "in",
-        "for",
-        "on",
-        "with",
-        "at",
-        "by",
-        "from",
-        "as",
-        "into",
-        "through",
-        "during",
-        "before",
-        "after",
-        "and",
-        "but",
-        "or",
-        "not",
-        "so",
-        "yet",
-        "that",
-        "this",
-        "these",
-        "those",
-        "it",
-        "its",
-        "he",
-        "she",
-        "they",
-        "them",
-    }
-)
 
 # Simplified VADER-style lexicon for headline sentiment
 _POSITIVE_WORDS = frozenset(
@@ -242,7 +182,7 @@ def build_search_query(context: ClaimContext) -> str:
     Truncates to 100 characters at word boundary.
     """
     words = context.normalized_claim.lower().split()
-    filtered = [w for w in words if w not in _STOP_WORDS]
+    filtered = [w for w in words if w not in STOP_WORDS]
     query = " ".join(filtered)
 
     if len(query) <= 100:

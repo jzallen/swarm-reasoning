@@ -70,118 +70,15 @@ class TestStopWords:
         for word in ("a", "an", "the", "is", "and", "or", "not"):
             assert word in STOP_WORDS
 
-    def test_superset_of_coverage_core(self):
-        """STOP_WORDS must include all words from coverage_core._STOP_WORDS."""
-        coverage_core_words = frozenset(
-            {
-                "a",
-                "an",
-                "the",
-                "is",
-                "are",
-                "was",
-                "were",
-                "be",
-                "been",
-                "being",
-                "have",
-                "has",
-                "had",
-                "do",
-                "does",
-                "did",
-                "will",
-                "would",
-                "could",
-                "should",
-                "may",
-                "might",
-                "shall",
-                "can",
-                "to",
-                "of",
-                "in",
-                "for",
-                "on",
-                "with",
-                "at",
-                "by",
-                "from",
-                "as",
-                "into",
-                "through",
-                "during",
-                "before",
-                "after",
-                "and",
-                "but",
-                "or",
-                "not",
-                "so",
-                "yet",
-                "that",
-                "this",
-                "these",
-                "those",
-                "it",
-                "its",
-                "he",
-                "she",
-                "they",
-                "them",
-            }
-        )
-        assert coverage_core_words <= STOP_WORDS
+    def test_contains_prepositions(self):
+        """STOP_WORDS includes common prepositions."""
+        prepositions = {"to", "of", "in", "for", "on", "with", "at", "by", "from", "into", "through"}
+        assert prepositions <= STOP_WORDS
 
-    def test_superset_of_domain_evidence(self):
-        """STOP_WORDS must include all words from domain_evidence._STOP_WORDS."""
-        domain_evidence_words = frozenset(
-            {
-                "a",
-                "an",
-                "the",
-                "is",
-                "are",
-                "was",
-                "were",
-                "be",
-                "been",
-                "being",
-                "have",
-                "has",
-                "had",
-                "do",
-                "does",
-                "did",
-                "will",
-                "would",
-                "could",
-                "should",
-                "may",
-                "might",
-                "shall",
-                "can",
-                "to",
-                "of",
-                "in",
-                "for",
-                "on",
-                "with",
-                "at",
-                "by",
-                "from",
-                "as",
-                "and",
-                "but",
-                "or",
-                "not",
-                "that",
-                "this",
-                "it",
-                "its",
-            }
-        )
-        assert domain_evidence_words <= STOP_WORDS
+    def test_contains_pronouns(self):
+        """STOP_WORDS includes common pronouns."""
+        pronouns = {"it", "its", "he", "she", "they", "them", "his", "her", "their"}
+        assert pronouns <= STOP_WORDS
 
     def test_immutable(self):
         with pytest.raises(AttributeError):
