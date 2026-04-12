@@ -8,7 +8,7 @@ build/
 
 # Node/NestJS
 node_modules/
-backend/dist/
-backend/node_modules/
-backend/snapshots/
+services/backend/dist/
+services/backend/node_modules/
+services/backend/snapshots/
 .env

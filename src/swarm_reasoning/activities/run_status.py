@@ -27,7 +27,7 @@ TERMINAL_STATUSES = frozenset({
     RunStatusEnum.COMPLETED, RunStatusEnum.CANCELLED, RunStatusEnum.FAILED,
 })
 
-# Valid state transitions matching backend/src/domain/entities/run.entity.ts
+# Valid state transitions matching services/backend/src/domain/entities/run.entity.ts
 _CANCEL_FAIL = frozenset({RunStatusEnum.CANCELLED, RunStatusEnum.FAILED})
 VALID_TRANSITIONS: dict[RunStatusEnum, frozenset[RunStatusEnum]] = {
     RunStatusEnum.PENDING: frozenset({RunStatusEnum.INGESTING}) | _CANCEL_FAIL,
