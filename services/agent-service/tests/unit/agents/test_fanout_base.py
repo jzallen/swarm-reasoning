@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase, StreamNotFoundError
+from swarm_reasoning.agents.fanout_base import FanoutBase, StreamNotFoundError
 from swarm_reasoning.models.observation import Observation, ObservationCode, ValueType
 from swarm_reasoning.models.stream import ObsMessage, StartMessage, StopMessage
 

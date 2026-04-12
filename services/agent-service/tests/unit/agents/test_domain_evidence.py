@@ -14,8 +14,7 @@ from swarm_reasoning.agents.domain_evidence.handler import (
 )
 from swarm_reasoning.agents.fanout_base import ClaimContext
 from swarm_reasoning.models.observation import ObservationCode
-from swarm_reasoning.models.stream import ObsMessage, StopMessage
-
+from swarm_reasoning.models.stream import ObsMessage
 
 # ---- Query derivation tests ----
 
@@ -197,7 +196,9 @@ class TestDomainEvidenceFullPath:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
-            patch("swarm_reasoning.agents.domain_evidence.handler.httpx.AsyncClient") as mock_client_cls,
+            patch(
+                "swarm_reasoning.agents.domain_evidence.handler.httpx.AsyncClient",
+            ) as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -249,7 +250,9 @@ class TestDomainEvidenceAllFail:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
-            patch("swarm_reasoning.agents.domain_evidence.handler.httpx.AsyncClient") as mock_client_cls,
+            patch(
+                "swarm_reasoning.agents.domain_evidence.handler.httpx.AsyncClient",
+            ) as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)

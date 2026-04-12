@@ -19,7 +19,8 @@ _SYSTEM_PROMPT = (
     "Use YYYYMMDD format for single dates and YYYYMMDD-YYYYMMDD for ranges where possible. "
     "If the exact date cannot be determined, return the original text.\n"
     '- "locations": list of geographic locations explicitly mentioned\n'
-    '- "statistics": list of numeric claims or quantities (e.g. "87% of adults", "$1.2 trillion")\n\n'
+    '- "statistics": list of numeric claims or quantities '
+    '(e.g. "87% of adults", "$1.2 trillion")\n\n'
     "Rules:\n"
     "- Only extract entities explicitly stated in the claim text. Do not infer or hallucinate.\n"
     "- Return empty lists for entity types not present in the claim.\n"

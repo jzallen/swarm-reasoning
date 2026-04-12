@@ -1,6 +1,6 @@
 .PHONY: validate validate-unit validate-up validate-down
 
-COMPOSE_FILE := docs/infrastructure/docker-compose.yml
+COMPOSE_FILE := ../../docs/infrastructure/docker-compose.yml
 COMPOSE := docker compose -f $(COMPOSE_FILE)
 
 # Run the full validation harness against a live stack

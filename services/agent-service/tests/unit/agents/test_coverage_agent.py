@@ -15,8 +15,7 @@ from swarm_reasoning.agents.coverage_core import (
 from swarm_reasoning.agents.coverage_left.handler import CoverageLeftHandler
 from swarm_reasoning.agents.fanout_base import ClaimContext
 from swarm_reasoning.models.observation import ObservationCode
-from swarm_reasoning.models.stream import ObsMessage, StartMessage, StopMessage
-
+from swarm_reasoning.models.stream import ObsMessage, StopMessage
 
 # ---- Utility tests ----
 
@@ -273,7 +272,10 @@ class TestCoverageNoArticles:
         # Check COVERAGE_FRAMING is ABSENT
         for call in stream_mock.publish.call_args_list:
             msg = call[0][1]
-            if isinstance(msg, ObsMessage) and msg.observation.code == ObservationCode.COVERAGE_FRAMING:
+            if (
+                isinstance(msg, ObsMessage)
+                and msg.observation.code == ObservationCode.COVERAGE_FRAMING
+            ):
                 assert "ABSENT" in msg.observation.value
 
         # STOP has F status (empty coverage is valid)
@@ -309,7 +311,7 @@ class TestCoverageApiError:
             handler = CoverageLeftHandler()
             handler._api_key = ""
             handler._sources = [{"id": "msnbc", "name": "MSNBC", "credibility_rank": 60}]
-            result = await handler.run(_make_input())
+            await handler.run(_make_input())
 
         # Error observations should have X status
         x_obs = [

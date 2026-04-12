@@ -4,10 +4,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
+COPY requirements.txt pyproject.toml ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY src/ src/
+RUN pip install --no-cache-dir .
 
 USER nobody
 EXPOSE 8080

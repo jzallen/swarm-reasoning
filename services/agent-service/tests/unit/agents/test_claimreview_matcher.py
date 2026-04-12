@@ -12,9 +12,8 @@ from swarm_reasoning.agents.claimreview_matcher.handler import (
 )
 from swarm_reasoning.agents.claimreview_matcher.scorer import cosine_similarity
 from swarm_reasoning.agents.fanout_base import ClaimContext
-from swarm_reasoning.models.observation import Observation, ObservationCode, ValueType
-from swarm_reasoning.models.stream import ObsMessage, StartMessage, StopMessage
-
+from swarm_reasoning.models.observation import ObservationCode
+from swarm_reasoning.models.stream import ObsMessage
 
 # ---- Scorer tests ----
 
@@ -142,7 +141,9 @@ class TestClaimReviewMatchPath:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
-            patch("swarm_reasoning.agents.claimreview_matcher.handler.httpx.AsyncClient") as mock_client_cls,
+            patch(
+                "swarm_reasoning.agents.claimreview_matcher.handler.httpx.AsyncClient",
+            ) as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -200,7 +201,9 @@ class TestClaimReviewNoMatch:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
-            patch("swarm_reasoning.agents.claimreview_matcher.handler.httpx.AsyncClient") as mock_client_cls,
+            patch(
+                "swarm_reasoning.agents.claimreview_matcher.handler.httpx.AsyncClient",
+            ) as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -220,7 +223,10 @@ class TestClaimReviewNoMatch:
         match_obs = None
         for call in calls:
             msg = call[0][1]
-            if isinstance(msg, ObsMessage) and msg.observation.code == ObservationCode.CLAIMREVIEW_MATCH:
+            if (
+                isinstance(msg, ObsMessage)
+                and msg.observation.code == ObservationCode.CLAIMREVIEW_MATCH
+            ):
                 match_obs = msg.observation
                 break
         assert match_obs is not None
@@ -250,7 +256,7 @@ class TestClaimReviewApiError:
         ):
             handler = ClaimReviewMatcherHandler()
             handler._api_key = ""
-            result = await handler.run(_make_input())
+            await handler.run(_make_input())
 
         # X-status observations from error path, but lifecycle completes F
         # (error is graceful, not a crash)
