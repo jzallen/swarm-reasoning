@@ -229,10 +229,26 @@ class ClaimVerificationWorkflow:
         phase_2a = DAG[1]
         assert phase_2a.mode == PhaseMode.PARALLEL
         fanout_results = await asyncio.gather(
-            *[self._dispatch_agent(agent, input) for agent in phase_2a.agents]
+            *[self._dispatch_agent(agent, input) for agent in phase_2a.agents],
+            return_exceptions=True,
         )
-        for r in fanout_results:
-            self._record_result(r)
+        for agent_name, outcome in zip(phase_2a.agents, fanout_results):
+            if isinstance(outcome, BaseException):
+                workflow.logger.warning(
+                    "Fan-out agent %s failed in run %s: %s",
+                    agent_name,
+                    input.run_id,
+                    outcome,
+                )
+                self._register.mark_complete(agent_name, "X")
+                self._agent_results.append(AgentResultSummary(
+                    agent_name=agent_name,
+                    terminal_status="X",
+                    observation_count=0,
+                    duration_ms=0,
+                ))
+            else:
+                self._record_result(outcome)
 
         # Phase 2b — Source validation (sequential, after 2a)
         self._phase = "2b"

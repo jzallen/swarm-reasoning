@@ -373,3 +373,178 @@ async def test_workflow_query_cancelled_status(run_store):
             )
 
         assert result.final_status == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Fan-out partial-failure tolerance tests (hq-423.32)
+# ---------------------------------------------------------------------------
+
+FANOUT_AGENTS = {
+    "claimreview-matcher",
+    "coverage-left",
+    "coverage-center",
+    "coverage-right",
+    "domain-evidence",
+}
+
+
+@pytest.mark.asyncio
+async def test_fanout_single_agent_failure(run_store):
+    """One fan-out agent raising should not abort the workflow.
+
+    The failed agent gets AgentResultSummary(terminal_status='X'),
+    while the remaining agents record normally.
+    """
+
+    @activity.defn(name="run_agent_activity")
+    async def stub_one_fails(input: AgentActivityInput) -> AgentActivityOutput:
+        if input.agent_name == "coverage-left":
+            raise RuntimeError("coverage-left exploded")
+        return AgentActivityOutput(
+            agent_name=input.agent_name,
+            terminal_status="F",
+            observation_count=3,
+            duration_ms=50,
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        input = _make_input()
+        run_store[input.run_id] = RunStatusEnum.PENDING
+
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[ClaimVerificationWorkflow],
+            activities=[
+                stub_one_fails,
+                update_run_status,
+                cancel_run,
+                fail_run,
+                get_run_status,
+            ],
+        ):
+            result = await env.client.execute_workflow(
+                ClaimVerificationWorkflow.run,
+                input,
+                id=f"test-{input.run_id}",
+                task_queue=TASK_QUEUE,
+            )
+
+    assert result.final_status == "completed"
+    assert len(result.agent_results) == 11
+
+    by_name = {r.agent_name: r for r in result.agent_results}
+    assert by_name["coverage-left"].terminal_status == "X"
+    assert by_name["coverage-left"].observation_count == 0
+
+    for agent in FANOUT_AGENTS - {"coverage-left"}:
+        assert by_name[agent].terminal_status == "F"
+
+
+@pytest.mark.asyncio
+async def test_fanout_all_agents_fail(run_store):
+    """All fan-out agents failing should still let synthesis proceed."""
+
+    @activity.defn(name="run_agent_activity")
+    async def stub_all_fanout_fail(input: AgentActivityInput) -> AgentActivityOutput:
+        if input.agent_name in FANOUT_AGENTS:
+            raise RuntimeError(f"{input.agent_name} exploded")
+        return AgentActivityOutput(
+            agent_name=input.agent_name,
+            terminal_status="F",
+            observation_count=2,
+            duration_ms=30,
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        input = _make_input()
+        run_store[input.run_id] = RunStatusEnum.PENDING
+
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[ClaimVerificationWorkflow],
+            activities=[
+                stub_all_fanout_fail,
+                update_run_status,
+                cancel_run,
+                fail_run,
+                get_run_status,
+            ],
+        ):
+            result = await env.client.execute_workflow(
+                ClaimVerificationWorkflow.run,
+                input,
+                id=f"test-{input.run_id}",
+                task_queue=TASK_QUEUE,
+            )
+
+    assert result.final_status == "completed"
+
+    by_name = {r.agent_name: r for r in result.agent_results}
+    for agent in FANOUT_AGENTS:
+        assert by_name[agent].terminal_status == "X"
+        assert by_name[agent].observation_count == 0
+
+    # Synthesis agents still ran
+    assert by_name["synthesizer"].terminal_status == "F"
+    assert by_name["blindspot-detector"].terminal_status == "F"
+
+
+@pytest.mark.asyncio
+async def test_fanout_mixed_results(run_store):
+    """Mix of successes (F) and failures (X) in fan-out.
+
+    Two agents fail, three succeed — workflow completes with partial results.
+    """
+
+    failing = {"coverage-right", "domain-evidence"}
+
+    @activity.defn(name="run_agent_activity")
+    async def stub_mixed(input: AgentActivityInput) -> AgentActivityOutput:
+        if input.agent_name in failing:
+            raise RuntimeError(f"{input.agent_name} exploded")
+        return AgentActivityOutput(
+            agent_name=input.agent_name,
+            terminal_status="F",
+            observation_count=4,
+            duration_ms=40,
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        input = _make_input()
+        run_store[input.run_id] = RunStatusEnum.PENDING
+
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[ClaimVerificationWorkflow],
+            activities=[
+                stub_mixed,
+                update_run_status,
+                cancel_run,
+                fail_run,
+                get_run_status,
+            ],
+        ):
+            result = await env.client.execute_workflow(
+                ClaimVerificationWorkflow.run,
+                input,
+                id=f"test-{input.run_id}",
+                task_queue=TASK_QUEUE,
+            )
+
+    assert result.final_status == "completed"
+    assert len(result.agent_results) == 11
+
+    by_name = {r.agent_name: r for r in result.agent_results}
+
+    # Failed agents
+    for agent in failing:
+        assert by_name[agent].terminal_status == "X"
+        assert by_name[agent].observation_count == 0
+
+    # Successful fan-out agents
+    for agent in FANOUT_AGENTS - failing:
+        assert by_name[agent].terminal_status == "F"
+        assert by_name[agent].observation_count == 4
