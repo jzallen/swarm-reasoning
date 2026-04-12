@@ -21,6 +21,7 @@ from swarm_reasoning.activities.run_status import (
 from swarm_reasoning.workflows.claim_verification import (
     ClaimVerificationWorkflow,
     WorkflowInput,
+    WorkflowStatus,
 )
 from swarm_reasoning.workflows.dag import ALL_AGENTS
 
@@ -248,3 +249,127 @@ async def test_workflow_status_transitions(run_store):
 
         assert result.final_status == "completed"
         assert status_history == ["ingesting", "analyzing", "synthesizing", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_query_status_after_completion(run_store):
+    """Query the status of a completed workflow."""
+
+    @activity.defn(name="run_agent_activity")
+    async def stub_agent(input: AgentActivityInput) -> AgentActivityOutput:
+        return AgentActivityOutput(
+            agent_name=input.agent_name,
+            terminal_status="F",
+            observation_count=1,
+            duration_ms=10,
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        input = _make_input()
+        run_store[input.run_id] = RunStatusEnum.PENDING
+
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[ClaimVerificationWorkflow],
+            activities=[
+                stub_agent,
+                update_run_status,
+                cancel_run,
+                fail_run,
+                get_run_status,
+            ],
+        ):
+            wf_handle = await env.client.start_workflow(
+                ClaimVerificationWorkflow.run,
+                input,
+                id=f"test-{input.run_id}",
+                task_queue=TASK_QUEUE,
+            )
+            result = await wf_handle.result()
+
+        assert result.final_status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_workflow_query_current_phase_after_completion(run_store):
+    """Query the current_phase of a completed workflow — should be empty."""
+
+    @activity.defn(name="run_agent_activity")
+    async def stub_agent(input: AgentActivityInput) -> AgentActivityOutput:
+        return AgentActivityOutput(
+            agent_name=input.agent_name,
+            terminal_status="F",
+            observation_count=1,
+            duration_ms=10,
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        input = _make_input()
+        run_store[input.run_id] = RunStatusEnum.PENDING
+
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[ClaimVerificationWorkflow],
+            activities=[
+                stub_agent,
+                update_run_status,
+                cancel_run,
+                fail_run,
+                get_run_status,
+            ],
+        ):
+            wf_handle = await env.client.start_workflow(
+                ClaimVerificationWorkflow.run,
+                input,
+                id=f"test-{input.run_id}",
+                task_queue=TASK_QUEUE,
+            )
+            await wf_handle.result()
+
+
+@pytest.mark.asyncio
+async def test_workflow_query_cancelled_status(run_store):
+    """Cancelled workflow should report cancelled status via query."""
+
+    @activity.defn(name="run_agent_activity")
+    async def stub_cancel(input: AgentActivityInput) -> AgentActivityOutput:
+        if input.agent_name == "claim-detector":
+            return AgentActivityOutput(
+                agent_name=input.agent_name,
+                terminal_status="X",
+                observation_count=1,
+                duration_ms=10,
+            )
+        return AgentActivityOutput(
+            agent_name=input.agent_name,
+            terminal_status="F",
+            observation_count=3,
+            duration_ms=50,
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        input = _make_input()
+        run_store[input.run_id] = RunStatusEnum.PENDING
+
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[ClaimVerificationWorkflow],
+            activities=[
+                stub_cancel,
+                update_run_status,
+                cancel_run,
+                fail_run,
+                get_run_status,
+            ],
+        ):
+            result = await env.client.execute_workflow(
+                ClaimVerificationWorkflow.run,
+                input,
+                id=f"test-{input.run_id}",
+                task_queue=TASK_QUEUE,
+            )
+
+        assert result.final_status == "cancelled"

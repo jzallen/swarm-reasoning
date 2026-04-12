@@ -115,6 +115,15 @@ _AGENT_PHASE: dict[str, str] = {
 _STATUS_TIMEOUT = timedelta(seconds=10)
 
 
+@dataclass
+class WorkflowStatus:
+    run_id: str
+    status: str  # "pending", "ingesting", "analyzing", "synthesizing", "completed", "cancelled", "failed"
+    phase: str  # Current phase id: "1", "2a", "2b", "3", or "" if not started / terminal
+    agents_complete: int
+    agents_total: int
+
+
 @workflow.defn
 class ClaimVerificationWorkflow:
     """Orchestrates the three-phase agent pipeline as a Temporal workflow."""
@@ -122,6 +131,28 @@ class ClaimVerificationWorkflow:
     def __init__(self) -> None:
         self._register = CompletionRegister()
         self._agent_results: list[AgentResultSummary] = []
+        self._status: str = "pending"
+        self._phase: str = ""
+
+    # --- Queries -------------------------------------------------------
+
+    @workflow.query
+    def status(self) -> WorkflowStatus:
+        """Return the current workflow status and phase for external callers."""
+        return WorkflowStatus(
+            run_id="",  # Not stored; caller already knows the workflow id
+            status=self._status,
+            phase=self._phase,
+            agents_complete=self._register.complete_count,
+            agents_total=len(self._register.all_agents),
+        )
+
+    @workflow.query
+    def current_phase(self) -> str:
+        """Return the current phase id (e.g. '1', '2a', '2b', '3', or '')."""
+        return self._phase
+
+    # --- Main run ------------------------------------------------------
 
     @workflow.run
     async def run(self, input: WorkflowInput) -> WorkflowResult:
@@ -129,52 +160,26 @@ class ClaimVerificationWorkflow:
         for phase in DAG:
             self._register.register_agents(phase.agents)
 
-        # Transition: pending -> ingesting
-        await self._update_status(input.run_id, "ingesting")
-
         try:
             # Phase 1 — Sequential ingestion
-            for agent_name in DAG[0].agents:
-                result = await self._dispatch_agent(agent_name, input)
-                self._record_result(result)
+            cancelled = await self._run_ingestion(input)
+            if cancelled:
+                return WorkflowResult(
+                    run_id=input.run_id,
+                    final_status="cancelled",
+                    verdict_id=None,
+                    agent_results=self._agent_results,
+                )
 
-                # Check-worthiness gate: if claim-detector returns X, cancel
-                if agent_name == "claim-detector" and result.terminal_status == "X":
-                    await self._cancel_run(input.run_id, "Claim not check-worthy")
-                    return WorkflowResult(
-                        run_id=input.run_id,
-                        final_status="cancelled",
-                        verdict_id=None,
-                        agent_results=self._agent_results,
-                    )
-
-            # Transition: ingesting -> analyzing
-            await self._update_status(input.run_id, "analyzing")
-
-            # Phase 2a — Parallel fan-out (5 evidence-gathering agents)
-            phase_2a = DAG[1]
-            assert phase_2a.mode == PhaseMode.PARALLEL
-            fanout_results = await asyncio.gather(
-                *[self._dispatch_agent(agent, input) for agent in phase_2a.agents]
-            )
-            for r in fanout_results:
-                self._record_result(r)
-
-            # Phase 2b — Source validation (sequential, after 2a)
-            for agent_name in DAG[2].agents:
-                result = await self._dispatch_agent(agent_name, input)
-                self._record_result(result)
-
-            # Transition: analyzing -> synthesizing
-            await self._update_status(input.run_id, "synthesizing")
+            # Phase 2a — Parallel fan-out + Phase 2b — Source validation
+            await self._run_analysis(input)
 
             # Phase 3 — Sequential synthesis
-            for agent_name in DAG[3].agents:
-                result = await self._dispatch_agent(agent_name, input)
-                self._record_result(result)
+            await self._run_synthesis(input)
 
             # Transition: synthesizing -> completed
-            await self._update_status(input.run_id, "completed")
+            await self._set_status(input.run_id, "completed")
+            self._phase = ""
 
             return WorkflowResult(
                 run_id=input.run_id,
@@ -186,12 +191,63 @@ class ClaimVerificationWorkflow:
         except Exception as e:
             workflow.logger.error("Workflow failed for run %s: %s", input.run_id, e)
             await self._fail_run(input.run_id, str(e))
+            self._status = "failed"
+            self._phase = ""
             return WorkflowResult(
                 run_id=input.run_id,
                 final_status="failed",
                 verdict_id=None,
                 agent_results=self._agent_results,
             )
+
+    # --- Phase methods -------------------------------------------------
+
+    async def _run_ingestion(self, input: WorkflowInput) -> bool:
+        """Phase 1: sequential ingestion. Returns True if the run was cancelled."""
+        await self._set_status(input.run_id, "ingesting")
+        self._phase = "1"
+
+        for agent_name in DAG[0].agents:
+            result = await self._dispatch_agent(agent_name, input)
+            self._record_result(result)
+
+            # Check-worthiness gate: if claim-detector returns X, cancel
+            if agent_name == "claim-detector" and result.terminal_status == "X":
+                await self._cancel_run(input.run_id, "Claim not check-worthy")
+                self._status = "cancelled"
+                self._phase = ""
+                return True
+
+        return False
+
+    async def _run_analysis(self, input: WorkflowInput) -> None:
+        """Phase 2a (parallel fan-out) + Phase 2b (sequential source validation)."""
+        await self._set_status(input.run_id, "analyzing")
+
+        # Phase 2a — Parallel fan-out (5 evidence-gathering agents)
+        self._phase = "2a"
+        phase_2a = DAG[1]
+        assert phase_2a.mode == PhaseMode.PARALLEL
+        fanout_results = await asyncio.gather(
+            *[self._dispatch_agent(agent, input) for agent in phase_2a.agents]
+        )
+        for r in fanout_results:
+            self._record_result(r)
+
+        # Phase 2b — Source validation (sequential, after 2a)
+        self._phase = "2b"
+        for agent_name in DAG[2].agents:
+            result = await self._dispatch_agent(agent_name, input)
+            self._record_result(result)
+
+    async def _run_synthesis(self, input: WorkflowInput) -> None:
+        """Phase 3: sequential synthesis (blindspot-detector, synthesizer)."""
+        await self._set_status(input.run_id, "synthesizing")
+        self._phase = "3"
+
+        for agent_name in DAG[3].agents:
+            result = await self._dispatch_agent(agent_name, input)
+            self._record_result(result)
 
     async def _dispatch_agent(
         self, agent_name: str, input: WorkflowInput
@@ -230,14 +286,15 @@ class ClaimVerificationWorkflow:
             duration_ms=result.duration_ms,
         ))
 
-    async def _update_status(self, run_id: str, new_status: str) -> None:
-        """Update run status via activity."""
+    async def _set_status(self, run_id: str, new_status: str) -> None:
+        """Update run status via activity and track locally for queries."""
         await workflow.execute_activity(
             update_run_status,
             RunStatusInput(run_id=run_id, new_status=new_status),
             start_to_close_timeout=_STATUS_TIMEOUT,
             retry_policy=_RETRY_POLICY,
         )
+        self._status = new_status
 
     async def _cancel_run(self, run_id: str, reason: str) -> None:
         """Cancel the run via activity."""

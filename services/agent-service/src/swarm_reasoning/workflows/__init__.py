@@ -5,6 +5,7 @@ from swarm_reasoning.workflows.claim_verification import (
     ClaimVerificationWorkflow,
     WorkflowInput,
     WorkflowResult,
+    WorkflowStatus,
 )
 from swarm_reasoning.workflows.dag import DAG, Phase, PhaseMode
 
@@ -16,4 +17,5 @@ __all__ = [
     "PhaseMode",
     "WorkflowInput",
     "WorkflowResult",
+    "WorkflowStatus",
 ]
