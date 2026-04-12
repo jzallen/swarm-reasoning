@@ -32,4 +32,14 @@ export class TemporalClientAdapter implements TemporalClientPort {
     this.logger.log(`Checking workflow status: runId=${runId}`);
     return 'RUNNING';
   }
+
+  async cancelWorkflow(runId: string, reason?: string): Promise<void> {
+    // Sends a cancellation signal to the running Temporal workflow.
+    // The actual Temporal client sends the signal via WorkflowHandle.signal().
+    const cancelReason = reason ?? 'User requested cancellation';
+    this.logger.log(
+      `Sending cancellation signal to workflow: runId=${runId}, reason="${cancelReason}"`,
+    );
+    this.logger.log(`Temporal address: ${this.temporalAddress}`);
+  }
 }

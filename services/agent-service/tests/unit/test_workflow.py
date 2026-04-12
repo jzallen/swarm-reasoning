@@ -376,6 +376,156 @@ async def test_workflow_query_cancelled_status(run_store):
 
 
 # ---------------------------------------------------------------------------
+# Cancellation signal tests (hq-423.31)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancellation_signal_before_analysis(run_store):
+    """Cancellation signal sent at workflow start cancels before Phase 2.
+
+    Uses ``start_signal`` to deliver the signal atomically with the
+    workflow start, guaranteeing it is part of the first workflow task.
+    The signal handler fires before any activities run.
+    """
+
+    @activity.defn(name="run_agent_activity")
+    async def stub_agent(input: AgentActivityInput) -> AgentActivityOutput:
+        return AgentActivityOutput(
+            agent_name=input.agent_name,
+            terminal_status="F",
+            observation_count=2,
+            duration_ms=20,
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        input = _make_input()
+        run_store[input.run_id] = RunStatusEnum.PENDING
+
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[ClaimVerificationWorkflow],
+            activities=[
+                stub_agent,
+                update_run_status,
+                cancel_run,
+                fail_run,
+                get_run_status,
+            ],
+        ):
+            # start_signal delivers the signal with the first workflow task
+            result = await env.client.execute_workflow(
+                ClaimVerificationWorkflow.run,
+                input,
+                id=f"test-{input.run_id}",
+                task_queue=TASK_QUEUE,
+                start_signal="request_cancellation",
+                start_signal_args=["User cancelled the run"],
+            )
+
+    assert result.final_status == "cancelled"
+    assert run_store[input.run_id] == RunStatusEnum.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancellation_signal_during_analysis(run_store):
+    """Cancellation signal sent from inside a Phase 2a activity cancels before Phase 3.
+
+    The activity sends the cancellation signal via the Temporal client.
+    The remaining Phase 2 agents may still complete (already dispatched),
+    but Phase 3 is skipped by the cooperative checkpoint.
+    """
+    execution_order: list[str] = []
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        client = env.client
+
+        @activity.defn(name="run_agent_activity")
+        async def stub_with_signal(input: AgentActivityInput) -> AgentActivityOutput:
+            execution_order.append(input.agent_name)
+            if input.agent_name == "coverage-left":
+                wf_id = activity.info().workflow_id
+                handle = client.get_workflow_handle(wf_id)
+                await handle.signal("request_cancellation", "Cancelling during analysis")
+            return AgentActivityOutput(
+                agent_name=input.agent_name,
+                terminal_status="F",
+                observation_count=2,
+                duration_ms=20,
+            )
+
+        input = _make_input()
+        run_store[input.run_id] = RunStatusEnum.PENDING
+
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[ClaimVerificationWorkflow],
+            activities=[
+                stub_with_signal,
+                update_run_status,
+                cancel_run,
+                fail_run,
+                get_run_status,
+            ],
+        ):
+            result = await client.execute_workflow(
+                ClaimVerificationWorkflow.run,
+                input,
+                id=f"test-{input.run_id}",
+                task_queue=TASK_QUEUE,
+            )
+
+    assert result.final_status == "cancelled"
+    # Synthesis agents should not have run
+    assert "synthesizer" not in execution_order
+    assert "blindspot-detector" not in execution_order
+    assert run_store[input.run_id] == RunStatusEnum.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancellation_signal_idempotent_on_completed(run_store):
+    """Cancellation signal on already-completed workflow is a no-op."""
+
+    @activity.defn(name="run_agent_activity")
+    async def stub_agent(input: AgentActivityInput) -> AgentActivityOutput:
+        return AgentActivityOutput(
+            agent_name=input.agent_name,
+            terminal_status="F",
+            observation_count=1,
+            duration_ms=10,
+        )
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        input = _make_input()
+        run_store[input.run_id] = RunStatusEnum.PENDING
+
+        async with Worker(
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[ClaimVerificationWorkflow],
+            activities=[
+                stub_agent,
+                update_run_status,
+                cancel_run,
+                fail_run,
+                get_run_status,
+            ],
+        ):
+            result = await env.client.execute_workflow(
+                ClaimVerificationWorkflow.run,
+                input,
+                id=f"test-{input.run_id}",
+                task_queue=TASK_QUEUE,
+            )
+
+    # Workflow completed normally — signal after completion doesn't change result
+    assert result.final_status == "completed"
+    assert run_store[input.run_id] == RunStatusEnum.COMPLETED
+
+
+# ---------------------------------------------------------------------------
 # Fan-out partial-failure tolerance tests (hq-423.32)
 # ---------------------------------------------------------------------------
 

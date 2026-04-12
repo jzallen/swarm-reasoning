@@ -19,6 +19,10 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
+# Minimal timeout for cooperative cancellation checkpoints — just long enough
+# to yield to the Temporal runtime so pending signals are delivered.
+_CANCEL_CHECK_TIMEOUT = timedelta(milliseconds=1)
+
 with workflow.unsafe.imports_passed_through():
     from swarm_reasoning.activities.run_agent import (
         AgentActivityInput,
@@ -133,6 +137,17 @@ class ClaimVerificationWorkflow:
         self._agent_results: list[AgentResultSummary] = []
         self._status: str = "pending"
         self._phase: str = ""
+        self._cancellation_requested: bool = False
+        self._cancellation_reason: str = ""
+
+    # --- Signals -------------------------------------------------------
+
+    @workflow.signal
+    async def request_cancellation(self, reason: str = "User requested cancellation") -> None:
+        """External cancellation signal.  Sets a flag checked between phases."""
+        workflow.logger.info("Cancellation signal received: %s", reason)
+        self._cancellation_requested = True
+        self._cancellation_reason = reason
 
     # --- Queries -------------------------------------------------------
 
@@ -171,8 +186,26 @@ class ClaimVerificationWorkflow:
                     agent_results=self._agent_results,
                 )
 
+            # Cooperative cancellation checkpoint before Phase 2
+            if await self._check_cancellation(input.run_id):
+                return WorkflowResult(
+                    run_id=input.run_id,
+                    final_status="cancelled",
+                    verdict_id=None,
+                    agent_results=self._agent_results,
+                )
+
             # Phase 2a — Parallel fan-out + Phase 2b — Source validation
             await self._run_analysis(input)
+
+            # Cooperative cancellation checkpoint before Phase 3
+            if await self._check_cancellation(input.run_id):
+                return WorkflowResult(
+                    run_id=input.run_id,
+                    final_status="cancelled",
+                    verdict_id=None,
+                    agent_results=self._agent_results,
+                )
 
             # Phase 3 — Sequential synthesis
             await self._run_synthesis(input)
@@ -301,6 +334,29 @@ class ClaimVerificationWorkflow:
             observation_count=result.observation_count,
             duration_ms=result.duration_ms,
         ))
+
+    async def _check_cancellation(self, run_id: str) -> bool:
+        """Cooperative cancellation checkpoint.
+
+        Yields to the Temporal runtime via ``wait_condition`` so any pending
+        cancellation signal is delivered before the flag is checked.  Returns
+        True if cancellation was requested (and transitions the run to
+        cancelled).
+        """
+        try:
+            await workflow.wait_condition(
+                lambda: self._cancellation_requested,
+                timeout=_CANCEL_CHECK_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            pass  # No signal within the window — continue normally
+
+        if self._cancellation_requested:
+            await self._cancel_run(run_id, self._cancellation_reason)
+            self._status = "cancelled"
+            self._phase = ""
+            return True
+        return False
 
     async def _set_status(self, run_id: str, new_status: str) -> None:
         """Update run status via activity and track locally for queries."""
