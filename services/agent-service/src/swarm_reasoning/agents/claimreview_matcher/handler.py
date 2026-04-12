@@ -25,8 +25,6 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "claimreview-matcher"
 API_URL = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
 
-# Match thresholds
-STRONG_MATCH_THRESHOLD = 0.75
 MATCH_THRESHOLD = 0.50
 
 
