@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import redis.asyncio as aioredis
+from anthropic import AsyncAnthropic
 
 from swarm_reasoning.models.observation import Observation, ObservationCode, ValueType
 from swarm_reasoning.models.stream import ObsMessage
@@ -32,6 +33,7 @@ class AgentContext:
         run_id: Current verification run identifier.
         sk: Pre-computed stream key (reasoning:{run_id}:{agent_name}).
         agent_name: The agent publishing observations.
+        anthropic_client: Optional Anthropic client for LLM-powered tools.
         seq_counter: Thread-safe observation sequence counter.
     """
 
@@ -40,6 +42,7 @@ class AgentContext:
     run_id: str
     sk: str
     agent_name: str
+    anthropic_client: AsyncAnthropic | None = field(default=None)
     seq_counter: int = field(default=0)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
