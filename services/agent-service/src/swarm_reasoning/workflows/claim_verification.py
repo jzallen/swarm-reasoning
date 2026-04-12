@@ -73,10 +73,42 @@ _RETRY_POLICY = RetryPolicy(
     ],
 )
 
-# Activity timeouts
-_START_TO_CLOSE = timedelta(seconds=120)
-_HEARTBEAT_TIMEOUT = timedelta(seconds=60)
-_SCHEDULE_TO_CLOSE = timedelta(seconds=300)
+
+@dataclass(frozen=True)
+class _PhaseTimeouts:
+    """Per-phase timeout configuration for agent activities."""
+
+    start_to_close: timedelta
+    schedule_to_close: timedelta
+
+
+# Per-phase timeouts (ADR-016 §4.5–4.7)
+_PHASE_TIMEOUTS: dict[str, _PhaseTimeouts] = {
+    "1": _PhaseTimeouts(
+        start_to_close=timedelta(seconds=30),
+        schedule_to_close=timedelta(seconds=60),
+    ),
+    "2a": _PhaseTimeouts(
+        start_to_close=timedelta(seconds=45),
+        schedule_to_close=timedelta(seconds=90),
+    ),
+    "2b": _PhaseTimeouts(
+        start_to_close=timedelta(seconds=45),
+        schedule_to_close=timedelta(seconds=90),
+    ),
+    "3": _PhaseTimeouts(
+        start_to_close=timedelta(seconds=60),
+        schedule_to_close=timedelta(seconds=120),
+    ),
+}
+
+# Heartbeat timeout: 3x the 10s heartbeat interval per Temporal docs
+_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
+
+# Agent-name → phase-id lookup (built from the static DAG)
+_AGENT_PHASE: dict[str, str] = {
+    agent: phase.id for phase in DAG for agent in phase.agents
+}
 
 # Status update activity has different timeouts (fast DB write)
 _STATUS_TIMEOUT = timedelta(seconds=10)
@@ -163,7 +195,13 @@ class ClaimVerificationWorkflow:
     async def _dispatch_agent(
         self, agent_name: str, input: WorkflowInput
     ) -> AgentActivityOutput:
-        """Dispatch a single agent as a Temporal activity."""
+        """Dispatch a single agent as a Temporal activity.
+
+        Selects start_to_close and schedule_to_close timeouts based on the
+        agent's phase in the DAG.  heartbeat_timeout is fixed at 30 s (3×
+        the 10 s heartbeat interval).
+        """
+        timeouts = _PHASE_TIMEOUTS[_AGENT_PHASE[agent_name]]
         agent_input = AgentActivityInput(
             agent_name=agent_name,
             run_id=input.run_id,
@@ -174,9 +212,9 @@ class ClaimVerificationWorkflow:
         result = await workflow.execute_activity(
             run_agent_activity,
             agent_input,
-            start_to_close_timeout=_START_TO_CLOSE,
+            start_to_close_timeout=timeouts.start_to_close,
             heartbeat_timeout=_HEARTBEAT_TIMEOUT,
-            schedule_to_close_timeout=_SCHEDULE_TO_CLOSE,
+            schedule_to_close_timeout=timeouts.schedule_to_close,
             retry_policy=_RETRY_POLICY,
         )
         self._register.mark_complete(agent_name, result.terminal_status)
