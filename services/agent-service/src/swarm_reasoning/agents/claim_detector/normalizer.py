@@ -40,6 +40,14 @@ _DOT_ARTIFACT = re.compile(r"\.\s*\.")
 _LEADING_COMMA = re.compile(r"^\s*,\s*")
 _MULTI_SPACE = re.compile(r"\s+")
 
+# ---------------------------------------------------------------------------
+# Pronoun resolution patterns (compiled once at module load)
+# ---------------------------------------------------------------------------
+_RE_HE = re.compile(r"\bhe\b")
+_RE_SHE = re.compile(r"\bshe\b")
+_RE_IT = re.compile(r"\bit\b")
+_RE_THEY = re.compile(r"\bthey\b")
+
 
 @dataclass
 class NormalizeResult:
@@ -86,7 +94,7 @@ def normalize_claim_text(
     # he/she → single person entity
     if len(persons) == 1:
         person_name = persons[0].casefold()
-        for pronoun_re in (re.compile(r"\bhe\b"), re.compile(r"\bshe\b")):
+        for pronoun_re in (_RE_HE, _RE_SHE):
             new_text = pronoun_re.sub(person_name, text)
             if new_text != text:
                 pronouns_resolved = True
@@ -95,19 +103,19 @@ def normalize_claim_text(
     # it → single org entity
     if len(orgs) == 1:
         org_name = orgs[0].casefold()
-        new_text = re.compile(r"\bit\b").sub(org_name, text)
+        new_text = _RE_IT.sub(org_name, text)
         if new_text != text:
             pronouns_resolved = True
             text = new_text
 
     # they → resolve only if exactly one person XOR one org (ambiguous otherwise)
     if len(persons) == 1 and len(orgs) == 0:
-        new_text = re.compile(r"\bthey\b").sub(persons[0].casefold(), text)
+        new_text = _RE_THEY.sub(persons[0].casefold(), text)
         if new_text != text:
             pronouns_resolved = True
             text = new_text
     elif len(orgs) == 1 and len(persons) == 0:
-        new_text = re.compile(r"\bthey\b").sub(orgs[0].casefold(), text)
+        new_text = _RE_THEY.sub(orgs[0].casefold(), text)
         if new_text != text:
             pronouns_resolved = True
             text = new_text
