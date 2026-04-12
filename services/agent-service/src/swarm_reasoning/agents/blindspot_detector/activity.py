@@ -13,6 +13,8 @@ import redis.asyncio as aioredis
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityResult
 from swarm_reasoning.agents.blindspot_detector.analysis import (
+    CWE_NO_BLINDSPOT,
+    CWE_NOT_CORROBORATED,
     compute_blindspot_direction,
     compute_blindspot_score,
     compute_corroboration,
@@ -152,7 +154,7 @@ class BlindspotDetectorActivity(FanoutBase):
             sk,
             run_id,
             code=ObservationCode.BLINDSPOT_DIRECTION,
-            value="NONE^No Blindspot^FCK",
+            value=CWE_NO_BLINDSPOT,
             value_type=ValueType.CWE,
         )
         await self._publish_obs(
@@ -160,7 +162,7 @@ class BlindspotDetectorActivity(FanoutBase):
             sk,
             run_id,
             code=ObservationCode.CROSS_SPECTRUM_CORROBORATION,
-            value="FALSE^Not Corroborated^FCK",
+            value=CWE_NOT_CORROBORATED,
             value_type=ValueType.CWE,
         )
         await self._publish_progress(

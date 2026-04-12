@@ -4,6 +4,21 @@ from __future__ import annotations
 
 from swarm_reasoning.agents.blindspot_detector.models import CoverageSnapshot
 
+# CWE coded-value constants (CODE^Display^CodingSystem)
+CWE_NO_BLINDSPOT = "NONE^No Blindspot^FCK"
+CWE_MULTIPLE_ABSENT = "MULTIPLE^Multiple Absent^FCK"
+CWE_LEFT_ABSENT = "LEFT^Left Absent^FCK"
+CWE_CENTER_ABSENT = "CENTER^Center Absent^FCK"
+CWE_RIGHT_ABSENT = "RIGHT^Right Absent^FCK"
+CWE_CORROBORATED = "TRUE^Corroborated^FCK"
+CWE_NOT_CORROBORATED = "FALSE^Not Corroborated^FCK"
+
+_DIRECTION_CWE: dict[str, str] = {
+    "LEFT": CWE_LEFT_ABSENT,
+    "CENTER": CWE_CENTER_ABSENT,
+    "RIGHT": CWE_RIGHT_ABSENT,
+}
+
 
 def _is_absent(framing: str, article_count: int) -> bool:
     """A segment is absent if framing is ABSENT or article_count is 0."""
@@ -29,10 +44,10 @@ def compute_blindspot_direction(coverage: CoverageSnapshot) -> str:
     ]
 
     if not absent_segments:
-        return "NONE^No Blindspot^FCK"
+        return CWE_NO_BLINDSPOT
     if len(absent_segments) >= 2:
-        return "MULTIPLE^Multiple Absent^FCK"
-    return f"{absent_segments[0]}^{absent_segments[0].capitalize()} Absent^FCK"
+        return CWE_MULTIPLE_ABSENT
+    return _DIRECTION_CWE[absent_segments[0]]
 
 
 def compute_corroboration(coverage: CoverageSnapshot) -> tuple[str, str | None]:
@@ -53,6 +68,6 @@ def compute_corroboration(coverage: CoverageSnapshot) -> tuple[str, str | None]:
         ):
             score = coverage.source_convergence_score
             note = f"Strong corroboration: source convergence score {score:.2f}"
-        return "TRUE^Corroborated^FCK", note
+        return CWE_CORROBORATED, note
 
-    return "FALSE^Not Corroborated^FCK", None
+    return CWE_NOT_CORROBORATED, None
