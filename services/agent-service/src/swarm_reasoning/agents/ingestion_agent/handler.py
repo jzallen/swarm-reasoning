@@ -11,6 +11,7 @@ from anthropic import AsyncAnthropic
 from temporalio import activity
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
+from swarm_reasoning.agents._utils import register_handler
 from swarm_reasoning.agents.ingestion_agent.tools.claim_intake import ingest_claim
 from swarm_reasoning.agents.ingestion_agent.tools.domain_cls import (
     ClassificationServiceError,
@@ -22,6 +23,7 @@ from swarm_reasoning.stream.redis import RedisReasoningStream
 from swarm_reasoning.temporal.errors import InvalidClaimError, MissingApiKeyError
 
 
+@register_handler("ingestion-agent")
 class IngestionAgentHandler:
     """Orchestrates the ingestion agent's two tools within a Temporal activity."""
 
@@ -113,18 +115,3 @@ class IngestionAgentHandler:
                 activity.heartbeat()
         except asyncio.CancelledError:
             pass
-
-
-# ---------------------------------------------------------------------------
-# Agent registry integration
-# ---------------------------------------------------------------------------
-
-_HANDLER: IngestionAgentHandler | None = None
-
-
-def get_handler() -> IngestionAgentHandler:
-    """Lazy-initialize and return the singleton handler."""
-    global _HANDLER
-    if _HANDLER is None:
-        _HANDLER = IngestionAgentHandler()
-    return _HANDLER

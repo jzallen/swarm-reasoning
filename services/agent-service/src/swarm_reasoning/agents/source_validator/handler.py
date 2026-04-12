@@ -12,6 +12,7 @@ import logging
 import redis.asyncio as aioredis
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
+from swarm_reasoning.agents._utils import register_handler
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
 from swarm_reasoning.agents.source_validator.aggregator import CitationAggregator
 from swarm_reasoning.agents.source_validator.convergence import ConvergenceAnalyzer
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "source-validator"
 
 
+@register_handler("source-validator")
 class SourceValidatorHandler(FanoutBase):
     """Orchestrates link extraction, URL validation, convergence, and citation aggregation."""
 
@@ -159,14 +161,3 @@ class SourceValidatorHandler(FanoutBase):
             )
         else:
             await self._publish_progress(redis_client, run_id, "No source citations found")
-
-
-# Agent registry integration
-_HANDLER: SourceValidatorHandler | None = None
-
-
-def get_handler() -> SourceValidatorHandler:
-    global _HANDLER
-    if _HANDLER is None:
-        _HANDLER = SourceValidatorHandler()
-    return _HANDLER

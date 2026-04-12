@@ -12,6 +12,7 @@ import logging
 import redis.asyncio as aioredis
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
+from swarm_reasoning.agents._utils import register_handler
 from swarm_reasoning.agents.blindspot_detector.analysis import (
     compute_blindspot_direction,
     compute_blindspot_score,
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "blindspot-detector"
 
 
+@register_handler("blindspot-detector")
 class BlindspotDetectorHandler(FanoutBase):
     """Orchestrates coverage asymmetry analysis across spectrum segments."""
 
@@ -123,14 +125,3 @@ class BlindspotDetectorHandler(FanoutBase):
             run_id,
             f"Cross-spectrum corroboration: {corroboration_label}",
         )
-
-
-# Agent registry integration
-_HANDLER: BlindspotDetectorHandler | None = None
-
-
-def get_handler() -> BlindspotDetectorHandler:
-    global _HANDLER
-    if _HANDLER is None:
-        _HANDLER = BlindspotDetectorHandler()
-    return _HANDLER

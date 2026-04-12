@@ -14,6 +14,7 @@ import os
 import httpx
 import redis.asyncio as aioredis
 
+from swarm_reasoning.agents._utils import register_handler
 from swarm_reasoning.agents.claimreview_matcher.scorer import cosine_similarity
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
 from swarm_reasoning.config import RedisConfig
@@ -44,6 +45,7 @@ def _build_query(context: ClaimContext) -> str:
     return query[:100]  # API query limit
 
 
+@register_handler("claimreview-matcher")
 class ClaimReviewMatcherHandler(FanoutBase):
     """Queries Google Fact Check Tools API and scores matches."""
 
@@ -236,14 +238,3 @@ class ClaimReviewMatcherHandler(FanoutBase):
             units="score",
             reference_range="0.0-1.0",
         )
-
-
-# Agent registry integration
-_HANDLER: ClaimReviewMatcherHandler | None = None
-
-
-def get_handler() -> ClaimReviewMatcherHandler:
-    global _HANDLER
-    if _HANDLER is None:
-        _HANDLER = ClaimReviewMatcherHandler()
-    return _HANDLER

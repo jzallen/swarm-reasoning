@@ -2,21 +2,13 @@
 
 from __future__ import annotations
 
+from swarm_reasoning.agents._utils import register_handler
 from swarm_reasoning.agents.coverage_core import CoverageHandler
 
 AGENT_NAME = "coverage-left"
 
 
+@register_handler("coverage-left")
 class CoverageLeftHandler(CoverageHandler):
     AGENT_NAME = AGENT_NAME
     SPECTRUM = "left"
-
-
-_HANDLER: CoverageLeftHandler | None = None
-
-
-def get_handler() -> CoverageLeftHandler:
-    global _HANDLER
-    if _HANDLER is None:
-        _HANDLER = CoverageLeftHandler()
-    return _HANDLER

@@ -11,6 +11,7 @@ import logging
 
 import redis.asyncio as aioredis
 
+from swarm_reasoning.agents._utils import register_handler
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
 from swarm_reasoning.agents.synthesizer.mapper import VerdictMapper
 from swarm_reasoning.agents.synthesizer.narrator import NarrativeGenerator
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "synthesizer"
 
 
+@register_handler("synthesizer")
 class SynthesizerHandler(FanoutBase):
     """Orchestrates verdict synthesis from upstream agent observations."""
 
@@ -148,14 +150,3 @@ class SynthesizerHandler(FanoutBase):
             run_id,
             f"Verdict: {verdict_code}",
         )
-
-
-# Agent registry integration
-_HANDLER: SynthesizerHandler | None = None
-
-
-def get_handler() -> SynthesizerHandler:
-    global _HANDLER
-    if _HANDLER is None:
-        _HANDLER = SynthesizerHandler()
-    return _HANDLER

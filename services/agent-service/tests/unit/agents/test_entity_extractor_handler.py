@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput
+from swarm_reasoning.agents._utils import StreamNotFoundError
 from swarm_reasoning.agents.entity_extractor.handler import (
     AGENT_NAME,
     EntityExtractorHandler,
-    StreamNotFoundError,
 )
 from swarm_reasoning.models.observation import Observation, ObservationCode, ValueType
 from swarm_reasoning.models.stream import ObsMessage, StartMessage, StopMessage

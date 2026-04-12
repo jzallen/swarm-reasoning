@@ -6,13 +6,13 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime, timezone
 
 import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from temporalio import activity
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
+from swarm_reasoning.agents._utils import StreamNotFoundError, now_iso, register_handler
 from swarm_reasoning.agents.entity_extractor.extractor import (
     LLMUnavailableError,
     extract_entities_llm,
@@ -34,19 +34,11 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "entity-extractor"
 
 
-class StreamNotFoundError(Exception):
-    """Raised when the claim-detector stream is not found (non-retryable)."""
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 async def _publish_progress(redis_client: aioredis.Redis, run_id: str, message: str) -> None:
     """Publish a progress event to progress:{runId} stream."""
     await redis_client.xadd(
         f"progress:{run_id}",
-        {"agent": AGENT_NAME, "message": message, "timestamp": _now_iso()},
+        {"agent": AGENT_NAME, "message": message, "timestamp": now_iso()},
     )
 
 
@@ -76,6 +68,7 @@ async def _read_normalized_claim(
     )
 
 
+@register_handler("entity-extractor")
 class EntityExtractorHandler:
     """Orchestrates entity extraction from normalized claim text."""
 
@@ -126,7 +119,7 @@ class EntityExtractorHandler:
                         runId=run_id,
                         agent=AGENT_NAME,
                         phase=Phase.INGESTION,
-                        timestamp=_now_iso(),
+                        timestamp=now_iso(),
                     ),
                 )
                 await publish_error_stop(run_id, stream)
@@ -183,18 +176,3 @@ class EntityExtractorHandler:
                 activity.heartbeat()
         except asyncio.CancelledError:
             pass
-
-
-# ---------------------------------------------------------------------------
-# Agent registry integration
-# ---------------------------------------------------------------------------
-
-_HANDLER: EntityExtractorHandler | None = None
-
-
-def get_handler() -> EntityExtractorHandler:
-    """Lazy-initialize and return the singleton handler."""
-    global _HANDLER
-    if _HANDLER is None:
-        _HANDLER = EntityExtractorHandler()
-    return _HANDLER

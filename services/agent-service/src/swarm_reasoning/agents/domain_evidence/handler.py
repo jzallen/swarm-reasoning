@@ -16,7 +16,7 @@ from urllib.parse import quote_plus
 import httpx
 import redis.asyncio as aioredis
 
-from swarm_reasoning.agents._utils import STOP_WORDS
+from swarm_reasoning.agents._utils import STOP_WORDS, register_handler
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
 from swarm_reasoning.config import RedisConfig
 from swarm_reasoning.models.observation import ObservationCode, ValueType
@@ -167,6 +167,7 @@ def _is_relevant(content: str, context: ClaimContext) -> bool:
     return matches >= 2
 
 
+@register_handler("domain-evidence")
 class DomainEvidenceHandler(FanoutBase):
     """Routes to authoritative domain sources and scores alignment."""
 
@@ -291,14 +292,3 @@ class DomainEvidenceHandler(FanoutBase):
                 return None
 
             return resp.text
-
-
-# Agent registry integration
-_HANDLER: DomainEvidenceHandler | None = None
-
-
-def get_handler() -> DomainEvidenceHandler:
-    global _HANDLER
-    if _HANDLER is None:
-        _HANDLER = DomainEvidenceHandler()
-    return _HANDLER

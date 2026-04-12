@@ -6,13 +6,13 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime, timezone
 
 import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from temporalio import activity
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
+from swarm_reasoning.agents._utils import StreamNotFoundError, now_iso, register_handler
 from swarm_reasoning.agents.claim_detector.normalizer import normalize_claim_text
 from swarm_reasoning.agents.claim_detector.scorer import (
     CHECK_WORTHY_THRESHOLD,
@@ -33,19 +33,11 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "claim-detector"
 
 
-class StreamNotFoundError(Exception):
-    """Raised when the ingestion-agent stream is not found (non-retryable)."""
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 async def _publish_progress(redis_client: aioredis.Redis, run_id: str, message: str) -> None:
     """Publish a progress event to progress:{runId} stream."""
     await redis_client.xadd(
         f"progress:{run_id}",
-        {"agent": AGENT_NAME, "message": message, "timestamp": _now_iso()},
+        {"agent": AGENT_NAME, "message": message, "timestamp": now_iso()},
     )
 
 
@@ -74,6 +66,7 @@ async def _read_claim_text(
     raise StreamNotFoundError(f"No CLAIM_TEXT observation found in stream {ingestion_key}")
 
 
+@register_handler("claim-detector")
 class ClaimDetectorHandler:
     """Orchestrates claim normalization and check-worthiness scoring."""
 
@@ -115,7 +108,7 @@ class ClaimDetectorHandler:
                     runId=run_id,
                     agent=AGENT_NAME,
                     phase=Phase.INGESTION,
-                    timestamp=_now_iso(),
+                    timestamp=now_iso(),
                 ),
             )
 
@@ -156,7 +149,7 @@ class ClaimDetectorHandler:
                     agent=AGENT_NAME,
                     finalStatus=final_status,
                     observationCount=self._seq,
-                    timestamp=_now_iso(),
+                    timestamp=now_iso(),
                 ),
             )
 
@@ -280,7 +273,7 @@ class ClaimDetectorHandler:
                     value=value,
                     valueType=value_type,
                     status=status,
-                    timestamp=_now_iso(),
+                    timestamp=now_iso(),
                     method=method,
                     note=note,
                     units=units,
@@ -298,18 +291,3 @@ class ClaimDetectorHandler:
                 activity.heartbeat()
         except asyncio.CancelledError:
             pass
-
-
-# ---------------------------------------------------------------------------
-# Agent registry integration
-# ---------------------------------------------------------------------------
-
-_HANDLER: ClaimDetectorHandler | None = None
-
-
-def get_handler() -> ClaimDetectorHandler:
-    """Lazy-initialize and return the singleton handler."""
-    global _HANDLER
-    if _HANDLER is None:
-        _HANDLER = ClaimDetectorHandler()
-    return _HANDLER
