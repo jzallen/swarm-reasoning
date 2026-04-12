@@ -11,7 +11,7 @@ import logging
 
 import redis.asyncio as aioredis
 
-from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityResult
+from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.agents.blindspot_detector.analysis import (
     compute_blindspot_direction,
     compute_blindspot_score,
@@ -46,7 +46,7 @@ class BlindspotDetectorHandler(FanoutBase):
     def _timeout_value(self) -> str:
         return "1.0"
 
-    async def run(self, input: AgentActivityInput) -> AgentActivityResult:
+    async def run(self, input: AgentActivityInput) -> AgentActivityOutput:
         """Override to extract cross_agent_data before running base flow."""
         self._cross_agent_data = input.cross_agent_data or {}
         return await super().run(input)

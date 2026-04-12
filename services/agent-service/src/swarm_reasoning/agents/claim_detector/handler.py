@@ -12,6 +12,7 @@ import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from temporalio import activity
 
+from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.agents.claim_detector.normalizer import normalize_claim_text
 from swarm_reasoning.agents.claim_detector.scorer import (
     CHECK_WORTHY_THRESHOLD,
@@ -24,7 +25,6 @@ from swarm_reasoning.models.stream import ObsMessage, Phase, StartMessage, StopM
 from swarm_reasoning.stream.base import ReasoningStream
 from swarm_reasoning.stream.key import stream_key
 from swarm_reasoning.stream.redis import RedisReasoningStream
-from swarm_reasoning.temporal.activities import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)

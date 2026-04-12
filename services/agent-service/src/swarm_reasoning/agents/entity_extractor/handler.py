@@ -12,6 +12,7 @@ import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from temporalio import activity
 
+from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.agents.entity_extractor.extractor import (
     LLMUnavailableError,
     extract_entities_llm,
@@ -26,7 +27,6 @@ from swarm_reasoning.models.stream import Phase, StartMessage
 from swarm_reasoning.stream.base import ReasoningStream
 from swarm_reasoning.stream.key import stream_key
 from swarm_reasoning.stream.redis import RedisReasoningStream
-from swarm_reasoning.temporal.activities import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)

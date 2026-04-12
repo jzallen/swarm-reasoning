@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 import redis.asyncio as aioredis
 from temporalio import activity
 
-from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityResult
+from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.config import RedisConfig
 from swarm_reasoning.models.observation import Observation, ObservationCode, ValueType
 from swarm_reasoning.models.status import EpistemicStatus
@@ -64,7 +64,7 @@ class FanoutBase(abc.ABC):
         self._redis_config = redis_config or RedisConfig()
         self._seq = 0
 
-    async def run(self, input: AgentActivityInput) -> AgentActivityResult:
+    async def run(self, input: AgentActivityInput) -> AgentActivityOutput:
         """Execute the fanout agent: load context, run logic, publish results."""
 
         start = time.monotonic()
@@ -147,7 +147,7 @@ class FanoutBase(abc.ABC):
             heartbeat_task.cancel()
             duration_ms = int((time.monotonic() - start) * 1000)
 
-            return AgentActivityResult(
+            return AgentActivityOutput(
                 agent_name=self.AGENT_NAME,
                 terminal_status=final_status,
                 observation_count=self._seq,

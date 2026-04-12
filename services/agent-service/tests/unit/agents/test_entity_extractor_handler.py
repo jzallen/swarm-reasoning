@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from swarm_reasoning.activities.run_agent import AgentActivityInput
 from swarm_reasoning.agents.entity_extractor.handler import (
     AGENT_NAME,
     EntityExtractorHandler,
@@ -14,7 +15,6 @@ from swarm_reasoning.agents.entity_extractor.handler import (
 )
 from swarm_reasoning.models.observation import Observation, ObservationCode, ValueType
 from swarm_reasoning.models.stream import ObsMessage, StartMessage, StopMessage
-from swarm_reasoning.temporal.activities import AgentActivityInput
 
 
 def _make_input(run_id: str = "run-001", claim_text: str = "Test claim") -> AgentActivityInput:

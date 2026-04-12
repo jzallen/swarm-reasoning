@@ -1,7 +1,11 @@
 """Temporal activity definitions for the orchestrator."""
 
 from swarm_reasoning.activities.completion import rebuild_completion_register
-from swarm_reasoning.activities.run_agent import run_agent_activity
+from swarm_reasoning.activities.run_agent import (
+    AgentActivityInput,
+    AgentActivityOutput,
+    run_agent_activity,
+)
 from swarm_reasoning.activities.run_status import (
     cancel_run,
     fail_run,
@@ -10,6 +14,8 @@ from swarm_reasoning.activities.run_status import (
 )
 
 __all__ = [
+    "AgentActivityInput",
+    "AgentActivityOutput",
     "cancel_run",
     "fail_run",
     "get_run_status",

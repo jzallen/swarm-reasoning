@@ -7,7 +7,7 @@ from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityResult
+from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.activities.run_status import (
     RunStatusEnum,
     RunStatusInput,
@@ -49,8 +49,8 @@ async def test_workflow_completes_all_agents(run_store):
     """Full run with 11 stub agents should complete successfully."""
 
     @activity.defn(name="run_agent_activity")
-    async def stub_agent(input: AgentActivityInput) -> AgentActivityResult:
-        return AgentActivityResult(
+    async def stub_agent(input: AgentActivityInput) -> AgentActivityOutput:
+        return AgentActivityOutput(
             agent_name=input.agent_name,
             terminal_status="F",
             observation_count=3,
@@ -93,15 +93,15 @@ async def test_workflow_check_worthiness_gate(run_store):
     """Claim-detector returning X should cancel the run early."""
 
     @activity.defn(name="run_agent_activity")
-    async def stub_cancel(input: AgentActivityInput) -> AgentActivityResult:
+    async def stub_cancel(input: AgentActivityInput) -> AgentActivityOutput:
         if input.agent_name == "claim-detector":
-            return AgentActivityResult(
+            return AgentActivityOutput(
                 agent_name=input.agent_name,
                 terminal_status="X",
                 observation_count=1,
                 duration_ms=10,
             )
-        return AgentActivityResult(
+        return AgentActivityOutput(
             agent_name=input.agent_name,
             terminal_status="F",
             observation_count=3,
@@ -146,9 +146,9 @@ async def test_workflow_sequential_ordering(run_store):
     execution_order: list[str] = []
 
     @activity.defn(name="run_agent_activity")
-    async def ordered_stub(input: AgentActivityInput) -> AgentActivityResult:
+    async def ordered_stub(input: AgentActivityInput) -> AgentActivityOutput:
         execution_order.append(input.agent_name)
-        return AgentActivityResult(
+        return AgentActivityOutput(
             agent_name=input.agent_name,
             terminal_status="F",
             observation_count=1,
@@ -203,8 +203,8 @@ async def test_workflow_status_transitions(run_store):
     status_history: list[str] = []
 
     @activity.defn(name="run_agent_activity")
-    async def stub_agent(input: AgentActivityInput) -> AgentActivityResult:
-        return AgentActivityResult(
+    async def stub_agent(input: AgentActivityInput) -> AgentActivityOutput:
+        return AgentActivityOutput(
             agent_name=input.agent_name,
             terminal_status="F",
             observation_count=1,

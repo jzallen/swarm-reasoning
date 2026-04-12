@@ -20,7 +20,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
-    from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityResult
+    from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
     from swarm_reasoning.activities.run_status import RunStatusInput, RunStatusResult
     from swarm_reasoning.completion.register import CompletionRegister
     from swarm_reasoning.workflows.dag import DAG, PhaseMode
@@ -152,7 +152,7 @@ class ClaimVerificationWorkflow:
 
     async def _dispatch_agent(
         self, agent_name: str, input: WorkflowInput
-    ) -> AgentActivityResult:
+    ) -> AgentActivityOutput:
         """Dispatch a single agent as a Temporal activity."""
         agent_input = AgentActivityInput(
             agent_name=agent_name,
@@ -164,7 +164,7 @@ class ClaimVerificationWorkflow:
         result = await workflow.execute_activity(
             "run_agent_activity",
             agent_input,
-            result_type=AgentActivityResult,
+            result_type=AgentActivityOutput,
             start_to_close_timeout=_START_TO_CLOSE,
             heartbeat_timeout=_HEARTBEAT_TIMEOUT,
             schedule_to_close_timeout=_SCHEDULE_TO_CLOSE,
@@ -173,7 +173,7 @@ class ClaimVerificationWorkflow:
         self._register.mark_complete(agent_name, result.terminal_status)
         return result
 
-    def _record_result(self, result: AgentActivityResult) -> None:
+    def _record_result(self, result: AgentActivityOutput) -> None:
         """Record an agent result for the workflow output."""
         self._agent_results.append(AgentResultSummary(
             agent_name=result.agent_name,

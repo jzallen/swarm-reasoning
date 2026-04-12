@@ -10,6 +10,7 @@ import redis.asyncio as aioredis
 from anthropic import AsyncAnthropic
 from temporalio import activity
 
+from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.agents.ingestion_agent.tools.claim_intake import ingest_claim
 from swarm_reasoning.agents.ingestion_agent.tools.domain_cls import (
     ClassificationServiceError,
@@ -18,7 +19,6 @@ from swarm_reasoning.agents.ingestion_agent.tools.domain_cls import (
 from swarm_reasoning.agents.ingestion_agent.validation import ValidationError
 from swarm_reasoning.config import RedisConfig
 from swarm_reasoning.stream.redis import RedisReasoningStream
-from swarm_reasoning.temporal.activities import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.temporal.errors import InvalidClaimError, MissingApiKeyError
 
 

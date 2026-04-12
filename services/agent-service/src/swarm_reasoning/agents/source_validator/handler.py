@@ -11,7 +11,7 @@ import logging
 
 import redis.asyncio as aioredis
 
-from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityResult
+from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
 from swarm_reasoning.agents.source_validator.aggregator import CitationAggregator
 from swarm_reasoning.agents.source_validator.convergence import ConvergenceAnalyzer
@@ -48,7 +48,7 @@ class SourceValidatorHandler(FanoutBase):
     def _timeout_value(self) -> str:
         return "0.0"
 
-    async def run(self, input: AgentActivityInput) -> AgentActivityResult:
+    async def run(self, input: AgentActivityInput) -> AgentActivityOutput:
         """Override to extract cross_agent_data before running base flow."""
         self._cross_agent_data = input.cross_agent_data or {}
         return await super().run(input)

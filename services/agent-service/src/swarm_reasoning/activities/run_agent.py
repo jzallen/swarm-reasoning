@@ -28,26 +28,41 @@ HEARTBEAT_WARNING_THRESHOLD_S = 30
 
 @dataclass
 class AgentActivityInput:
+    """Standardized input for all agent activities.
+
+    Used by both the workflow dispatcher and individual agent handlers.
+    """
+
     agent_name: str
     run_id: str
-    claim_id: str
-    session_id: str
     claim_text: str
+    claim_id: str | None = None
+    session_id: str | None = None
+    phase: str | None = None  # "ingestion" | "fanout" | "synthesis"
+    source_url: str | None = None
+    source_date: str | None = None
     cross_agent_data: dict[str, Any] | None = None
 
 
 @dataclass
-class AgentActivityResult:
+class AgentActivityOutput:
+    """Standardized output from all agent activities.
+
+    Used by both the workflow (phase completion, gate decisions) and
+    individual agent handlers.
+    """
+
     agent_name: str
-    terminal_status: str  # "F" or "X"
+    terminal_status: str  # "F" (final) or "X" (cancelled)
     observation_count: int
     duration_ms: int
+    check_worthiness_score: float | None = None
 
 
 class AgentHandler(Protocol):
     """Protocol for agent handler implementations."""
 
-    async def run(self, input: AgentActivityInput) -> AgentActivityResult: ...
+    async def run(self, input: AgentActivityInput) -> AgentActivityOutput: ...
 
 
 # Registry of agent handlers. Populated at worker startup.
@@ -94,7 +109,7 @@ NON_RETRYABLE_ERRORS = (MissingApiKeyError, StreamNotFoundError, InvalidClaimErr
 
 
 @activity.defn
-async def run_agent_activity(input: AgentActivityInput) -> AgentActivityResult:
+async def run_agent_activity(input: AgentActivityInput) -> AgentActivityOutput:
     """Dispatch an agent: publish START, run handler, publish STOP, heartbeat."""
     start_time = time.monotonic()
     agent = input.agent_name
@@ -127,7 +142,7 @@ async def run_agent_activity(input: AgentActivityInput) -> AgentActivityResult:
     else:
         # No handler registered (stub mode) — just complete immediately
         activity.logger.warning("No handler for agent %s, completing as stub", agent)
-        result = AgentActivityResult(
+        result = AgentActivityOutput(
             agent_name=agent,
             terminal_status="F",
             observation_count=0,
@@ -165,7 +180,7 @@ async def run_agent_activity(input: AgentActivityInput) -> AgentActivityResult:
 
 async def _run_with_heartbeat(
     handler: AgentHandler, input: AgentActivityInput, sk: str
-) -> AgentActivityResult:
+) -> AgentActivityOutput:
     """Run the agent handler with periodic Temporal heartbeating."""
     task = asyncio.create_task(handler.run(input))
     last_heartbeat = time.monotonic()
