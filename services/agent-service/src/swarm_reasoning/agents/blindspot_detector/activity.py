@@ -13,8 +13,6 @@ import redis.asyncio as aioredis
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityResult
 from swarm_reasoning.agents.blindspot_detector.analysis import (
-    CWE_NO_BLINDSPOT,
-    CWE_NOT_CORROBORATED,
     compute_blindspot_direction,
     compute_blindspot_score,
     compute_corroboration,
@@ -68,13 +66,8 @@ class BlindspotDetectorActivity(FanoutBase):
         # Progress: starting
         await self._publish_progress(redis_client, run_id, "Analyzing coverage blindspots...")
 
-        # Graceful degradation: empty coverage dict (all agents timed out)
-        coverage_data = self._cross_agent_data.get("coverage", {})
-        if not coverage_data:
-            await self._publish_degraded(stream, redis_client, run_id, sk)
-            return
-
-        # Parse coverage data from activity input
+        # Parse coverage data from activity input (empty dict handled gracefully:
+        # missing segments default to article_count=0, framing="ABSENT")
         coverage = CoverageSnapshot.from_activity_input(self._cross_agent_data)
 
         # Compute analysis
@@ -129,51 +122,6 @@ class BlindspotDetectorActivity(FanoutBase):
             redis_client,
             run_id,
             f"Cross-spectrum corroboration: {corroboration_label}",
-        )
-
-    async def _publish_degraded(
-        self,
-        stream: ReasoningStream,
-        redis_client: aioredis.Redis,
-        run_id: str,
-        sk: str,
-    ) -> None:
-        """Publish degraded observations when coverage data is empty."""
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.BLINDSPOT_SCORE,
-            value="1.0",
-            value_type=ValueType.NM,
-            units="score",
-            reference_range="0.0-1.0",
-        )
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.BLINDSPOT_DIRECTION,
-            value=CWE_NO_BLINDSPOT,
-            value_type=ValueType.CWE,
-        )
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.CROSS_SPECTRUM_CORROBORATION,
-            value=CWE_NOT_CORROBORATED,
-            value_type=ValueType.CWE,
-        )
-        await self._publish_progress(
-            redis_client,
-            run_id,
-            "Blindspot score: 1.00, direction: NONE (no coverage data)",
-        )
-        await self._publish_progress(
-            redis_client,
-            run_id,
-            "Cross-spectrum corroboration: FALSE",
         )
 
 

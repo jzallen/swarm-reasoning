@@ -120,7 +120,7 @@ class TestBlindspotDetectorFullFlow:
 
     @pytest.mark.asyncio
     async def test_empty_data_graceful_degradation(self):
-        """Empty input -> score=1.0, direction=NONE, corr=FALSE, STOP F."""
+        """Empty input -> score=1.0, direction=MULTIPLE, corr=FALSE, STOP F."""
         stream_mock = _make_stream_mock()
         redis_mock = AsyncMock()
         redis_mock.xadd = AsyncMock()
@@ -151,7 +151,7 @@ class TestBlindspotDetectorFullFlow:
 
         dir_obs = _obs_by_code(observations, _DIR)
         assert len(dir_obs) == 1
-        assert dir_obs[0].observation.value == "NONE^No Blindspot^FCK"
+        assert dir_obs[0].observation.value == "MULTIPLE^Multiple Absent^FCK"
 
         corr_obs = _obs_by_code(observations, _CORR)
         assert len(corr_obs) == 1
