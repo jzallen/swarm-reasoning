@@ -30,6 +30,11 @@ STRONG_MATCH_THRESHOLD = 0.75
 MATCH_THRESHOLD = 0.50
 
 
+def _first_review(result: dict) -> dict:
+    """Return the first ClaimReview entry from a Fact Check API result, or ``{}``."""
+    return result.get("claimReview", [{}])[0]
+
+
 def _build_query(context: ClaimContext) -> str:
     """Build API query from normalized claim and top entities."""
     parts = []
@@ -94,9 +99,7 @@ class ClaimReviewMatcherHandler(FanoutBase):
         # Publish match observations
         await self._publish_match(stream, sk, run_id, best_match, best_score)
 
-        source_name = (
-            best_match.get("claimReview", [{}])[0].get("publisher", {}).get("name", "Unknown")
-        )
+        source_name = _first_review(best_match).get("publisher", {}).get("name", "Unknown")
         await self._publish_progress(
             redis_client, run_id, f"Found matching fact-check from {source_name}"
         )
@@ -123,7 +126,7 @@ class ClaimReviewMatcherHandler(FanoutBase):
         best_score = 0.0
 
         for result in results:
-            claim_reviewed = result.get("claimReview", [{}])[0].get("title", result.get("text", ""))
+            claim_reviewed = _first_review(result).get("title", result.get("text", ""))
             score = cosine_similarity(normalized_claim, claim_reviewed)
             if score > best_score:
                 best_score = score
@@ -140,7 +143,7 @@ class ClaimReviewMatcherHandler(FanoutBase):
         score: float,
     ) -> None:
         """Publish 5 observations for a successful match."""
-        review = match.get("claimReview", [{}])[0]
+        review = _first_review(match)
         rating = review.get("textualRating", "Unknown")
         publisher = review.get("publisher", {}).get("name", "Unknown")
         url = review.get("url", "")
