@@ -14,4 +14,4 @@ services/backend/snapshots/
 .env
 
 # Gas Town runtime state
-.runtime/
+**/.runtime/
