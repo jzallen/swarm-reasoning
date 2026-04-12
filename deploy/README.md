@@ -16,7 +16,7 @@ Three deployment targets: local development (Docker Compose), AWS production
 cp .env.example .env
 # Edit .env with your API keys
 
-docker compose -f docs/infrastructure/docker-compose.yml up
+docker compose up
 ```
 
 ### Services

@@ -44,7 +44,8 @@ docs/
   diagrams/state/          — Claim lifecycle + observation result status state machines
   features/                — 5 Gherkin files (65 scenarios)
   requirements/nfrs/       — 32 individual NFR files (SEI QAS + Planguage) + index + template
-  infrastructure/          — docker-compose.yml, topology diagram
+  architecture/            — …includes docker-topology.mermaid
+docker-compose.yml           — Full local development stack (8 services)
 deploy/
   ecs/                     — ECS task definitions, CloudFormation templates
   k8s/                     — Helm chart for minikube demo

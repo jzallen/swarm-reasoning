@@ -193,12 +193,12 @@ Non-functional requirements -- one file per NFR, Planguage + SEI Quality Attribu
 ### infrastructure/
 Local development configuration.
 
-| File | Format | Contents |
-|---|---|---|
-| `docker-compose.yml` | Docker Compose | Full local stack -- 8 services: frontend, backend, agent-service, temporal, temporal-ui, temporal-db, postgresql, redis |
-| `docker-topology.mermaid` | Mermaid flowchart | Container dependency graph, port bindings (host-exposed vs internal-only), Temporal connections (control plane), Redis Streams (data plane), startup order |
+| File | Location | Format | Contents |
+|---|---|---|---|
+| `docker-compose.yml` | repo root | Docker Compose | Full local stack -- 8 services: frontend, backend, agent-service, temporal, temporal-ui, temporal-db, postgresql, redis |
+| `docker-topology.mermaid` | `docs/architecture/` | Mermaid flowchart | Container dependency graph, port bindings (host-exposed vs internal-only), Temporal connections (control plane), Redis Streams (data plane), startup order |
 
-> **Entry point:** `docker compose -f docs/infrastructure/docker-compose.yml up`
+> **Entry point:** `docker compose up`
 > Frontend available at `http://localhost:5173` (Vite dev server)
 > Backend API available at `http://localhost:3000`
 > Temporal UI available at `http://localhost:8233`
