@@ -24,6 +24,7 @@ import {
   STREAM_READER,
   TEMPORAL_CLIENT,
   SNAPSHOT_STORE,
+  HTML_RENDERER,
 } from '../../application/interfaces';
 
 const sessionRepoProvider = {
@@ -56,6 +57,11 @@ const temporalClientProvider = {
   useClass: TemporalClientAdapter,
 };
 
+const htmlRendererProvider = {
+  provide: HTML_RENDERER,
+  useClass: StaticHtmlRenderer,
+};
+
 const snapshotStoreProvider = {
   provide: SNAPSHOT_STORE,
   useFactory: (configService: ConfigService) => {
@@ -86,7 +92,7 @@ const snapshotStoreProvider = {
     streamReaderProvider,
     temporalClientProvider,
     snapshotStoreProvider,
-    StaticHtmlRenderer,
+    htmlRendererProvider,
   ],
   exports: [
     sessionRepoProvider,
@@ -96,7 +102,7 @@ const snapshotStoreProvider = {
     streamReaderProvider,
     temporalClientProvider,
     snapshotStoreProvider,
-    StaticHtmlRenderer,
+    htmlRendererProvider,
   ],
 })
 export class InfrastructureModule {}

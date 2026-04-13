@@ -8,12 +8,13 @@ import { VERDICT_REPOSITORY } from '../interfaces/verdict.repository.js';
 import { CITATION_REPOSITORY } from '../interfaces/citation.repository.js';
 import { SNAPSHOT_STORE } from '../interfaces/snapshot-store.interface.js';
 import { STREAM_READER } from '../interfaces/stream-reader.interface.js';
+import { HTML_RENDERER } from '../interfaces/html-renderer.interface.js';
 import * as SessionRepo from '../interfaces/session.repository.js';
 import * as VerdictRepo from '../interfaces/verdict.repository.js';
 import * as CitationRepo from '../interfaces/citation.repository.js';
 import * as SnapshotInt from '../interfaces/snapshot-store.interface.js';
 import * as StreamInt from '../interfaces/stream-reader.interface.js';
-import { StaticHtmlRenderer } from '../../infrastructure/renderers/static-html.renderer.js';
+import * as HtmlRendererInt from '../interfaces/html-renderer.interface.js';
 
 @Injectable()
 export class FinalizeSessionUseCase {
@@ -30,7 +31,8 @@ export class FinalizeSessionUseCase {
     private readonly snapshotStore: SnapshotInt.SnapshotStore,
     @Inject(STREAM_READER)
     private readonly streamReader: StreamInt.StreamReader,
-    private readonly htmlRenderer: StaticHtmlRenderer,
+    @Inject(HTML_RENDERER)
+    private readonly htmlRenderer: HtmlRendererInt.HtmlRenderer,
   ) {}
 
   async execute(

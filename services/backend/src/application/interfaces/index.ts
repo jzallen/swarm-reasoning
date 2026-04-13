@@ -12,3 +12,5 @@ export type { StreamReader } from './stream-reader.interface.js';
 export { STREAM_READER } from './stream-reader.interface.js';
 export type { SnapshotStore } from './snapshot-store.interface.js';
 export { SNAPSHOT_STORE } from './snapshot-store.interface.js';
+export type { HtmlRenderer } from './html-renderer.interface.js';
+export { HTML_RENDERER } from './html-renderer.interface.js';
