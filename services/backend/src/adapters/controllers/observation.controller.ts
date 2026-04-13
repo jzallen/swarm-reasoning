@@ -1,4 +1,4 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
 import { GetObservationsUseCase } from '../../application/use-cases';
 
 @Controller('sessions')
@@ -8,7 +8,7 @@ export class ObservationController {
   ) {}
 
   @Get(':sessionId/observations')
-  async getObservations(@Param('sessionId') sessionId: string) {
+  async getObservations(@Param('sessionId', ParseUUIDPipe) sessionId: string) {
     return this.getObservationsUseCase.execute(sessionId);
   }
 }

@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Param,
+  ParseUUIDPipe,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -30,7 +31,7 @@ export class SessionController {
   }
 
   @Get(':sessionId')
-  async getSession(@Param('sessionId') sessionId: string) {
+  async getSession(@Param('sessionId', ParseUUIDPipe) sessionId: string) {
     const session = await this.getSessionUseCase.execute(sessionId);
     return {
       sessionId: session.sessionId,

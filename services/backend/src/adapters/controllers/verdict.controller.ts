@@ -1,4 +1,4 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
 import { GetVerdictUseCase } from '../../application/use-cases';
 import { VerdictPresenter } from '../presenters/verdict.presenter';
 
@@ -10,7 +10,7 @@ export class VerdictController {
   ) {}
 
   @Get(':sessionId/verdict')
-  async getVerdict(@Param('sessionId') sessionId: string) {
+  async getVerdict(@Param('sessionId', ParseUUIDPipe) sessionId: string) {
     const { verdict, citations, observations } =
       await this.getVerdictUseCase.execute(sessionId);
     return this.verdictPresenter.format(verdict, citations, observations);

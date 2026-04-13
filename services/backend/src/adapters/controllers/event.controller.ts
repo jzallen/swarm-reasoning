@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
   Param,
+  ParseUUIDPipe,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
@@ -27,7 +28,7 @@ export class EventController {
 
   @Get(':sessionId/events')
   async streamEvents(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
     @Headers('last-event-id') lastEventId: string | undefined,
     @Res() res: Response,
   ) {

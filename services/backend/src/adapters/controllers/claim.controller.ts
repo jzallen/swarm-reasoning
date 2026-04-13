@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Param,
+  ParseUUIDPipe,
   Body,
   HttpCode,
   HttpStatus,
@@ -16,7 +17,7 @@ export class ClaimController {
   @Post(':sessionId/claims')
   @HttpCode(HttpStatus.ACCEPTED)
   async submitClaim(
-    @Param('sessionId') sessionId: string,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
     @Body() dto: SubmitClaimDto,
   ) {
     const session = await this.submitClaimUseCase.execute(sessionId, {
