@@ -3,6 +3,7 @@ import {
   Get,
   GoneException,
   Headers,
+  Logger,
   NotFoundException,
   Param,
   Res,
@@ -14,8 +15,12 @@ import {
   isTerminalEvent,
 } from '../presenters/sse-event.mapper.js';
 
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
 @Controller('sessions')
 export class EventController {
+  private readonly logger = new Logger(EventController.name);
+
   constructor(
     private readonly streamProgressUseCase: StreamProgressUseCase,
   ) {}
@@ -32,6 +37,17 @@ export class EventController {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
+    let clientDisconnected = false;
+    res.on('close', () => {
+      clientDisconnected = true;
+    });
+
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) {
+        res.write(':heartbeat\n\n');
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+
     try {
       const stream = this.streamProgressUseCase.execute(
         sessionId,
@@ -39,6 +55,8 @@ export class EventController {
       );
 
       for await (const event of stream) {
+        if (clientDisconnected) break;
+
         const sseEventName = mapProgressTypeToSseEvent(event.type);
         const data = JSON.stringify({
           runId: event.runId,
@@ -56,6 +74,8 @@ export class EventController {
         }
       }
     } catch (error) {
+      if (clientDisconnected) return;
+
       if (error instanceof NotFoundException) {
         res.write(
           `event: error\ndata: ${JSON.stringify({ error: error.message, status: 404 })}\n\n`,
@@ -67,12 +87,18 @@ export class EventController {
       } else {
         const message =
           error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(
+          `SSE stream error for session ${sessionId}: ${message}`,
+        );
         res.write(
           `event: error\ndata: ${JSON.stringify({ error: message, status: 500 })}\n\n`,
         );
       }
     } finally {
-      res.end();
+      clearInterval(heartbeat);
+      if (!res.writableEnded) {
+        res.end();
+      }
     }
   }
 }

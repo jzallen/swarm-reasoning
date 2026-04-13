@@ -11,6 +11,11 @@ interface UseSSEOptions {
 
 export function useSSE({ sessionId, phase, dispatch, onVerdictReady }: UseSSEOptions) {
   const sourceRef = useRef<EventSource | null>(null);
+  const dispatchRef = useRef(dispatch);
+  const onVerdictReadyRef = useRef(onVerdictReady);
+
+  dispatchRef.current = dispatch;
+  onVerdictReadyRef.current = onVerdictReady;
 
   useEffect(() => {
     if (!sessionId || phase !== 'active') return;
@@ -22,7 +27,7 @@ export function useSSE({ sessionId, phase, dispatch, onVerdictReady }: UseSSEOpt
     source.addEventListener('progress', (e: MessageEvent) => {
       try {
         const event = JSON.parse(e.data) as ProgressEvent;
-        dispatch({ type: 'PROGRESS_EVENT', event });
+        dispatchRef.current({ type: 'PROGRESS_EVENT', event });
       } catch {
         console.warn('Malformed SSE progress data:', e.data);
       }
@@ -32,7 +37,7 @@ export function useSSE({ sessionId, phase, dispatch, onVerdictReady }: UseSSEOpt
       try {
         const data = JSON.parse(e.data) as { type: string };
         if (data.type === 'verdict-ready') {
-          onVerdictReady(sessionId);
+          onVerdictReadyRef.current(sessionId);
         }
       } catch {
         console.warn('Malformed SSE verdict data:', e.data);
@@ -43,7 +48,7 @@ export function useSSE({ sessionId, phase, dispatch, onVerdictReady }: UseSSEOpt
       try {
         const data = JSON.parse(e.data) as { type: string; snapshotUrl?: string };
         if (data.type === 'session-frozen') {
-          dispatch({ type: 'SESSION_FROZEN', snapshotUrl: data.snapshotUrl });
+          dispatchRef.current({ type: 'SESSION_FROZEN', snapshotUrl: data.snapshotUrl });
         }
       } catch {
         console.warn('Malformed SSE close data:', e.data);
@@ -63,5 +68,5 @@ export function useSSE({ sessionId, phase, dispatch, onVerdictReady }: UseSSEOpt
       source.close();
       sourceRef.current = null;
     };
-  }, [sessionId, phase, dispatch, onVerdictReady]);
+  }, [sessionId, phase]);
 }

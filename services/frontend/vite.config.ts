@@ -22,6 +22,7 @@ export default defineConfig({
       '/sessions': {
         target: 'http://localhost:3000',
         changeOrigin: true,
+        timeout: 0,
       },
       '/health': {
         target: 'http://localhost:3000',

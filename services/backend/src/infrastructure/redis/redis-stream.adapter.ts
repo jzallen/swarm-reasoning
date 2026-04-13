@@ -10,7 +10,7 @@ import type { StreamReader } from '../../application/interfaces/stream-reader.in
 const CONSUMER_GROUP = 'sse-consumers';
 const BLOCK_MS = 5000;
 const BATCH_SIZE = 10;
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 @Injectable()
 export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
@@ -39,11 +39,15 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
     await this.ensureConsumerGroup(streamKey);
 
     try {
+      let lastReplayedId: string | undefined;
       if (lastEventId) {
-        yield* this.replayFromId(streamKey, lastEventId);
+        for await (const event of this.replayFromId(streamKey, lastEventId)) {
+          lastReplayedId = event.entryId;
+          yield event;
+        }
       }
 
-      yield* this.consumeStream(streamKey, consumerId);
+      yield* this.consumeStream(streamKey, consumerId, lastReplayedId);
     } finally {
       await this.removeConsumer(streamKey, consumerId);
     }
@@ -102,6 +106,7 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
   private async *consumeStream(
     streamKey: string,
     consumerId: string,
+    skipBeforeId?: string,
   ): AsyncGenerator<ProgressEvent, void, unknown> {
     let lastActivity = Date.now();
 
@@ -140,6 +145,10 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
 
             if (!event) continue;
 
+            if (skipBeforeId && this.compareEntryIds(entryId, skipBeforeId) <= 0) {
+              continue;
+            }
+
             yield event;
 
             if (
@@ -155,6 +164,13 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
         return;
       }
     }
+  }
+
+  private compareEntryIds(a: string, b: string): number {
+    const [aTime, aSeq] = a.split('-').map(Number);
+    const [bTime, bSeq] = b.split('-').map(Number);
+    if (aTime !== bTime) return aTime - bTime;
+    return aSeq - bSeq;
   }
 
   private async removeConsumer(
