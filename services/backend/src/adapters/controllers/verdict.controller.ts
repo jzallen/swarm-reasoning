@@ -11,8 +11,8 @@ export class VerdictController {
 
   @Get(':sessionId/verdict')
   async getVerdict(@Param('sessionId') sessionId: string) {
-    const { verdict, citations } =
+    const { verdict, citations, observations } =
       await this.getVerdictUseCase.execute(sessionId);
-    return this.verdictPresenter.format(verdict, citations);
+    return this.verdictPresenter.format(verdict, citations, observations);
   }
 }

@@ -21,7 +21,23 @@ export interface Verdict {
   narrative: string;
   signalCount: number;
   citations: Citation[];
+  coverageBreakdown: CoverageEntry[];
+  blindspotWarnings: BlindspotWarning[];
   finalizedAt: string;
+}
+
+export interface CoverageEntry {
+  spectrum: 'left' | 'center' | 'right';
+  articleCount: number;
+  framing: string;
+  topSource: string | null;
+  topSourceUrl: string | null;
+}
+
+export interface BlindspotWarning {
+  blindspotScore: number;
+  direction: string;
+  crossSpectrumCorroboration: boolean;
 }
 
 export type RatingLabel =
