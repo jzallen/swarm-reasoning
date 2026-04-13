@@ -14,6 +14,39 @@
   --color-rating-yellow: #d97706;
   --color-rating-orange: #ea580c;
   --color-rating-red: #dc2626;
+
+  /* Error / danger palette */
+  --color-error-bg: #fef2f2;
+  --color-error-border: #fecaca;
+  --color-error-text: #991b1b;
+  --color-error-btn: #dc2626;
+  --color-error-btn-hover: #b91c1c;
+  --color-error-hover-bg: #fee2e2;
+
+  /* Phase palette */
+  --color-phase-ingestion: #3b82f6;
+  --color-phase-fanout: #22c55e;
+  --color-phase-synthesis: #a855f7;
+  --color-phase-finalization: #6b7280;
+
+  /* Blindspot palette */
+  --color-blindspot-bg: #fef3c7;
+  --color-blindspot-border: #f59e0b;
+  --color-blindspot-text: #92400e;
+  --color-blindspot-icon: #f59e0b;
+
+  /* Framing badge palette */
+  --color-framing-supportive-bg: #dcfce7;
+  --color-framing-supportive-text: #166534;
+  --color-framing-critical-bg: #fee2e2;
+  --color-framing-critical-text: #991b1b;
+  --color-framing-neutral-bg: #e0e7ff;
+  --color-framing-neutral-text: #3730a3;
+  --color-framing-absent-bg: #f3f4f6;
+  --color-framing-absent-text: #6b7280;
+
+  /* Neutral gray */
+  --color-gray-400: #9ca3af;
 }
 
 *,

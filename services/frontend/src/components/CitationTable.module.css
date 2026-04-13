@@ -49,22 +49,63 @@
 }
 
 .statusGreen {
-  background: #16a34a;
+  background: var(--color-rating-green);
 }
 
 .statusRed {
-  background: #dc2626;
+  background: var(--color-rating-red);
 }
 
 .statusYellow {
-  background: #d97706;
+  background: var(--color-rating-yellow);
 }
 
 .statusGray {
-  background: #9ca3af;
+  background: var(--color-gray-400);
 }
 
 .count {
   text-align: center;
   font-weight: 600;
+}
+
+/* Responsive: stack table rows as cards on small screens */
+@media (max-width: 640px) {
+  .table thead {
+    display: none;
+  }
+
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+    width: 100%;
+  }
+
+  .table tr {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .table td {
+    padding: 0.25rem 0;
+    border-bottom: none;
+    white-space: normal;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 0.125rem;
+  }
+
+  .count {
+    text-align: left;
+  }
 }

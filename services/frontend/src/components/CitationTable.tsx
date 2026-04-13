@@ -35,8 +35,8 @@ export function CitationTable({ citations }: CitationTableProps) {
             const status = STATUS_CONFIG[c.validationStatus];
             return (
               <tr key={`${c.sourceUrl}-${i}`}>
-                <td>{c.sourceName}</td>
-                <td>
+                <td data-label="Source">{c.sourceName}</td>
+                <td data-label="URL">
                   <a
                     href={c.sourceUrl}
                     target="_blank"
@@ -46,13 +46,13 @@ export function CitationTable({ citations }: CitationTableProps) {
                     {truncateUrl(c.sourceUrl)}
                   </a>
                 </td>
-                <td>{c.agent}</td>
-                <td className={styles.code}>{c.observationCode}</td>
-                <td>
+                <td data-label="Agent">{c.agent}</td>
+                <td data-label="Code" className={styles.code}>{c.observationCode}</td>
+                <td data-label="Status">
                   <span className={`${styles.statusDot} ${styles[status.className]}`} />
                   {status.label}
                 </td>
-                <td className={styles.count}>{c.convergenceCount}</td>
+                <td data-label="Cited By" className={styles.count}>{c.convergenceCount}</td>
               </tr>
             );
           })}

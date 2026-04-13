@@ -39,19 +39,19 @@
 }
 
 .phase_ingestion {
-  background: #3b82f6;
+  background: var(--color-phase-ingestion);
 }
 
 .phase_fanout {
-  background: #22c55e;
+  background: var(--color-phase-fanout);
 }
 
 .phase_synthesis {
-  background: #a855f7;
+  background: var(--color-phase-synthesis);
 }
 
 .phase_finalization {
-  background: #6b7280;
+  background: var(--color-phase-finalization);
 }
 
 .time {
