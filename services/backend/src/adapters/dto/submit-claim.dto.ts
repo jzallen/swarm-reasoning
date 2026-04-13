@@ -1,4 +1,11 @@
-import { IsString, IsOptional, MaxLength, IsNotEmpty } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  MaxLength,
+  IsNotEmpty,
+  IsUrl,
+  IsDateString,
+} from 'class-validator';
 
 export class SubmitClaimDto {
   @IsString()
@@ -7,10 +14,10 @@ export class SubmitClaimDto {
   claimText: string;
 
   @IsOptional()
-  @IsString()
+  @IsUrl()
   sourceUrl?: string;
 
   @IsOptional()
-  @IsString()
+  @IsDateString()
   sourceDate?: string;
 }
