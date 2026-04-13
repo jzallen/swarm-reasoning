@@ -22,7 +22,10 @@ export class SubmitClaimUseCase {
     private readonly temporalClient: TemporalPort.TemporalClientPort,
   ) {}
 
-  async execute(sessionId: string, claimData: { claimText: string; sourceUrl?: string; sourceDate?: string }): Promise<Session> {
+  async execute(
+    sessionId: string,
+    claimData: { claimText: string; sourceUrl?: string; sourceDate?: string },
+  ): Promise<Session> {
     const session = await this.sessionRepository.findById(sessionId);
     if (!session) {
       throw new NotFoundException(`Session ${sessionId} not found`);
@@ -40,11 +43,18 @@ export class SubmitClaimUseCase {
 
     await this.runRepository.save(run);
     await this.sessionRepository.save(session);
-    await this.temporalClient.startClaimVerificationWorkflow(
-      run.runId,
-      session.sessionId,
-      claim.claimText,
-    );
+
+    try {
+      await this.temporalClient.startClaimVerificationWorkflow(
+        run.runId,
+        session.sessionId,
+        claim.claimText,
+      );
+    } catch (error) {
+      run.transitionTo(RunStatus.Failed);
+      await this.runRepository.save(run);
+      throw error;
+    }
 
     return session;
   }

@@ -1,7 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { SubmitClaimUseCase } from '../use-cases/submit-claim.use-case';
-import { Session } from '../../domain/entities';
-import { SessionStatus } from '../../domain/enums';
+import { Run, Session } from '../../domain/entities';
+import { RunStatus, SessionStatus } from '../../domain/enums';
 
 describe('SubmitClaimUseCase', () => {
   const mockSession = new Session({
@@ -59,5 +59,29 @@ describe('SubmitClaimUseCase', () => {
     await expect(
       useCase.execute('missing', { claimText: 'Test' }),
     ).rejects.toThrow(NotFoundException);
+  });
+
+  it('should transition run to Failed when Temporal workflow start fails', async () => {
+    const mocks = createMocks();
+    const temporalError = new Error('Temporal unavailable');
+    mocks.temporalClient.startClaimVerificationWorkflow.mockRejectedValue(
+      temporalError,
+    );
+
+    const useCase = new SubmitClaimUseCase(
+      mocks.sessionRepo,
+      mocks.runRepo,
+      mocks.temporalClient,
+    );
+
+    await expect(
+      useCase.execute('test-id', { claimText: 'Test claim' }),
+    ).rejects.toThrow('Temporal unavailable');
+
+    // Run should have been saved twice: once for initial creation, once for Failed transition
+    expect(mocks.runRepo.save).toHaveBeenCalledTimes(2);
+    const failedRun = mocks.runRepo.save.mock.calls[1][0] as Run;
+    expect(failedRun.status).toBe(RunStatus.Failed);
+    expect(failedRun.completedAt).toBeInstanceOf(Date);
   });
 });
