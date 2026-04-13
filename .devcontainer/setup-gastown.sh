@@ -8,6 +8,7 @@ GO_VERSION="1.24.2"
 RIG_NAME="${RIG_NAME:-swarm_reasoning}"
 RIG_URL="${RIG_URL:-file:///workspaces/swarm-reasoning}"
 GT_HQ="${GT_HQ:-$HOME/gt}"
+GT_GITHUB_REPO="${GT_GITHUB_REPO:-jzallen/gt-hq}"
 
 # ---------------------------------------------------------------------------
 # Parse flags
@@ -101,18 +102,23 @@ build_from_source "gastown" "https://github.com/steveyegge/gastown.git" "gt"
 build_from_source "beads"   "https://github.com/steveyegge/beads.git"   "bd"
 
 # ---------------------------------------------------------------------------
-# 4. Create HQ workspace
+# 4. Create or restore HQ workspace
 # ---------------------------------------------------------------------------
 if [[ -d "$GT_HQ/mayor" ]]; then
   ok "HQ already exists at ${GT_HQ}"
+elif [[ -n "$GT_GITHUB_REPO" ]] && git ls-remote "https://github.com/${GT_GITHUB_REPO}.git" &>/dev/null; then
+  info "Restoring HQ from github.com/${GT_GITHUB_REPO}..."
+  git clone "https://github.com/${GT_GITHUB_REPO}.git" "$GT_HQ"
+  ok "HQ restored from remote"
 else
   info "Creating HQ at ${GT_HQ}..."
-  gt install "$GT_HQ" --shell
+  if [[ -n "$GT_GITHUB_REPO" ]]; then
+    gt install "$GT_HQ" --git --github "$GT_GITHUB_REPO"
+  else
+    gt install "$GT_HQ" --shell
+    (cd "$GT_HQ" && gt git-init)
+  fi
   ok "HQ created"
-
-  info "Initializing git..."
-  (cd "$GT_HQ" && gt git-init)
-  ok "Git initialized"
 fi
 
 # ---------------------------------------------------------------------------

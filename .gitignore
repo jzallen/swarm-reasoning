@@ -15,3 +15,5 @@ services/backend/snapshots/
 
 # Gas Town runtime state
 **/.runtime/
+.beads/
+embeddeddolt/
