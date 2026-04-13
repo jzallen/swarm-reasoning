@@ -65,7 +65,7 @@ export class InitialSchema1712800000000 implements MigrationInterface {
 
     // Indexes per task 5.6
     await queryRunner.query(
-      `CREATE INDEX "IDX_sessions_status_frozenAt" ON "sessions" ("status", "frozenAt")`,
+      `CREATE INDEX "IDX_sessions_status_expiresAt" ON "sessions" ("status", "expiresAt")`,
     );
     await queryRunner.query(
       `CREATE INDEX "IDX_runs_sessionId" ON "runs" ("sessionId")`,
