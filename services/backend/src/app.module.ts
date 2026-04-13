@@ -32,7 +32,7 @@ import { CleanupModule } from './infrastructure/modules/cleanup.module';
           VerdictOrmEntity,
           CitationOrmEntity,
         ],
-        synchronize: config.get<string>('NODE_ENV') !== 'production',
+        synchronize: false,
         logging: config.get<string>('NODE_ENV') === 'development',
       }),
     }),
