@@ -32,6 +32,8 @@ export function makeVerdict(overrides: Partial<Verdict> = {}): Verdict {
     narrative: 'The claim is mostly accurate with minor inaccuracies.',
     signalCount: 42,
     citations: [makeCitation()],
+    coverageBreakdown: [],
+    blindspotWarnings: [],
     finalizedAt: '2026-04-13T12:05:00Z',
     ...overrides,
   };

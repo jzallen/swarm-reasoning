@@ -92,6 +92,8 @@ describe('useSession', () => {
         narrative: 'Confirmed',
         signalCount: 40,
         citations: [],
+        coverageBreakdown: [],
+        blindspotWarnings: [],
         finalizedAt: '2026-01-01',
       };
       mockGetVerdict.mockResolvedValue(verdict);
