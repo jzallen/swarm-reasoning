@@ -3,10 +3,13 @@
 Phase 2b agent: scans upstream agent streams for cited URLs, validates via HTTP HEAD
 with redirect/soft-404 detection, computes source convergence score, and publishes
 an aggregated citation list for the synthesizer.
+
+Delegates to @tool definitions (ADR-004) for observation publishing.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 
 import redis.asyncio as aioredis
@@ -15,9 +18,11 @@ from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivi
 from swarm_reasoning.agents._utils import register_handler
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
 from swarm_reasoning.agents.source_validator.aggregator import CitationAggregator
-from swarm_reasoning.agents.source_validator.convergence import ConvergenceAnalyzer
-from swarm_reasoning.agents.source_validator.extractor import LinkExtractor
-from swarm_reasoning.agents.source_validator.validator import UrlValidator
+from swarm_reasoning.agents.source_validator.tools.aggregate import aggregate_citations
+from swarm_reasoning.agents.source_validator.tools.convergence import compute_convergence_score
+from swarm_reasoning.agents.source_validator.tools.extract import extract_urls
+from swarm_reasoning.agents.source_validator.tools.validate import validate_urls
+from swarm_reasoning.agents.tool_runtime import AgentContext
 from swarm_reasoning.config import RedisConfig
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.stream.base import ReasoningStream
@@ -27,18 +32,23 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "source-validator"
 
 
+def _serialize_extracted_urls(cross_agent_data: dict) -> str:
+    """Serialize cross-agent URL data for tool consumption."""
+    return json.dumps(cross_agent_data)
+
+
 @register_handler("source-validator")
 class SourceValidatorHandler(FanoutBase):
-    """Orchestrates link extraction, URL validation, convergence, and citation aggregation."""
+    """Orchestrates link extraction, URL validation, convergence, and citation aggregation.
+
+    Delegates to @tool definitions for each step, which publish observations
+    via AgentContext (ADR-004).
+    """
 
     AGENT_NAME = AGENT_NAME
 
     def __init__(self, redis_config: RedisConfig | None = None) -> None:
         super().__init__(redis_config)
-        self._extractor = LinkExtractor()
-        self._validator = UrlValidator()
-        self._convergence = ConvergenceAnalyzer()
-        self._aggregator = CitationAggregator(self._convergence)
         self._cross_agent_data: dict = {}
 
     def _primary_code(self) -> ObservationCode:
@@ -67,97 +77,104 @@ class SourceValidatorHandler(FanoutBase):
         sk: str,
         context: ClaimContext,
     ) -> None:
-        # 1. Extract URLs from cross-agent data
-        extracted = self._extractor.extract_urls(self._cross_agent_data)
+        # Create AgentContext for @tool observation publishing
+        agent_ctx = AgentContext(
+            stream=stream,
+            redis_client=redis_client,
+            run_id=run_id,
+            sk=sk,
+            agent_name=AGENT_NAME,
+        )
 
-        if not extracted:
+        # 1. Extract URLs via @tool
+        extract_result_json = await extract_urls.ainvoke({
+            "cross_agent_data": _serialize_extracted_urls(self._cross_agent_data),
+            "context": agent_ctx,
+        })
+        extract_result = json.loads(extract_result_json)
+
+        if extract_result["count"] == 0:
             await self._publish_progress(redis_client, run_id, "No source URLs found")
-            # Publish empty results
-            await self._publish_obs(
-                stream,
-                sk,
-                run_id,
-                code=ObservationCode.SOURCE_CONVERGENCE_SCORE,
-                value="0.0",
-                value_type=ValueType.NM,
-                units="score",
-                reference_range="0.0-1.0",
-            )
-            await self._publish_obs(
-                stream,
-                sk,
-                run_id,
-                code=ObservationCode.CITATION_LIST,
-                value=CitationAggregator.to_citation_list_json([]),
-                value_type=ValueType.TX,
-            )
+            # Publish empty convergence and citation via tools
+            await compute_convergence_score.ainvoke({
+                "extracted_urls_json": "[]",
+                "context": agent_ctx,
+            })
+            await aggregate_citations.ainvoke({
+                "extracted_urls_json": "[]",
+                "validations_json": "{}",
+                "convergence_groups_json": "{}",
+                "context": agent_ctx,
+            })
+            self._seq = agent_ctx.seq_counter
             return
 
-        # Publish SOURCE_EXTRACTED_URL for each unique URL
-        for eu in extracted:
-            await self._publish_obs(
-                stream,
-                sk,
-                run_id,
-                code=ObservationCode.SOURCE_EXTRACTED_URL,
-                value=eu.url,
-                value_type=ValueType.ST,
-            )
+        # Rebuild serialized extracted URLs for downstream tools
+        # (need full association data, not just URL strings)
+        extracted_urls_json = json.dumps(self._build_extracted_url_dicts())
 
-        # 2. Validate URLs concurrently
-        urls_to_validate = [eu.url for eu in extracted]
+        # 2. Validate URLs via @tool
+        urls_to_validate = extract_result["urls"]
         total = len(urls_to_validate)
         await self._publish_progress(redis_client, run_id, "Validating source URLs...")
 
-        validations = await self._validator.validate_all(urls_to_validate)
-
-        # Publish SOURCE_VALIDATION_STATUS for each URL
-        for url, result in validations.items():
-            await self._publish_obs(
-                stream,
-                sk,
-                run_id,
-                code=ObservationCode.SOURCE_VALIDATION_STATUS,
-                value=result.status.to_cwe(),
-                value_type=ValueType.CWE,
-            )
+        validate_result_json = await validate_urls.ainvoke({
+            "urls_json": json.dumps(urls_to_validate),
+            "context": agent_ctx,
+        })
+        validations = json.loads(validate_result_json)
 
         await self._publish_progress(
             redis_client, run_id, f"Validated {len(validations)}/{total} URLs"
         )
 
-        # 3. Compute source convergence
-        score = self._convergence.compute_convergence_score(extracted)
-        convergence_groups = self._convergence.get_convergence_groups(extracted)
+        # 3. Compute convergence via @tool
+        convergence_result_json = await compute_convergence_score.ainvoke({
+            "extracted_urls_json": extracted_urls_json,
+            "context": agent_ctx,
+        })
+        convergence_result = json.loads(convergence_result_json)
 
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.SOURCE_CONVERGENCE_SCORE,
-            value=str(score),
-            value_type=ValueType.NM,
-            units="score",
-            reference_range="0.0-1.0",
-        )
+        # 4. Aggregate citations via @tool
+        aggregate_result_json = await aggregate_citations.ainvoke({
+            "extracted_urls_json": extracted_urls_json,
+            "validations_json": json.dumps(validations),
+            "convergence_groups_json": json.dumps(convergence_result["convergence_groups"]),
+            "context": agent_ctx,
+        })
+        aggregate_result = json.loads(aggregate_result_json)
 
-        # 4. Aggregate citations
-        citations = self._aggregator.aggregate(extracted, validations, convergence_groups)
-        json_str = CitationAggregator.to_citation_list_json(citations)
-
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.CITATION_LIST,
-            value=json_str,
-            value_type=ValueType.TX,
-        )
-
-        count = len(citations)
+        count = aggregate_result["count"]
         if count > 0:
             await self._publish_progress(
                 redis_client, run_id, f"Aggregated {count} source citations"
             )
         else:
             await self._publish_progress(redis_client, run_id, "No source citations found")
+
+        # Sync seq counter from AgentContext to FanoutBase for STOP message
+        self._seq = agent_ctx.seq_counter
+
+    def _build_extracted_url_dicts(self) -> list[dict]:
+        """Build serializable extracted URL dicts from cross_agent_data.
+
+        Re-runs extraction to get full association data for downstream tools.
+        """
+        from swarm_reasoning.agents.source_validator.extractor import LinkExtractor
+
+        extractor = LinkExtractor()
+        extracted = extractor.extract_urls(self._cross_agent_data)
+        return [
+            {
+                "url": eu.url,
+                "associations": [
+                    {
+                        "agent": a.agent,
+                        "observation_code": a.observation_code,
+                        "source_name": a.source_name,
+                    }
+                    for a in eu.associations
+                ],
+            }
+            for eu in extracted
+        ]
