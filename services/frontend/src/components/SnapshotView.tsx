@@ -1,5 +1,5 @@
-import { PrintButton } from './PrintButton';
-import styles from './SnapshotView.module.css';
+import { PrintButton } from "./PrintButton";
+import styles from "./SnapshotView.module.css";
 
 interface SnapshotViewProps {
   snapshotUrl: string | null;
@@ -18,7 +18,10 @@ export function SnapshotView({ snapshotUrl, isExpired }: SnapshotViewProps) {
   if (!snapshotUrl) {
     return (
       <div className={styles.fallback}>
-        <p>Snapshot is not yet available. The session has been frozen but the snapshot is still being generated.</p>
+        <p>
+          Snapshot is not yet available. The session has been frozen but the
+          snapshot is still being generated.
+        </p>
       </div>
     );
   }
@@ -32,6 +35,7 @@ export function SnapshotView({ snapshotUrl, isExpired }: SnapshotViewProps) {
         className={styles.iframe}
         src={snapshotUrl}
         title="Session snapshot"
+        sandbox="allow-same-origin"
       />
     </div>
   );

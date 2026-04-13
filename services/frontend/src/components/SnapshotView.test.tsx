@@ -1,29 +1,37 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { SnapshotView } from './SnapshotView';
+import { describe, it, expect } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { SnapshotView } from "./SnapshotView";
 
-describe('SnapshotView', () => {
-  it('renders expired message when isExpired is true', () => {
+describe("SnapshotView", () => {
+  it("renders expired message when isExpired is true", () => {
     render(<SnapshotView snapshotUrl={null} isExpired />);
     expect(screen.getByText(/expired.*3 days/i)).toBeInTheDocument();
   });
 
-  it('renders fallback message when snapshotUrl is null and not expired', () => {
+  it("renders fallback message when snapshotUrl is null and not expired", () => {
     render(<SnapshotView snapshotUrl={null} />);
     expect(screen.getByText(/not yet available/i)).toBeInTheDocument();
   });
 
-  it('renders an iframe with the snapshot URL', () => {
+  it("renders an iframe with the snapshot URL", () => {
     render(<SnapshotView snapshotUrl="https://cdn.example.com/snap.html" />);
 
-    const iframe = document.querySelector('iframe');
+    const iframe = document.querySelector("iframe");
     expect(iframe).toBeTruthy();
-    expect(iframe!.src).toBe('https://cdn.example.com/snap.html');
-    expect(iframe!.title).toBe('Session snapshot');
+    expect(iframe!.src).toBe("https://cdn.example.com/snap.html");
+    expect(iframe!.title).toBe("Session snapshot");
   });
 
-  it('renders PrintButton when snapshot is available', () => {
+  it("renders iframe with sandbox attribute", () => {
     render(<SnapshotView snapshotUrl="https://cdn.example.com/snap.html" />);
-    expect(screen.getByRole('button', { name: 'Print' })).toBeInTheDocument();
+
+    const iframe = document.querySelector("iframe");
+    expect(iframe).toBeTruthy();
+    expect(iframe!.getAttribute("sandbox")).toBe("allow-same-origin");
+  });
+
+  it("renders PrintButton when snapshot is available", () => {
+    render(<SnapshotView snapshotUrl="https://cdn.example.com/snap.html" />);
+    expect(screen.getByRole("button", { name: "Print" })).toBeInTheDocument();
   });
 });
