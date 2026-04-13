@@ -8,10 +8,11 @@ interface ChatInterfaceProps {
   phase: SessionPhase;
   claim: string | null;
   events: ProgressEvent[];
+  reconnected?: boolean;
   onSubmit: (claimText: string) => void;
 }
 
-export function ChatInterface({ phase, claim, events, onSubmit }: ChatInterfaceProps) {
+export function ChatInterface({ phase, claim, events, reconnected, onSubmit }: ChatInterfaceProps) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isSubmitting = phase !== 'idle';
@@ -41,7 +42,13 @@ export function ChatInterface({ phase, claim, events, onSubmit }: ChatInterfaceP
           </div>
         )}
 
-        {claim && events.length === 0 && phase === 'active' && (
+        {reconnected && (
+          <div className={styles.systemBubble}>
+            <p className={styles.reconnectedText}>Reconnected — earlier messages not shown</p>
+          </div>
+        )}
+
+        {claim && events.length === 0 && phase === 'active' && !reconnected && (
           <div className={styles.systemBubble}>
             <p className={styles.connectingText}>Connecting to agents...</p>
           </div>

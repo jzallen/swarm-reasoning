@@ -23,6 +23,11 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
         timeout: 0,
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes) => {
+            proxyRes.headers['x-accel-buffering'] = 'no';
+          });
+        },
       },
       '/health': {
         target: 'http://localhost:3000',

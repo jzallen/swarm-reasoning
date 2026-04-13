@@ -42,6 +42,7 @@ export default function App() {
               phase={state.phase}
               claim={state.claim}
               events={state.events}
+              reconnected={state.reconnected}
               onSubmit={handleSubmit}
             />
 

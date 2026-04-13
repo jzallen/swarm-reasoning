@@ -9,13 +9,17 @@ interface UseSSEOptions {
   onVerdictReady: (sessionId: string) => void;
 }
 
+const ERROR_TIMEOUT_MS = 30_000;
+
 export function useSSE({ sessionId, phase, dispatch, onVerdictReady }: UseSSEOptions) {
   const sourceRef = useRef<EventSource | null>(null);
   const dispatchRef = useRef(dispatch);
   const onVerdictReadyRef = useRef(onVerdictReady);
 
-  dispatchRef.current = dispatch;
-  onVerdictReadyRef.current = onVerdictReady;
+  useEffect(() => {
+    dispatchRef.current = dispatch;
+    onVerdictReadyRef.current = onVerdictReady;
+  });
 
   useEffect(() => {
     if (!sessionId || phase !== 'active') return;
@@ -24,7 +28,10 @@ export function useSSE({ sessionId, phase, dispatch, onVerdictReady }: UseSSEOpt
     const source = new EventSource(url);
     sourceRef.current = source;
 
+    let firstErrorAt: number | null = null;
+
     source.addEventListener('progress', (e: MessageEvent) => {
+      firstErrorAt = null;
       try {
         const event = JSON.parse(e.data) as ProgressEvent;
         dispatchRef.current({ type: 'PROGRESS_EVENT', event });
@@ -34,6 +41,7 @@ export function useSSE({ sessionId, phase, dispatch, onVerdictReady }: UseSSEOpt
     });
 
     source.addEventListener('verdict', (e: MessageEvent) => {
+      firstErrorAt = null;
       try {
         const data = JSON.parse(e.data) as { type: string };
         if (data.type === 'verdict-ready') {
@@ -57,10 +65,20 @@ export function useSSE({ sessionId, phase, dispatch, onVerdictReady }: UseSSEOpt
     });
 
     source.onerror = () => {
-      // Native EventSource auto-reconnects with Last-Event-ID.
-      // Only log for debugging; do not dispatch error to avoid UI churn.
       if (source.readyState === EventSource.CLOSED) {
-        console.warn('SSE connection closed permanently');
+        dispatchRef.current({ type: 'ERROR', message: 'Lost connection to server' });
+        return;
+      }
+
+      const now = Date.now();
+      if (firstErrorAt === null) {
+        firstErrorAt = now;
+      } else if (now - firstErrorAt >= ERROR_TIMEOUT_MS) {
+        source.close();
+        dispatchRef.current({
+          type: 'ERROR',
+          message: 'Unable to reconnect to server after 30 seconds',
+        });
       }
     };
 

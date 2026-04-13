@@ -35,6 +35,7 @@ describe('useSession', () => {
       expect(result.current.state.verdict).toBeNull();
       expect(result.current.state.snapshotUrl).toBeNull();
       expect(result.current.state.error).toBeNull();
+      expect(result.current.state.reconnected).toBe(false);
     });
   });
 
@@ -210,6 +211,26 @@ describe('useSession', () => {
       });
 
       expect(result.current.state.claim).toBe('Old claim');
+    });
+
+    it('sets reconnected flag when loading an active session from URL', async () => {
+      const session = {
+        sessionId: '12345678-1234-1234-1234-123456789abc',
+        status: 'active' as const,
+        claim: 'In-progress claim',
+        createdAt: '2026-01-01',
+      };
+      mockGetSession.mockResolvedValue(session);
+      window.history.pushState(null, '', '/12345678-1234-1234-1234-123456789abc');
+
+      const { result } = renderHook(() => useSession());
+
+      await vi.waitFor(() => {
+        expect(result.current.state.phase).toBe('active');
+      });
+
+      expect(result.current.state.reconnected).toBe(true);
+      expect(result.current.state.claim).toBe('In-progress claim');
     });
 
     it('does not load when path is not a valid UUID', () => {

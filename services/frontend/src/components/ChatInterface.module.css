@@ -41,6 +41,13 @@
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.reconnectedText {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }

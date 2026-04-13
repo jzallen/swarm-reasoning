@@ -12,6 +12,7 @@ interface SessionState {
   verdict: Verdict | null;
   snapshotUrl: string | null;
   error: string | null;
+  reconnected: boolean;
 }
 
 type SessionAction =
@@ -31,6 +32,7 @@ const initialState: SessionState = {
   verdict: null,
   snapshotUrl: null,
   error: null,
+  reconnected: false,
 };
 
 function sessionReducer(state: SessionState, action: SessionAction): SessionState {
@@ -62,6 +64,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         phase: 'active',
         sessionId: action.session.sessionId,
         claim: action.session.claim ?? null,
+        reconnected: true,
       };
     case 'PROGRESS_EVENT':
       return { ...state, events: [...state.events, action.event] };

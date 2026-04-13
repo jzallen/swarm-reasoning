@@ -74,6 +74,14 @@ describe('ChatInterface', () => {
     expect(screen.getByText('Connecting to agents...')).toBeInTheDocument();
   });
 
+  it('shows reconnected notice instead of connecting when reconnected', () => {
+    render(
+      <ChatInterface {...defaultProps} phase="active" claim="Some claim" events={[]} reconnected />,
+    );
+    expect(screen.getByText('Reconnected — earlier messages not shown')).toBeInTheDocument();
+    expect(screen.queryByText('Connecting to agents...')).not.toBeInTheDocument();
+  });
+
   it('does not show connecting message when events exist', () => {
     render(
       <ChatInterface
