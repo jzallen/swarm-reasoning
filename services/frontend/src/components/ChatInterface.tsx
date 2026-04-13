@@ -35,9 +35,9 @@ export function ChatInterface({ phase, claim, events, reconnected, onSubmit }: C
 
   return (
     <div className={styles.container}>
-      <div className={styles.messages}>
+      <div className={styles.messages} role="log" aria-live="polite">
         {claim && (
-          <div className={styles.userBubble}>
+          <div className={styles.userBubble} aria-label="Your claim">
             <p className={styles.userText}>{claim}</p>
           </div>
         )}

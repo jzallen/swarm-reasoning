@@ -34,7 +34,8 @@ type SessionAction =
   | { type: "PROGRESS_EVENT"; event: ProgressEvent }
   | { type: "VERDICT_RECEIVED"; verdict: Verdict }
   | { type: "SESSION_FROZEN"; snapshotUrl?: string | null }
-  | { type: "ERROR"; message: string };
+  | { type: "ERROR"; message: string }
+  | { type: "RESET" };
 
 const initialState: SessionState = {
   phase: "idle",
@@ -98,6 +99,9 @@ function sessionReducer(
       };
     case "ERROR":
       return { ...state, phase: "error", error: action.message };
+    case "RESET":
+      window.history.pushState(null, "", "/");
+      return initialState;
   }
 }
 

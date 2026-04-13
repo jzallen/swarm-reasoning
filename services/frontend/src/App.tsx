@@ -25,7 +25,11 @@ export default function App() {
 
       <main className={styles.main}>
         {state.phase === 'error' && state.error && (
-          <ErrorBanner message={state.error} />
+          <ErrorBanner
+            message={state.error}
+            onDismiss={() => dispatch({ type: 'RESET' })}
+            onRetry={() => dispatch({ type: 'RESET' })}
+          />
         )}
 
         {state.phase === 'expired' && (
