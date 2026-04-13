@@ -51,7 +51,7 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
 
   async readObservations(runId: string): Promise<Record<string, unknown>[]> {
     const pattern = `reasoning:${runId}:*`;
-    const keys = await this.redis.keys(pattern);
+    const keys = await this.scanKeys(pattern);
     const observations: Record<string, unknown>[] = [];
 
     for (const key of keys) {
@@ -245,7 +245,7 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
 
       // Delete all reasoning streams
       const pattern = `reasoning:${runId}:*`;
-      const keys = await this.redis.keys(pattern);
+      const keys = await this.scanKeys(pattern);
       if (keys.length > 0) {
         await this.redis.del(...keys);
       }
@@ -254,6 +254,18 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
     } catch (error) {
       this.logger.warn(`Failed to delete streams for ${runId}: ${error}`);
     }
+  }
+
+  private scanKeys(pattern: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const keys: string[] = [];
+      const stream = this.redis.scanStream({ match: pattern, count: 100 });
+      stream.on('data', (batch: string[]) => {
+        keys.push(...batch);
+      });
+      stream.on('end', () => resolve(keys));
+      stream.on('error', reject);
+    });
   }
 
   private parseFields(fields: string[]): Record<string, string> {
