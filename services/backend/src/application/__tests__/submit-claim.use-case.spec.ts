@@ -30,6 +30,7 @@ describe('SubmitClaimUseCase', () => {
     temporalClient: {
       startClaimVerificationWorkflow: jest.fn().mockResolvedValue(undefined),
       getWorkflowStatus: jest.fn(),
+      cancelWorkflow: jest.fn().mockResolvedValue(undefined),
     },
   });
 

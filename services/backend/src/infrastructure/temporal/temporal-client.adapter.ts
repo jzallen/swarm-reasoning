@@ -1,11 +1,28 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  Connection,
+  WorkflowClient,
+  WorkflowNotFoundError,
+} from '@temporalio/client';
 import { TemporalClientPort } from '../../application/interfaces';
 
+const TASK_QUEUE = 'claim-verification';
+const WORKFLOW_TYPE = 'ClaimVerificationWorkflow';
+
 @Injectable()
-export class TemporalClientAdapter implements TemporalClientPort {
+export class TemporalClientAdapter
+  implements TemporalClientPort, OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger(TemporalClientAdapter.name);
   private readonly temporalAddress: string;
+  private connection!: Connection;
+  private client!: WorkflowClient;
 
   constructor(private readonly configService: ConfigService) {
     this.temporalAddress = this.configService.get<string>(
@@ -14,32 +31,52 @@ export class TemporalClientAdapter implements TemporalClientPort {
     );
   }
 
+  async onModuleInit(): Promise<void> {
+    this.connection = await Connection.connect({
+      address: this.temporalAddress,
+    });
+    this.client = new WorkflowClient({ connection: this.connection });
+    this.logger.log(`Connected to Temporal at ${this.temporalAddress}`);
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.connection?.close();
+    this.logger.log('Temporal connection closed');
+  }
+
   async startClaimVerificationWorkflow(
     runId: string,
     sessionId: string,
     claimText: string,
   ): Promise<void> {
-    // The actual Temporal client connection is implemented in the
-    // temporal-workflow-integration slice. This adapter provides the
-    // interface contract and logs the workflow start intent.
+    await this.client.start(WORKFLOW_TYPE, {
+      workflowId: `claim-verification-${runId}`,
+      taskQueue: TASK_QUEUE,
+      args: [{ runId, sessionId, claimText }],
+    });
     this.logger.log(
-      `Starting claim verification workflow: runId=${runId}, sessionId=${sessionId}, claim="${claimText.substring(0, 50)}..."`,
+      `Started workflow claim-verification-${runId} for session ${sessionId}`,
     );
-    this.logger.log(`Temporal address: ${this.temporalAddress}`);
   }
 
   async getWorkflowStatus(runId: string): Promise<string> {
-    this.logger.log(`Checking workflow status: runId=${runId}`);
-    return 'RUNNING';
+    try {
+      const handle = this.client.getHandle(`claim-verification-${runId}`);
+      const description = await handle.describe();
+      return description.status.name;
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) {
+        return 'NOT_FOUND';
+      }
+      throw error;
+    }
   }
 
   async cancelWorkflow(runId: string, reason?: string): Promise<void> {
-    // Sends a cancellation signal to the running Temporal workflow.
-    // The actual Temporal client sends the signal via WorkflowHandle.signal().
-    const cancelReason = reason ?? 'User requested cancellation';
+    const handle = this.client.getHandle(`claim-verification-${runId}`);
+    await handle.cancel();
     this.logger.log(
-      `Sending cancellation signal to workflow: runId=${runId}, reason="${cancelReason}"`,
+      `Cancelled workflow claim-verification-${runId}: ${reason ?? 'User requested cancellation'}`,
     );
-    this.logger.log(`Temporal address: ${this.temporalAddress}`);
   }
 }
