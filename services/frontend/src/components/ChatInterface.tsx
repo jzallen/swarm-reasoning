@@ -20,12 +20,16 @@ export function ChatInterface({ phase, claim, events, onSubmit }: ChatInterfaceP
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [events.length, claim]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitClaim = () => {
     const text = input.trim();
     if (!text || isSubmitting) return;
     onSubmit(text);
     setInput('');
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitClaim();
   };
 
   return (
@@ -61,7 +65,7 @@ export function ChatInterface({ phase, claim, events, onSubmit }: ChatInterfaceP
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              handleSubmit(e);
+              submitClaim();
             }
           }}
         />
