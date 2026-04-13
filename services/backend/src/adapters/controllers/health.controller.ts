@@ -1,16 +1,16 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import Redis from 'ioredis';
 import { ConfigService } from '@nestjs/config';
+import type { StreamReader } from '../../application/interfaces/stream-reader.interface.js';
+import { STREAM_READER } from '../../application/interfaces/stream-reader.interface.js';
 
 @Controller('health')
 export class HealthController {
-  private redis: Redis | null = null;
-
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
+    @Inject(STREAM_READER) private readonly streamReader: StreamReader,
     private readonly configService: ConfigService,
   ) {}
 
@@ -32,17 +32,7 @@ export class HealthController {
 
     // Check Redis
     try {
-      if (!this.redis) {
-        const redisUrl = this.configService.get<string>(
-          'REDIS_URL',
-          'redis://localhost:6379',
-        );
-        this.redis = new Redis(redisUrl, {
-          lazyConnect: true,
-          connectTimeout: 3000,
-        });
-      }
-      await this.redis.ping();
+      await this.streamReader.ping();
       services.redis = 'reachable';
     } catch {
       // unreachable
@@ -65,7 +55,7 @@ export class HealthController {
       httpStatus = 200;
     } else if (reachableCount > 0) {
       status = 'degraded';
-      httpStatus = 200;
+      httpStatus = 503;
     } else {
       status = 'unhealthy';
       httpStatus = 503;

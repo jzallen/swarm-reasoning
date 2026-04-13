@@ -29,6 +29,10 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
     await this.redis.quit();
   }
 
+  async ping(): Promise<void> {
+    await this.redis.ping();
+  }
+
   async *readProgress(
     runId: string,
     lastEventId?: string,
