@@ -35,6 +35,7 @@ import { ClaimController } from '../src/adapters/controllers/claim.controller';
 import { VerdictController } from '../src/adapters/controllers/verdict.controller';
 import { HealthController } from '../src/adapters/controllers/health.controller';
 import { VerdictPresenter } from '../src/adapters/presenters/verdict.presenter';
+import { SessionPresenter } from '../src/adapters/presenters/session.presenter';
 import { GlobalExceptionFilter } from '../src/adapters/filters/http-exception.filter';
 
 // ---------------------------------------------------------------------------
@@ -269,6 +270,7 @@ describe('Backend API (e2e)', () => {
         SubmitClaimUseCase,
         GetVerdictUseCase,
         VerdictPresenter,
+        SessionPresenter,
       ],
     }).compile();
 
