@@ -1,4 +1,7 @@
-import { NotFoundException } from '@nestjs/common';
+import {
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { SubmitClaimUseCase } from '../use-cases/submit-claim.use-case';
 import { Run, Session } from '../../domain/entities';
 import { RunStatus, SessionStatus } from '../../domain/enums';
@@ -59,6 +62,29 @@ describe('SubmitClaimUseCase', () => {
     await expect(
       useCase.execute('missing', { claimText: 'Test' }),
     ).rejects.toThrow(NotFoundException);
+  });
+
+  it('should throw UnprocessableEntityException for frozen session', async () => {
+    const frozenSession = new Session({
+      sessionId: 'frozen-id',
+      status: SessionStatus.Frozen,
+      createdAt: new Date(),
+    });
+    const mocks = createMocks(frozenSession);
+    const useCase = new SubmitClaimUseCase(
+      mocks.sessionRepo,
+      mocks.runRepo,
+      mocks.temporalClient,
+    );
+
+    await expect(
+      useCase.execute('frozen-id', { claimText: 'Test' }),
+    ).rejects.toThrow(UnprocessableEntityException);
+
+    expect(mocks.runRepo.save).not.toHaveBeenCalled();
+    expect(
+      mocks.temporalClient.startClaimVerificationWorkflow,
+    ).not.toHaveBeenCalled();
   });
 
   it('should transition run to Failed when Temporal workflow start fails', async () => {
