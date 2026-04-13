@@ -26,6 +26,7 @@ function makeMocks() {
     readObservations: jest.fn(),
     readAllProgressEvents: jest.fn().mockResolvedValue([]),
     deleteStreams: jest.fn().mockResolvedValue(undefined),
+    ping: jest.fn().mockResolvedValue(undefined),
   };
 
   return { mockSessionRepo, mockSnapshotStore, mockRunRepo, mockStreamReader };

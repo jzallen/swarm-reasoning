@@ -47,6 +47,7 @@ describe('StreamProgressUseCase', () => {
   const mockStreamReader = {
     readProgress: jest.fn(() => fakeStream()),
     readObservations: jest.fn(),
+    ping: jest.fn().mockResolvedValue(undefined),
   };
 
   let useCase: StreamProgressUseCase;
