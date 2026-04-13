@@ -42,7 +42,7 @@
 - [x] 6.1 Extract `Last-Event-ID` header from SSE request; pass to `StreamProgressUseCase.execute()`
 - [x] 6.2 Implement server-side idle timeout: complete Observable after 5 minutes of no events
 - [x] 6.3 On `session-frozen` event: emit `close` SSE event, then complete Observable
-- [ ] 6.4 On client disconnect: detect via NestJS request abort signal, clean up Redis consumer
+- [x] 6.4 On client disconnect: detect via NestJS request abort signal, clean up Redis consumer
 - [x] 6.5 On server shutdown: complete all active SSE Observables gracefully
 
 ## 7. Error Handling

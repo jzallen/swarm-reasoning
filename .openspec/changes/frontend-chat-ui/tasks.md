@@ -84,10 +84,10 @@
 
 ## 13. Unit Tests
 
-- [ ] 13.1 Test API client: mock fetch, verify URL construction, error handling
-- [ ] 13.2 Test `useSession` hook: verify full lifecycle state transitions
+- [x] 13.1 Test API client: mock fetch, verify URL construction, error handling
+- [x] 13.2 Test `useSession` hook: verify full lifecycle state transitions
 - [ ] 13.3 Test `useSSE` hook: mock EventSource, verify event parsing and dispatch
-- [ ] 13.4 Test `ProgressBubble`, `VerdictDisplay`, `CitationTable` rendering and data mapping
+- [x] 13.4 Test `ProgressBubble`, `VerdictDisplay`, `CitationTable` rendering and data mapping
 
 ## 14. Integration Tests
 
