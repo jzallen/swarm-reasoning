@@ -79,6 +79,7 @@ services:
       - DATABASE_URL=postgresql://swarm:swarm@postgresql:5432/swarm
       - REDIS_URL=redis://redis:6379
       - TEMPORAL_ADDRESS=temporal:7233
+      - CORS_ORIGIN=http://localhost:5173
     depends_on:
       postgresql:
         condition: service_healthy

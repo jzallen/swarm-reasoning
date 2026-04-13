@@ -16,7 +16,14 @@ async function bootstrap() {
 
   app.useGlobalFilters(new GlobalExceptionFilter());
 
-  app.enableCors();
+  const corsOrigin = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+    : ['http://localhost:5173'];
+  app.enableCors({
+    origin: corsOrigin,
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'Last-Event-ID'],
+  });
 
   await app.listen(process.env.PORT ?? 3000);
 }
