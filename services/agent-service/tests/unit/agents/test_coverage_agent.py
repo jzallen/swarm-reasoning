@@ -191,7 +191,8 @@ class TestCoverageArticlesFound:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
-            patch("swarm_reasoning.agents.coverage_core.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage_core_tools.httpx.AsyncClient") as mock_client_cls,
+            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
             patch(
                 "swarm_reasoning.agents.coverage_core.load_sources",
                 return_value=[
@@ -207,7 +208,6 @@ class TestCoverageArticlesFound:
             mock_client_cls.return_value = mock_client
 
             handler = CoverageLeftHandler()
-            handler._api_key = "test-key"
             handler._sources = [
                 {"id": "msnbc", "name": "MSNBC", "credibility_rank": 60},
                 {"id": "huffington-post", "name": "HuffPost", "credibility_rank": 65},
@@ -253,7 +253,8 @@ class TestCoverageNoArticles:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
-            patch("swarm_reasoning.agents.coverage_core.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage_core_tools.httpx.AsyncClient") as mock_client_cls,
+            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -262,7 +263,6 @@ class TestCoverageNoArticles:
             mock_client_cls.return_value = mock_client
 
             handler = CoverageLeftHandler()
-            handler._api_key = "test-key"
             handler._sources = [{"id": "msnbc", "name": "MSNBC", "credibility_rank": 60}]
             result = await handler.run(_make_input())
 
@@ -307,9 +307,9 @@ class TestCoverageApiError:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
+            patch.dict("os.environ", {}, clear=True),
         ):
             handler = CoverageLeftHandler()
-            handler._api_key = ""
             handler._sources = [{"id": "msnbc", "name": "MSNBC", "credibility_rank": 60}]
             await handler.run(_make_input())
 

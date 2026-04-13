@@ -6,19 +6,16 @@ VADER-style lexicon scoring), and top-source selection by credibility rank.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import os
 import re
 from pathlib import Path
 
-import httpx
 import redis.asyncio as aioredis
-from temporalio.exceptions import ApplicationError
 
 from swarm_reasoning.agents._utils import STOP_WORDS
 from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
+from swarm_reasoning.agents.tool_runtime import AgentContext
 from swarm_reasoning.config import RedisConfig
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.stream.base import ReasoningStream
@@ -300,6 +297,10 @@ def load_sources(sources_path: Path) -> list[dict]:
 class CoverageHandler(FanoutBase):
     """Shared implementation for coverage-left, coverage-center, coverage-right.
 
+    Delegates to the search_coverage, detect_coverage_framing, and
+    find_top_coverage_source @tool definitions for observation publishing
+    via AgentContext.
+
     Subclassed per-spectrum to set AGENT_NAME, spectrum label, and sources path.
     """
 
@@ -308,7 +309,6 @@ class CoverageHandler(FanoutBase):
 
     def __init__(self, redis_config: RedisConfig | None = None) -> None:
         super().__init__(redis_config)
-        self._api_key = os.environ.get("NEWSAPI_KEY", "")
         self._sources: list[dict] | None = None
 
     def _get_sources(self) -> list[dict]:
@@ -338,11 +338,14 @@ class CoverageHandler(FanoutBase):
         sk: str,
         context: ClaimContext,
     ) -> None:
-        # Check API key
-        if not self._api_key:
-            logger.warning("NEWSAPI_KEY not configured")
-            await self._publish_api_error(stream, sk, run_id, "API key not configured")
-            return
+        # Create AgentContext for @tool observation publishing
+        agent_ctx = AgentContext(
+            stream=stream,
+            redis_client=redis_client,
+            run_id=run_id,
+            sk=sk,
+            agent_name=self.AGENT_NAME,
+        )
 
         query = build_search_query(context)
         sources = self._get_sources()
@@ -352,135 +355,55 @@ class CoverageHandler(FanoutBase):
             redis_client, run_id, f"Searching {self.SPECTRUM} media sources..."
         )
 
-        # Call NewsAPI
-        try:
-            articles = await self._call_newsapi(query, source_ids)
-        except Exception as exc:
-            logger.warning("NewsAPI error for %s: %s", self.AGENT_NAME, exc)
-            await self._publish_api_error(stream, sk, run_id, f"API error: {exc}")
+        # Lazy import to avoid circular dependency with coverage_core_tools
+        from swarm_reasoning.agents.coverage_core_tools import (
+            detect_coverage_framing,
+            find_top_coverage_source,
+            search_coverage,
+        )
+
+        # Step 1: Search NewsAPI via @tool (publishes COVERAGE_ARTICLE_COUNT)
+        search_json = await search_coverage.ainvoke(
+            {"query": query, "source_ids": source_ids, "context": agent_ctx}
+        )
+        search_data = json.loads(search_json)
+        articles = search_data["articles"]
+        article_count = search_data["article_count"]
+
+        # If search had an error, observations are already published with X status
+        if search_data.get("error"):
+            logger.warning("NewsAPI error for %s: %s", self.AGENT_NAME, search_data["error"])
+            self._seq = agent_ctx.seq_counter
             return
 
-        article_count = len(articles)
         await self._publish_progress(
             redis_client,
             run_id,
             f"Found {article_count} articles from {self.SPECTRUM} sources",
         )
 
-        # 1. COVERAGE_ARTICLE_COUNT
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.COVERAGE_ARTICLE_COUNT,
-            value=str(article_count),
-            value_type=ValueType.NM,
-            method="search_newsapi",
-            units="count",
-        )
-
         if article_count == 0:
-            # 2. COVERAGE_FRAMING (ABSENT)
-            await self._publish_obs(
-                stream,
-                sk,
-                run_id,
-                code=ObservationCode.COVERAGE_FRAMING,
-                value="ABSENT^Not Covered^FCK",
-                value_type=ValueType.CWE,
-                method="detect_framing",
+            # Publish ABSENT framing via @tool
+            await detect_coverage_framing.ainvoke(
+                {"headlines_json": "[]", "context": agent_ctx}
             )
+            self._seq = agent_ctx.seq_counter
             return
 
-        # Detect framing from top 5 headlines
+        # Step 2: Detect framing via @tool (publishes COVERAGE_FRAMING)
         headlines = [a.get("title", "") for a in articles[:5]]
-        compound = compute_compound_sentiment(headlines)
-        framing = classify_framing(compound)
-
-        # 2. COVERAGE_FRAMING
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.COVERAGE_FRAMING,
-            value=framing,
-            value_type=ValueType.CWE,
-            method="detect_framing",
+        await detect_coverage_framing.ainvoke(
+            {"headlines_json": json.dumps(headlines), "context": agent_ctx}
         )
 
-        # Top source by credibility rank
-        top = select_top_source(articles, sources)
-        if top:
-            name, url = top
-            # 3. COVERAGE_TOP_SOURCE
-            await self._publish_obs(
-                stream,
-                sk,
-                run_id,
-                code=ObservationCode.COVERAGE_TOP_SOURCE,
-                value=name,
-                value_type=ValueType.ST,
-                method="select_top_source",
-            )
-            # 4. COVERAGE_TOP_SOURCE_URL
-            await self._publish_obs(
-                stream,
-                sk,
-                run_id,
-                code=ObservationCode.COVERAGE_TOP_SOURCE_URL,
-                value=url,
-                value_type=ValueType.ST,
-                method="select_top_source",
-            )
-
-    async def _call_newsapi(self, query: str, sources: str) -> list[dict]:
-        """Query NewsAPI /v2/everything. Retries once on 429."""
-        params = {
-            "q": query,
-            "sources": sources,
-            "sortBy": "relevancy",
-            "pageSize": "10",
-            "language": "en",
-            "apiKey": self._api_key,
-        }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(NEWSAPI_URL, params=params)
-
-            if resp.status_code == 429:
-                await asyncio.sleep(1)
-                resp = await client.get(NEWSAPI_URL, params=params)
-
-            if resp.status_code >= 400:
-                raise ApplicationError(
-                    f"HTTP {resp.status_code}", non_retryable=True,
-                )
-
-            data = resp.json()
-            return data.get("articles", [])
-
-    async def _publish_api_error(
-        self, stream: ReasoningStream, sk: str, run_id: str, error: str
-    ) -> None:
-        """Publish X-status observations for API failure."""
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.COVERAGE_ARTICLE_COUNT,
-            value="0",
-            value_type=ValueType.NM,
-            status="X",
-            method="search_newsapi",
-            note=error,
-            units="count",
+        # Step 3: Find top source via @tool (publishes COVERAGE_TOP_SOURCE + URL)
+        await find_top_coverage_source.ainvoke(
+            {
+                "articles_json": json.dumps(articles),
+                "sources_json": json.dumps(sources),
+                "context": agent_ctx,
+            }
         )
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.COVERAGE_FRAMING,
-            value="ABSENT^Not Covered^FCK",
-            value_type=ValueType.CWE,
-            status="X",
-            method="detect_framing",
-        )
+
+        # Sync observation count back to FanoutBase for STOP message
+        self._seq = agent_ctx.seq_counter
