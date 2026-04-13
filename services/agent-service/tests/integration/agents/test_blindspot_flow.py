@@ -1,4 +1,4 @@
-"""Integration tests for blindspot-detector agent full flow."""
+"""Integration tests for blindspot-detector agent full flow (LangGraphBase)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import pytest
 from swarm_reasoning.agents.blindspot_detector.handler import (
     BlindspotDetectorHandler,
 )
+from swarm_reasoning.agents.langgraph_base import LangGraphBase
+from swarm_reasoning.agents.tool_runtime import AgentContext
 from swarm_reasoning.models.observation import ObservationCode
 from swarm_reasoning.models.stream import ObsMessage, StopMessage
 
@@ -79,16 +81,60 @@ def _obs_by_code(observations: list[ObsMessage], code: ObservationCode) -> list[
     return [o for o in observations if o.observation.code == code]
 
 
-class TestBlindspotDetectorFullFlow:
+class TestBlindspotDetectorStructure:
+    """Verify the handler extends LangGraphBase correctly."""
+
+    def test_extends_langgraph_base(self):
+        assert issubclass(BlindspotDetectorHandler, LangGraphBase)
+
+    def test_agent_name(self):
+        handler = BlindspotDetectorHandler()
+        assert handler.AGENT_NAME == "blindspot-detector"
+
+    def test_tools_includes_analyze_blindspots(self):
+        handler = BlindspotDetectorHandler()
+        tools = handler._tools()
+        tool_names = [t.name for t in tools]
+        assert "analyze_blindspots" in tool_names
+
+    def test_tools_includes_publish_progress(self):
+        handler = BlindspotDetectorHandler()
+        tools = handler._tools()
+        tool_names = [t.name for t in tools]
+        assert "publish_progress" in tool_names
+
+    def test_primary_code(self):
+        handler = BlindspotDetectorHandler()
+        assert handler._primary_code() == _SCORE
+
+    def test_system_prompt_mentions_blindspots(self):
+        handler = BlindspotDetectorHandler()
+        prompt = handler._system_prompt()
+        assert "blindspot" in prompt.lower()
+        assert "analyze_blindspots" in prompt
+
+
+class TestBlindspotDetectorExecution:
+    """Verify the handler passes coverage data to the LangGraph agent."""
+
     @pytest.mark.asyncio
-    async def test_full_data_produces_3_observations_and_stop_f(self):
-        """Full coverage data -> 3 F-status obs + STOP finalStatus=F."""
+    async def test_passes_coverage_data_as_message(self):
+        """Verifies cross_agent_data is formatted into the HumanMessage."""
         cross_data = _full_coverage_data(right_count=0, right_framing="ABSENT")
         stream_mock = _make_stream_mock()
         redis_mock = AsyncMock()
         redis_mock.xadd = AsyncMock()
         redis_mock.aclose = AsyncMock()
 
+        captured_inputs = {}
+
+        async def fake_ainvoke(inputs, config=None):
+            captured_inputs.update(inputs)
+            return {"messages": []}
+
+        mock_graph = MagicMock()
+        mock_graph.ainvoke = AsyncMock(side_effect=fake_ainvoke)
+
         with (
             patch(
                 "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
@@ -99,32 +145,119 @@ class TestBlindspotDetectorFullFlow:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
+            patch("swarm_reasoning.agents.blindspot_detector.handler.ChatAnthropic"),
+            patch(
+                "langgraph.prebuilt.create_react_agent",
+                return_value=mock_graph,
+            ),
+        ):
+            handler = BlindspotDetectorHandler()
+            await handler.run(_make_input(cross_data))
+
+        msgs = captured_inputs.get("messages", [])
+        assert len(msgs) == 1
+        assert "coverage" in msgs[0].content
+        assert "ABSENT" in msgs[0].content
+
+    @pytest.mark.asyncio
+    async def test_creates_react_agent_with_tools(self):
+        """Verifies analyze_blindspots is passed to create_react_agent."""
+        cross_data = _full_coverage_data()
+        stream_mock = _make_stream_mock()
+        redis_mock = AsyncMock()
+        redis_mock.xadd = AsyncMock()
+        redis_mock.aclose = AsyncMock()
+
+        mock_graph = MagicMock()
+        mock_graph.ainvoke = AsyncMock(return_value={"messages": []})
+
+        captured_kwargs = {}
+
+        def fake_create(*, model, tools, prompt, context_schema):
+            captured_kwargs["tools"] = tools
+            captured_kwargs["context_schema"] = context_schema
+            return mock_graph
+
+        with (
+            patch(
+                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
+                return_value=stream_mock,
+            ),
+            patch(
+                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
+                return_value=redis_mock,
+            ),
+            patch("swarm_reasoning.agents.fanout_base.activity"),
+            patch("swarm_reasoning.agents.blindspot_detector.handler.ChatAnthropic"),
+            patch(
+                "langgraph.prebuilt.create_react_agent",
+                side_effect=fake_create,
+            ),
+        ):
+            handler = BlindspotDetectorHandler()
+            await handler.run(_make_input(cross_data))
+
+        assert captured_kwargs["context_schema"] is AgentContext
+        tool_names = [t.name for t in captured_kwargs["tools"]]
+        assert "analyze_blindspots" in tool_names
+        assert "publish_progress" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_syncs_observation_count(self):
+        """Verifies AgentContext.seq_counter syncs to FanoutBase._seq."""
+        cross_data = _full_coverage_data()
+        stream_mock = _make_stream_mock()
+        redis_mock = AsyncMock()
+        redis_mock.xadd = AsyncMock()
+        redis_mock.aclose = AsyncMock()
+
+        async def fake_ainvoke(inputs, config=None):
+            ctx = config["context"]
+            # Simulate analyze_blindspots publishing 3 observations
+            for _ in range(3):
+                ctx.next_seq()
+            return {"messages": []}
+
+        mock_graph = MagicMock()
+        mock_graph.ainvoke = AsyncMock(side_effect=fake_ainvoke)
+
+        with (
+            patch(
+                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
+                return_value=stream_mock,
+            ),
+            patch(
+                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
+                return_value=redis_mock,
+            ),
+            patch("swarm_reasoning.agents.fanout_base.activity"),
+            patch("swarm_reasoning.agents.blindspot_detector.handler.ChatAnthropic"),
+            patch(
+                "langgraph.prebuilt.create_react_agent",
+                return_value=mock_graph,
+            ),
         ):
             handler = BlindspotDetectorHandler()
             result = await handler.run(_make_input(cross_data))
 
-        assert result.terminal_status == "F"
         assert result.observation_count == 3
 
-        observations = _collect_obs(stream_mock)
-        assert len(observations) == 3
-
-        codes = [obs.observation.code for obs in observations]
-        assert _SCORE in codes
-        assert _DIR in codes
-        assert _CORR in codes
-
-        # All status F
-        for obs in observations:
-            assert obs.observation.status == "F"
-
     @pytest.mark.asyncio
-    async def test_empty_data_graceful_degradation(self):
-        """Empty input -> score=1.0, direction=MULTIPLE, corr=FALSE, STOP F."""
+    async def test_empty_cross_agent_data_handled(self):
+        """Verifies handler handles None cross_agent_data gracefully."""
         stream_mock = _make_stream_mock()
         redis_mock = AsyncMock()
         redis_mock.xadd = AsyncMock()
         redis_mock.aclose = AsyncMock()
+
+        captured_inputs = {}
+
+        async def fake_ainvoke(inputs, config=None):
+            captured_inputs.update(inputs)
+            return {"messages": []}
+
+        mock_graph = MagicMock()
+        mock_graph.ainvoke = AsyncMock(side_effect=fake_ainvoke)
 
         with (
             patch(
@@ -136,244 +269,16 @@ class TestBlindspotDetectorFullFlow:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
+            patch("swarm_reasoning.agents.blindspot_detector.handler.ChatAnthropic"),
+            patch(
+                "langgraph.prebuilt.create_react_agent",
+                return_value=mock_graph,
+            ),
         ):
             handler = BlindspotDetectorHandler()
-            result = await handler.run(_make_input({}))
+            await handler.run(_make_input(None))
 
-        assert result.terminal_status == "F"
-        assert result.observation_count == 3
-
-        observations = _collect_obs(stream_mock)
-
-        score_obs = _obs_by_code(observations, _SCORE)
-        assert len(score_obs) == 1
-        assert score_obs[0].observation.value == "1.0"
-
-        dir_obs = _obs_by_code(observations, _DIR)
-        assert len(dir_obs) == 1
-        assert dir_obs[0].observation.value == "MULTIPLE^Multiple Absent^FCK"
-
-        corr_obs = _obs_by_code(observations, _CORR)
-        assert len(corr_obs) == 1
-        assert corr_obs[0].observation.value == "FALSE^Not Corroborated^FCK"
-
-        # STOP with F
-        stop_msgs = [
-            call[0][1]
-            for call in stream_mock.publish.call_args_list
-            if isinstance(call[0][1], StopMessage)
-        ]
-        assert len(stop_msgs) == 1
-        assert stop_msgs[0].final_status == "F"
-
-    @pytest.mark.asyncio
-    async def test_all_present_no_conflict_corroborated(self):
-        """All present + no conflict -> score=0.0, corr=TRUE."""
-        cross_data = _full_coverage_data(
-            left_count=5,
-            left_framing="SUPPORTIVE",
-            center_count=3,
-            center_framing="NEUTRAL",
-            right_count=7,
-            right_framing="NEUTRAL",
-        )
-        stream_mock = _make_stream_mock()
-        redis_mock = AsyncMock()
-        redis_mock.xadd = AsyncMock()
-        redis_mock.aclose = AsyncMock()
-
-        with (
-            patch(
-                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.fanout_base.activity"),
-        ):
-            handler = BlindspotDetectorHandler()
-            await handler.run(_make_input(cross_data))
-
-        observations = _collect_obs(stream_mock)
-
-        score_obs = _obs_by_code(observations, _SCORE)
-        assert score_obs[0].observation.value == "0.0"
-
-        corr_obs = _obs_by_code(observations, _CORR)
-        assert corr_obs[0].observation.value == "TRUE^Corroborated^FCK"
-
-    @pytest.mark.asyncio
-    async def test_conflicting_framing_not_corroborated(self):
-        """SUPPORTIVE vs CRITICAL -> corr=FALSE even with all present."""
-        cross_data = _full_coverage_data(
-            left_count=5,
-            left_framing="SUPPORTIVE",
-            center_count=3,
-            center_framing="NEUTRAL",
-            right_count=7,
-            right_framing="CRITICAL",
-        )
-        stream_mock = _make_stream_mock()
-        redis_mock = AsyncMock()
-        redis_mock.xadd = AsyncMock()
-        redis_mock.aclose = AsyncMock()
-
-        with (
-            patch(
-                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.fanout_base.activity"),
-        ):
-            handler = BlindspotDetectorHandler()
-            await handler.run(_make_input(cross_data))
-
-        observations = _collect_obs(stream_mock)
-        corr_obs = _obs_by_code(observations, _CORR)
-        assert corr_obs[0].observation.value == "FALSE^Not Corroborated^FCK"
-
-    @pytest.mark.asyncio
-    async def test_observation_ordering_seq_1_2_3(self):
-        """Observations have sequential seq numbers 1, 2, 3."""
-        cross_data = _full_coverage_data(
-            right_count=0,
-            right_framing="ABSENT",
-        )
-        stream_mock = _make_stream_mock()
-        redis_mock = AsyncMock()
-        redis_mock.xadd = AsyncMock()
-        redis_mock.aclose = AsyncMock()
-
-        with (
-            patch(
-                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.fanout_base.activity"),
-        ):
-            handler = BlindspotDetectorHandler()
-            await handler.run(_make_input(cross_data))
-
-        observations = _collect_obs(stream_mock)
-        seq_numbers = [obs.observation.seq for obs in observations]
-        assert seq_numbers == [1, 2, 3]
-
-    @pytest.mark.asyncio
-    async def test_progress_events_published(self):
-        """Progress events published to progress:{runId}."""
-        cross_data = _full_coverage_data(
-            right_count=0,
-            right_framing="ABSENT",
-        )
-        stream_mock = _make_stream_mock()
-        redis_mock = AsyncMock()
-        redis_mock.xadd = AsyncMock()
-        redis_mock.aclose = AsyncMock()
-
-        with (
-            patch(
-                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.fanout_base.activity"),
-        ):
-            handler = BlindspotDetectorHandler()
-            await handler.run(_make_input(cross_data))
-
-        progress_messages = []
-        for call in redis_mock.xadd.call_args_list:
-            key = call[0][0]
-            if key.startswith("progress:"):
-                progress_messages.append(call[0][1]["message"])
-
-        assert any("blindspot" in m.lower() for m in progress_messages)
-        assert any("Blindspot score" in m for m in progress_messages)
-        assert any("corroboration" in m.lower() for m in progress_messages)
-
-    @pytest.mark.asyncio
-    async def test_convergence_high_adds_note(self):
-        """Convergence 0.8 + all present -> corroboration note."""
-        cross_data = _full_coverage_data(
-            left_count=5,
-            left_framing="SUPPORTIVE",
-            center_count=3,
-            center_framing="SUPPORTIVE",
-            right_count=7,
-            right_framing="NEUTRAL",
-            convergence=0.8,
-        )
-        stream_mock = _make_stream_mock()
-        redis_mock = AsyncMock()
-        redis_mock.xadd = AsyncMock()
-        redis_mock.aclose = AsyncMock()
-
-        with (
-            patch(
-                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.fanout_base.activity"),
-        ):
-            handler = BlindspotDetectorHandler()
-            await handler.run(_make_input(cross_data))
-
-        observations = _collect_obs(stream_mock)
-        corr_obs = _obs_by_code(observations, _CORR)
-        assert corr_obs[0].observation.value == "TRUE^Corroborated^FCK"
-        assert corr_obs[0].observation.note is not None
-        assert "convergence" in corr_obs[0].observation.note.lower()
-        assert "0.80" in corr_obs[0].observation.note
-
-    @pytest.mark.asyncio
-    async def test_convergence_absent_no_note(self):
-        """Convergence absent -> no convergence note."""
-        cross_data = _full_coverage_data(
-            left_count=5,
-            left_framing="SUPPORTIVE",
-            center_count=3,
-            center_framing="SUPPORTIVE",
-            right_count=7,
-            right_framing="NEUTRAL",
-            convergence=None,
-        )
-        stream_mock = _make_stream_mock()
-        redis_mock = AsyncMock()
-        redis_mock.xadd = AsyncMock()
-        redis_mock.aclose = AsyncMock()
-
-        with (
-            patch(
-                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.fanout_base.activity"),
-        ):
-            handler = BlindspotDetectorHandler()
-            await handler.run(_make_input(cross_data))
-
-        observations = _collect_obs(stream_mock)
-        corr_obs = _obs_by_code(observations, _CORR)
-        assert corr_obs[0].observation.value == "TRUE^Corroborated^FCK"
-        assert corr_obs[0].observation.note is None
+        msgs = captured_inputs.get("messages", [])
+        assert len(msgs) == 1
+        # Empty dict should be serialized as "{}"
+        assert "{}" in msgs[0].content
