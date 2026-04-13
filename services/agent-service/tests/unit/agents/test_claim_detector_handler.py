@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from anthropic import AsyncAnthropic
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput
 from swarm_reasoning.agents._utils import StreamNotFoundError
@@ -74,7 +75,7 @@ def _build_handler_mocks(
     redis_mock.xadd = AsyncMock()
     redis_mock.aclose = AsyncMock()
 
-    anthropic_mock = AsyncMock()
+    anthropic_mock = AsyncMock(spec=AsyncAnthropic)
     resp = _mock_claude_response(claude_score)
     anthropic_mock.messages.create = AsyncMock(return_value=resp)
 

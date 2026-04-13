@@ -22,6 +22,7 @@ from swarm_reasoning.temporal.errors import MissingApiKeyError
 async def score_check_worthiness(
     normalized_text: str,
     context: Annotated[AgentContext, InjectedToolArg] = None,  # type: ignore[assignment]
+    anthropic_client: Annotated[AsyncAnthropic, InjectedToolArg] = None,  # type: ignore[assignment]
 ) -> str:
     """Score how check-worthy a normalized claim is using a two-pass LLM protocol.
 
@@ -36,14 +37,17 @@ async def score_check_worthiness(
     Args:
         normalized_text: The normalized claim text to score.
         context: Injected AgentContext — not exposed to the LLM.
+        anthropic_client: Injected Anthropic client — not exposed to the LLM.
 
     Returns:
         JSON string with score, rationale, proceed flag, and gate threshold.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise MissingApiKeyError("ANTHROPIC_API_KEY is required for score_check_worthiness")
-    client = AsyncAnthropic(api_key=api_key)
+    client = anthropic_client
+    if client is None:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise MissingApiKeyError("ANTHROPIC_API_KEY is required for score_check_worthiness")
+        client = AsyncAnthropic(api_key=api_key)
 
     score_result = await score_claim_text(normalized_text, client)
 

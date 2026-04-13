@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -13,16 +14,12 @@ from temporalio import activity
 
 from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
 from swarm_reasoning.agents._utils import StreamNotFoundError, now_iso, register_handler
-from swarm_reasoning.agents.claim_detector.normalizer import normalize_claim_text
-from swarm_reasoning.agents.claim_detector.scorer import (
-    CHECK_WORTHY_THRESHOLD,
-    ScoreResult,
-    score_claim_text,
-)
+from swarm_reasoning.agents.claim_detector.tools.normalize import normalize_claim
+from swarm_reasoning.agents.claim_detector.tools.score import score_check_worthiness
+from swarm_reasoning.agents.tool_runtime import AgentContext
 from swarm_reasoning.config import RedisConfig
-from swarm_reasoning.models.observation import Observation, ObservationCode, ValueType
-from swarm_reasoning.models.status import EpistemicStatus
-from swarm_reasoning.models.stream import ObsMessage, Phase, StartMessage, StopMessage
+from swarm_reasoning.models.observation import ObservationCode
+from swarm_reasoning.models.stream import Phase, StartMessage, StopMessage
 from swarm_reasoning.stream.base import ReasoningStream
 from swarm_reasoning.stream.key import stream_key
 from swarm_reasoning.stream.redis import RedisReasoningStream
@@ -68,7 +65,11 @@ async def _read_claim_text(
 
 @register_handler("claim-detector")
 class ClaimDetectorHandler:
-    """Orchestrates claim normalization and check-worthiness scoring."""
+    """Orchestrates claim normalization and check-worthiness scoring.
+
+    Delegates to the normalize_claim and score_check_worthiness @tool
+    definitions for observation publishing via AgentContext.
+    """
 
     def __init__(
         self,
@@ -80,13 +81,11 @@ class ClaimDetectorHandler:
         if not api_key:
             raise MissingApiKeyError("ANTHROPIC_API_KEY is required for the claim-detector agent")
         self._api_key = api_key
-        self._seq = 0
 
     async def run(self, input: AgentActivityInput) -> AgentActivityOutput:
         """Execute the claim-detector: normalize claim, score check-worthiness, gate."""
         start = time.monotonic()
         run_id = input.run_id
-        self._seq = 0
 
         stream = RedisReasoningStream(self._redis_config)
         redis_client = aioredis.Redis(
@@ -100,6 +99,16 @@ class ClaimDetectorHandler:
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
             sk = stream_key(run_id, AGENT_NAME)
+
+            # Create AgentContext for @tool observation publishing
+            agent_ctx = AgentContext(
+                stream=stream,
+                redis_client=redis_client,
+                run_id=run_id,
+                sk=sk,
+                agent_name=AGENT_NAME,
+                anthropic_client=anthropic_client,
+            )
 
             # Publish START
             await stream.publish(
@@ -115,31 +124,48 @@ class ClaimDetectorHandler:
             # Read from ingestion stream
             claim_text = await _read_claim_text(stream, run_id)
 
-            # Step 1: Normalize
+            # Step 1: Normalize via @tool
             await _publish_progress(redis_client, run_id, "Normalizing claim text...")
-            norm_result = normalize_claim_text(claim_text)
+            normalized = await normalize_claim.ainvoke(
+                {"claim_text": claim_text, "context": agent_ctx}
+            )
 
-            note = None
-            if norm_result.fallback_used:
-                note = "normalization: fallback to raw text"
+            # Step 2: Score check-worthiness via @tool
+            await _publish_progress(redis_client, run_id, "Scoring check-worthiness...")
+            score_json = await score_check_worthiness.ainvoke(
+                {
+                    "normalized_text": normalized,
+                    "context": agent_ctx,
+                    "anthropic_client": anthropic_client,
+                }
+            )
+            score_data = json.loads(score_json)
+            score_value = score_data["score"]
+            threshold = score_data["threshold"]
+            proceed = score_data["proceed"]
 
-            # Publish CLAIM_NORMALIZED (seq=1, status=F)
-            await self._publish_obs(
-                stream,
-                sk,
+            await _publish_progress(
+                redis_client,
                 run_id,
-                code=ObservationCode.CLAIM_NORMALIZED,
-                value=norm_result.normalized,
-                value_type=ValueType.ST,
-                status=EpistemicStatus.FINAL.value,
-                method="normalize_claim",
-                note=note,
+                f"Check-worthiness score: {score_value:.2f} "
+                f"(threshold: {threshold})",
             )
 
-            # Step 2: Score check-worthiness and gate
-            final_status, score_result = await self._score_and_gate(
-                stream, sk, run_id, redis_client, anthropic_client, norm_result.normalized,
-            )
+            # Gate decision
+            if proceed:
+                final_status = "F"
+                await _publish_progress(
+                    redis_client, run_id, "Claim is check-worthy, proceeding to analysis"
+                )
+            else:
+                final_status = "X"
+                await _publish_progress(
+                    redis_client,
+                    run_id,
+                    f"Claim is not check-worthy "
+                    f"(score {score_value:.2f} < {threshold}), "
+                    f"cancelling run",
+                )
 
             # Publish STOP
             await stream.publish(
@@ -148,7 +174,7 @@ class ClaimDetectorHandler:
                     runId=run_id,
                     agent=AGENT_NAME,
                     finalStatus=final_status,
-                    observationCount=self._seq,
+                    observationCount=agent_ctx.seq_counter,
                     timestamp=now_iso(),
                 ),
             )
@@ -159,128 +185,13 @@ class ClaimDetectorHandler:
             return AgentActivityOutput(
                 agent_name=input.agent_name,
                 terminal_status=final_status,
-                observation_count=self._seq,
+                observation_count=agent_ctx.seq_counter,
                 duration_ms=duration_ms,
-                check_worthiness_score=score_result.score,
+                check_worthiness_score=score_value,
             )
         finally:
             await stream.close()
             await redis_client.aclose()
-
-    async def _score_and_gate(
-        self,
-        stream: ReasoningStream,
-        sk: str,
-        run_id: str,
-        redis_client: aioredis.Redis,
-        anthropic_client: AsyncAnthropic,
-        normalized_text: str,
-    ) -> tuple[str, ScoreResult]:
-        """Score check-worthiness and apply the gate decision.
-
-        Publishes CHECK_WORTHY_SCORE observations (preliminary + final) and
-        progress events. Returns (final_status, score_result).
-        """
-        await _publish_progress(redis_client, run_id, "Scoring check-worthiness...")
-        score_result = await score_claim_text(normalized_text, anthropic_client)
-
-        score_note = (
-            f"LLM rationale: {score_result.rationale[:480]}"
-            if score_result.rationale
-            else None
-        )
-
-        # Publish CHECK_WORTHY_SCORE with P status (preliminary pass-1 score)
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.CHECK_WORTHY_SCORE,
-            value=f"{score_result.passes[0]:.2f}",
-            value_type=ValueType.NM,
-            units="score",
-            reference_range="0.0-1.0",
-            status=EpistemicStatus.PRELIMINARY.value,
-            method="score_claim",
-            note=score_note,
-        )
-
-        # Publish CHECK_WORTHY_SCORE with F status (final resolved score)
-        await self._publish_obs(
-            stream,
-            sk,
-            run_id,
-            code=ObservationCode.CHECK_WORTHY_SCORE,
-            value=f"{score_result.score:.2f}",
-            value_type=ValueType.NM,
-            units="score",
-            reference_range="0.0-1.0",
-            status=EpistemicStatus.FINAL.value,
-            method="score_claim",
-            note=score_note,
-        )
-
-        await _publish_progress(
-            redis_client,
-            run_id,
-            f"Check-worthiness score: {score_result.score:.2f} "
-            f"(threshold: {CHECK_WORTHY_THRESHOLD})",
-        )
-
-        # Gate decision
-        if score_result.proceed:
-            final_status = "F"
-            await _publish_progress(
-                redis_client, run_id, "Claim is check-worthy, proceeding to analysis"
-            )
-        else:
-            final_status = "X"
-            await _publish_progress(
-                redis_client,
-                run_id,
-                f"Claim is not check-worthy "
-                f"(score {score_result.score:.2f} < {CHECK_WORTHY_THRESHOLD}), "
-                f"cancelling run",
-            )
-
-        return final_status, score_result
-
-    async def _publish_obs(
-        self,
-        stream: ReasoningStream,
-        sk: str,
-        run_id: str,
-        *,
-        code: ObservationCode,
-        value: str,
-        value_type: ValueType,
-        status: str = "F",
-        method: str | None = None,
-        note: str | None = None,
-        units: str | None = None,
-        reference_range: str | None = None,
-    ) -> None:
-        """Publish a single observation, auto-incrementing seq."""
-        self._seq += 1
-        await stream.publish(
-            sk,
-            ObsMessage(
-                observation=Observation(
-                    runId=run_id,
-                    agent=AGENT_NAME,
-                    seq=self._seq,
-                    code=code,
-                    value=value,
-                    valueType=value_type,
-                    status=status,
-                    timestamp=now_iso(),
-                    method=method,
-                    note=note,
-                    units=units,
-                    referenceRange=reference_range,
-                ),
-            ),
-        )
 
     @staticmethod
     async def _heartbeat_loop() -> None:

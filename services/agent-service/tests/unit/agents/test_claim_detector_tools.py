@@ -6,6 +6,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from anthropic import AsyncAnthropic
 
 from swarm_reasoning.agents.claim_detector.tools.normalize import normalize_claim
 from swarm_reasoning.agents.claim_detector.tools.score import score_check_worthiness
@@ -26,6 +27,17 @@ def _make_context() -> AgentContext:
     )
     ctx.publish_obs = AsyncMock()
     return ctx
+
+
+def _mock_anthropic_client(score: float = 0.82, rationale: str = "Verifiable claim") -> AsyncMock:
+    """Build a mock Anthropic client returning a fixed score response."""
+    mock_response = MagicMock()
+    mock_response.content = [
+        MagicMock(text=json.dumps({"score": score, "rationale": rationale}))
+    ]
+    mock_client = AsyncMock(spec=AsyncAnthropic)
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+    return mock_client
 
 
 class TestNormalizeClaim:
@@ -87,23 +99,15 @@ class TestScoreCheckWorthiness:
     @pytest.mark.asyncio
     async def test_publishes_preliminary_and_final_scores(self):
         ctx = _make_context()
+        mock_client = _mock_anthropic_client(score=0.82)
 
-        mock_response = MagicMock()
-        mock_response.content = [
-            MagicMock(text=json.dumps({"score": 0.82, "rationale": "Verifiable claim"}))
-        ]
-
-        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch(
-                "swarm_reasoning.agents.claim_detector.tools.score.AsyncAnthropic"
-            ) as mock_anthropic:
-                mock_client = AsyncMock()
-                mock_client.messages.create = AsyncMock(return_value=mock_response)
-                mock_anthropic.return_value = mock_client
-
-                result_str = await score_check_worthiness.ainvoke(
-                    {"normalized_text": "biden signed executive order 14042", "context": ctx}
-                )
+        result_str = await score_check_worthiness.ainvoke(
+            {
+                "normalized_text": "biden signed executive order 14042",
+                "context": ctx,
+                "anthropic_client": mock_client,
+            }
+        )
 
         result = json.loads(result_str)
         assert result["score"] == 0.82
@@ -125,10 +129,37 @@ class TestScoreCheckWorthiness:
     @pytest.mark.asyncio
     async def test_below_threshold_returns_proceed_false(self):
         ctx = _make_context()
+        mock_client = _mock_anthropic_client(score=0.2, rationale="Opinion statement")
+
+        result_str = await score_check_worthiness.ainvoke(
+            {
+                "normalized_text": "politicians are all corrupt",
+                "context": ctx,
+                "anthropic_client": mock_client,
+            }
+        )
+
+        result = json.loads(result_str)
+        assert result["score"] == 0.2
+        assert result["proceed"] is False
+
+    @pytest.mark.asyncio
+    async def test_missing_api_key_raises_when_no_client(self):
+        ctx = _make_context()
+
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(Exception, match="ANTHROPIC_API_KEY"):
+                await score_check_worthiness.ainvoke(
+                    {"normalized_text": "test claim", "context": ctx}
+                )
+
+    @pytest.mark.asyncio
+    async def test_env_fallback_when_no_client_injected(self):
+        ctx = _make_context()
 
         mock_response = MagicMock()
         mock_response.content = [
-            MagicMock(text=json.dumps({"score": 0.2, "rationale": "Opinion statement"}))
+            MagicMock(text=json.dumps({"score": 0.7, "rationale": "test"}))
         ]
 
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
@@ -140,19 +171,8 @@ class TestScoreCheckWorthiness:
                 mock_anthropic.return_value = mock_client
 
                 result_str = await score_check_worthiness.ainvoke(
-                    {"normalized_text": "politicians are all corrupt", "context": ctx}
+                    {"normalized_text": "test claim", "context": ctx}
                 )
 
         result = json.loads(result_str)
-        assert result["score"] == 0.2
-        assert result["proceed"] is False
-
-    @pytest.mark.asyncio
-    async def test_missing_api_key_raises(self):
-        ctx = _make_context()
-
-        with patch.dict("os.environ", {}, clear=True):
-            with pytest.raises(Exception, match="ANTHROPIC_API_KEY"):
-                await score_check_worthiness.ainvoke(
-                    {"normalized_text": "test claim", "context": ctx}
-                )
+        assert result["score"] == 0.7
