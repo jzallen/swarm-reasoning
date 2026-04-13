@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -7,13 +8,14 @@ import { Run, Session } from '../../domain/entities';
 import { RunStatus, SessionStatus } from '../../domain/enums';
 
 describe('SubmitClaimUseCase', () => {
-  const mockSession = new Session({
-    sessionId: 'test-id',
-    status: SessionStatus.Active,
-    createdAt: new Date(),
-  });
+  const freshSession = () =>
+    new Session({
+      sessionId: 'test-id',
+      status: SessionStatus.Active,
+      createdAt: new Date(),
+    });
 
-  const createMocks = (session: Session | null = mockSession) => ({
+  const createMocks = (session: Session | null = freshSession()) => ({
     sessionRepo: {
       save: jest.fn((s) => Promise.resolve(s)),
       findById: jest.fn().mockResolvedValue(session),
@@ -80,6 +82,30 @@ describe('SubmitClaimUseCase', () => {
     await expect(
       useCase.execute('frozen-id', { claimText: 'Test' }),
     ).rejects.toThrow(UnprocessableEntityException);
+
+    expect(mocks.runRepo.save).not.toHaveBeenCalled();
+    expect(
+      mocks.temporalClient.startClaimVerificationWorkflow,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('should throw ConflictException when session already has a claim', async () => {
+    const sessionWithClaim = new Session({
+      sessionId: 'claimed-id',
+      status: SessionStatus.Active,
+      claim: 'Existing claim',
+      createdAt: new Date(),
+    });
+    const mocks = createMocks(sessionWithClaim);
+    const useCase = new SubmitClaimUseCase(
+      mocks.sessionRepo,
+      mocks.runRepo,
+      mocks.temporalClient,
+    );
+
+    await expect(
+      useCase.execute('claimed-id', { claimText: 'Another claim' }),
+    ).rejects.toThrow(ConflictException);
 
     expect(mocks.runRepo.save).not.toHaveBeenCalled();
     expect(

@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -38,6 +39,10 @@ export class SubmitClaimUseCase {
 
     if (session.status !== SessionStatus.Active) {
       throw new UnprocessableEntityException('Session is no longer active');
+    }
+
+    if (session.claim) {
+      throw new ConflictException('Session already has a claim submitted');
     }
 
     const claim = new Claim(claimData);
