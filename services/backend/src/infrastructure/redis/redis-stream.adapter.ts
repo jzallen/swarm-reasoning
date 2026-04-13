@@ -70,6 +70,12 @@ export class RedisStreamAdapter implements StreamReader, OnModuleDestroy {
       }
     }
 
+    observations.sort((a, b) => {
+      const tA = typeof a.timestamp === 'string' ? a.timestamp : '';
+      const tB = typeof b.timestamp === 'string' ? b.timestamp : '';
+      return tA < tB ? -1 : tA > tB ? 1 : 0;
+    });
+
     return observations;
   }
 
