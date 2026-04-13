@@ -1,8 +1,8 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Verdict } from '../../domain/entities/verdict.entity.js';
-import { Citation } from '../../domain/entities/citation.entity.js';
-import { ProgressEvent } from '../../domain/entities/progress-event.entity.js';
-import { SessionStatus } from '../../domain/enums/index.js';
+import { Verdict } from '@domain/entities/verdict.entity.js';
+import { Citation } from '@domain/entities/citation.entity.js';
+import { ProgressEvent } from '@domain/entities/progress-event.entity.js';
+import { SessionStatus } from '@domain/enums/index.js';
 import { SESSION_REPOSITORY } from '../interfaces/session.repository.js';
 import { VERDICT_REPOSITORY } from '../interfaces/verdict.repository.js';
 import { CITATION_REPOSITORY } from '../interfaces/citation.repository.js';

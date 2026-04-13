@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { Session } from '../../domain/entities/session.entity.js';
+import { Session } from '@domain/entities/session.entity.js';
 import { SESSION_REPOSITORY } from '../interfaces/session.repository.js';
 import * as SessionRepo from '../interfaces/session.repository.js';
 

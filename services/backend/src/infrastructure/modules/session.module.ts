@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
-import { SessionController } from '../../adapters/controllers/session.controller';
-import { ClaimController } from '../../adapters/controllers/claim.controller';
-import { SessionPresenter } from '../../adapters/presenters/session.presenter';
+import { SessionController } from '@adapters/controllers/session.controller';
+import { ClaimController } from '@adapters/controllers/claim.controller';
+import { SessionPresenter } from '@adapters/presenters/session.presenter';
 import {
   CreateSessionUseCase,
   GetSessionUseCase,
   SubmitClaimUseCase,
-} from '../../application/use-cases';
+} from '@app/use-cases';
 import { InfrastructureModule } from './infrastructure.module';
 
 @Module({

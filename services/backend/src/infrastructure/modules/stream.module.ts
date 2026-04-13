@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { EventController } from '../../adapters/controllers/event.controller';
-import { ObservationController } from '../../adapters/controllers/observation.controller';
+import { EventController } from '@adapters/controllers/event.controller';
+import { ObservationController } from '@adapters/controllers/observation.controller';
 import {
   StreamProgressUseCase,
   GetObservationsUseCase,
-} from '../../application/use-cases';
+} from '@app/use-cases';
 import { InfrastructureModule } from './infrastructure.module';
 
 @Module({

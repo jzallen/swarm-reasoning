@@ -7,7 +7,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { SubmitClaimUseCase } from '../../application/use-cases';
+import { SubmitClaimUseCase } from '@app/use-cases';
 import { SubmitClaimDto } from '../dto/submit-claim.dto';
 import { SessionPresenter } from '../presenters/session.presenter';
 

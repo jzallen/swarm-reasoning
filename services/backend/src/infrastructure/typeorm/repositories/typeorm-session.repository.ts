@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, Repository } from 'typeorm';
-import { SessionRepository } from '../../../application/interfaces';
-import { Session } from '../../../domain/entities';
-import { SessionStatus } from '../../../domain/enums';
+import { SessionRepository } from '@app/interfaces';
+import { Session } from '@domain/entities';
+import { SessionStatus } from '@domain/enums';
 import { SessionOrmEntity } from '../entities';
 
 @Injectable()

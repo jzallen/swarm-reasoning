@@ -1,8 +1,8 @@
 import { NotFoundException, GoneException } from '@nestjs/common';
 import { StreamProgressUseCase } from '../use-cases/stream-progress.use-case';
-import { SessionStatus, ProgressPhase, ProgressType } from '../../domain/enums';
-import { Session } from '../../domain/entities/session.entity';
-import { ProgressEvent } from '../../domain/entities/progress-event.entity';
+import { SessionStatus, ProgressPhase, ProgressType } from '@domain/enums';
+import { Session } from '@domain/entities/session.entity';
+import { ProgressEvent } from '@domain/entities/progress-event.entity';
 
 function makeSession(status: SessionStatus): Session {
   return new Session({
@@ -47,6 +47,8 @@ describe('StreamProgressUseCase', () => {
   const mockStreamReader = {
     readProgress: jest.fn(() => fakeStream()),
     readObservations: jest.fn(),
+    readAllProgressEvents: jest.fn().mockResolvedValue([]),
+    deleteStreams: jest.fn().mockResolvedValue(undefined),
     ping: jest.fn().mockResolvedValue(undefined),
   };
 

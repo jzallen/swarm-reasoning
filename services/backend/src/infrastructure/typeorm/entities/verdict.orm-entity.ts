@@ -12,30 +12,30 @@ import { CitationOrmEntity } from './citation.orm-entity';
 @Entity('verdicts')
 export class VerdictOrmEntity {
   @PrimaryColumn('uuid')
-  verdictId: string;
+  verdictId!: string;
 
   @Column('uuid')
-  runId: string;
+  runId!: string;
 
   @Column({ type: 'decimal', precision: 4, scale: 3 })
-  factualityScore: number;
+  factualityScore!: number;
 
   @Column({ type: 'varchar', length: 20 })
-  ratingLabel: string;
+  ratingLabel!: string;
 
   @Column({ type: 'text' })
-  narrative: string;
+  narrative!: string;
 
   @Column({ type: 'int' })
-  signalCount: number;
+  signalCount!: number;
 
   @Column({ type: 'timestamptz' })
-  finalizedAt: Date;
+  finalizedAt!: Date;
 
   @OneToOne(() => RunOrmEntity, (run) => run.verdict, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'runId' })
-  run: RunOrmEntity;
+  run!: RunOrmEntity;
 
   @OneToMany(() => CitationOrmEntity, (citation) => citation.verdict)
-  citations: CitationOrmEntity[];
+  citations!: CitationOrmEntity[];
 }

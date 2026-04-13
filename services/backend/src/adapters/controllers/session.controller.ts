@@ -7,7 +7,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { CreateSessionUseCase, GetSessionUseCase } from '../../application/use-cases';
+import { CreateSessionUseCase, GetSessionUseCase } from '@app/use-cases';
 import { SessionPresenter } from '../presenters/session.presenter';
 
 @Controller('sessions')

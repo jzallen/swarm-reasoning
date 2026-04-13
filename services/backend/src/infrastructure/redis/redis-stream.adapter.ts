@@ -2,10 +2,10 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { v4 as uuidv4 } from 'uuid';
-import { ProgressEvent } from '../../domain/entities/progress-event.entity.js';
-import { ProgressPhase } from '../../domain/enums/progress-phase.enum.js';
-import { ProgressType } from '../../domain/enums/progress-type.enum.js';
-import type { StreamReader } from '../../application/interfaces/stream-reader.interface.js';
+import { ProgressEvent } from '@domain/entities/progress-event.entity.js';
+import { ProgressPhase } from '@domain/enums/progress-phase.enum.js';
+import { ProgressType } from '@domain/enums/progress-type.enum.js';
+import type { StreamReader } from '@app/interfaces/stream-reader.interface.js';
 
 const CONSUMER_GROUP = 'sse-consumers';
 const BLOCK_MS = 5000;

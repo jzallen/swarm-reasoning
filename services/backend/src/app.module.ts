@@ -7,12 +7,12 @@ import {
   RunOrmEntity,
   VerdictOrmEntity,
   CitationOrmEntity,
-} from './infrastructure/typeorm/entities';
-import { SessionModule } from './infrastructure/modules/session.module';
-import { VerdictModule } from './infrastructure/modules/verdict.module';
-import { StreamModule } from './infrastructure/modules/stream.module';
-import { HealthModule } from './infrastructure/modules/health.module';
-import { CleanupModule } from './infrastructure/modules/cleanup.module';
+} from '@infra/typeorm/entities';
+import { SessionModule } from '@infra/modules/session.module';
+import { VerdictModule } from '@infra/modules/verdict.module';
+import { StreamModule } from '@infra/modules/stream.module';
+import { HealthModule } from '@infra/modules/health.module';
+import { CleanupModule } from '@infra/modules/cleanup.module';
 
 @Module({
   imports: [

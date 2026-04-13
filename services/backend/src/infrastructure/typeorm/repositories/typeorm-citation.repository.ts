@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { CitationRepository } from '../../../application/interfaces';
-import { Citation } from '../../../domain/entities';
-import { ValidationStatus } from '../../../domain/enums';
+import { CitationRepository } from '@app/interfaces';
+import { Citation } from '@domain/entities';
+import { ValidationStatus } from '@domain/enums';
 import { CitationOrmEntity } from '../entities';
 
 @Injectable()

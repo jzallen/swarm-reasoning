@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { SnapshotStore } from '../../application/interfaces';
+import { SnapshotStore } from '@app/interfaces';
 
 @Injectable()
 export class LocalSnapshotStore implements SnapshotStore {

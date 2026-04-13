@@ -1,6 +1,6 @@
 import { NotFoundException, GoneException } from '@nestjs/common';
-import { ProgressEvent } from '../../domain/entities/progress-event.entity';
-import { ProgressPhase, ProgressType } from '../../domain/enums';
+import { ProgressEvent } from '@domain/entities/progress-event.entity';
+import { ProgressPhase, ProgressType } from '@domain/enums';
 import { EventController } from '../controllers/event.controller';
 
 function makeEvent(

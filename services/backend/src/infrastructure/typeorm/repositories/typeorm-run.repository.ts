@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { RunRepository } from '../../../application/interfaces';
-import { Run } from '../../../domain/entities';
-import { RunStatus } from '../../../domain/enums';
+import { RunRepository } from '@app/interfaces';
+import { Run } from '@domain/entities';
+import { RunStatus } from '@domain/enums';
 import { RunOrmEntity } from '../entities';
 
 @Injectable()

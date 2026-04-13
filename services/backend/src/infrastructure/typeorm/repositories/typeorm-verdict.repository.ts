@@ -1,9 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { VerdictRepository } from '../../../application/interfaces';
-import { Verdict } from '../../../domain/entities';
-import { RatingLabel } from '../../../domain/enums';
+import { VerdictRepository } from '@app/interfaces';
+import { Verdict } from '@domain/entities';
+import { RatingLabel } from '@domain/enums';
 import { VerdictOrmEntity } from '../entities';
 
 @Injectable()

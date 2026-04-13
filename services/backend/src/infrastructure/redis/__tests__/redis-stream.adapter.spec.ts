@@ -1,5 +1,5 @@
-import { ProgressPhase, ProgressType } from '../../../domain/enums';
-import { ProgressEvent } from '../../../domain/entities/progress-event.entity';
+import { ProgressPhase, ProgressType } from '@domain/enums';
+import { ProgressEvent } from '@domain/entities/progress-event.entity';
 import { RedisStreamAdapter } from '../redis-stream.adapter';
 
 jest.mock('uuid', () => ({

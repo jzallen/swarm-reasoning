@@ -6,7 +6,7 @@ import {
   DeleteObjectCommand,
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
-import type { SnapshotStore } from '../../application/interfaces/snapshot-store.interface.js';
+import type { SnapshotStore } from '@app/interfaces/snapshot-store.interface.js';
 
 @Injectable()
 export class S3SnapshotStore implements SnapshotStore {

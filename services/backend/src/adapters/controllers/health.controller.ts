@@ -3,8 +3,8 @@ import type { Response } from 'express';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import type { StreamReader } from '../../application/interfaces/stream-reader.interface.js';
-import { STREAM_READER } from '../../application/interfaces/stream-reader.interface.js';
+import type { StreamReader } from '@app/interfaces/stream-reader.interface.js';
+import { STREAM_READER } from '@app/interfaces/stream-reader.interface.js';
 
 @Controller('health')
 export class HealthController {

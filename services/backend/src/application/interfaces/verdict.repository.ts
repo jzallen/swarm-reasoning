@@ -1,4 +1,4 @@
-import { Verdict } from '../../domain/entities';
+import { Verdict } from '@domain/entities';
 
 export interface VerdictRepository {
   save(verdict: Verdict): Promise<Verdict>;

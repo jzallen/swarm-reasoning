@@ -4,8 +4,8 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { SubmitClaimUseCase } from '../use-cases/submit-claim.use-case';
-import { Run, Session } from '../../domain/entities';
-import { RunStatus, SessionStatus } from '../../domain/enums';
+import { Run, Session } from '@domain/entities';
+import { RunStatus, SessionStatus } from '@domain/enums';
 
 describe('SubmitClaimUseCase', () => {
   const freshSession = () =>

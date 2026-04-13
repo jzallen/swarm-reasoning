@@ -75,6 +75,14 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "moduleNameMapper": {
+      "^@domain/(.*)\\.js$": "<rootDir>/domain/$1",
+      "^@domain/(.*)$": "<rootDir>/domain/$1",
+      "^@app/(.*)\\.js$": "<rootDir>/application/$1",
+      "^@app/(.*)$": "<rootDir>/application/$1",
+      "^@infra/(.*)\\.js$": "<rootDir>/infrastructure/$1",
+      "^@infra/(.*)$": "<rootDir>/infrastructure/$1",
+      "^@adapters/(.*)\\.js$": "<rootDir>/adapters/$1",
+      "^@adapters/(.*)$": "<rootDir>/adapters/$1",
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "transformIgnorePatterns": [

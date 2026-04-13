@@ -1,4 +1,4 @@
-import { ProgressType } from '../../domain/enums';
+import { ProgressType } from '@domain/enums';
 import {
   mapProgressTypeToSseEvent,
   isTerminalEvent,

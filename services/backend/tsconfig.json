@@ -16,10 +16,14 @@
     "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
-    "strictNullChecks": true,
+    "strict": true,
     "forceConsistentCasingInFileNames": true,
-    "noImplicitAny": false,
-    "strictBindCallApply": false,
-    "noFallthroughCasesInSwitch": false
+    "noFallthroughCasesInSwitch": false,
+    "paths": {
+      "@domain/*": ["src/domain/*"],
+      "@app/*": ["src/application/*"],
+      "@infra/*": ["src/infrastructure/*"],
+      "@adapters/*": ["src/adapters/*"]
+    }
   }
 }

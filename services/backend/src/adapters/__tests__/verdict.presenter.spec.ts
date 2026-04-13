@@ -1,6 +1,6 @@
 import { VerdictPresenter } from '../presenters/verdict.presenter';
-import { Verdict, Citation } from '../../domain/entities';
-import { RatingLabel, ValidationStatus } from '../../domain/enums';
+import { Verdict, Citation } from '@domain/entities';
+import { RatingLabel, ValidationStatus } from '@domain/enums';
 
 describe('VerdictPresenter', () => {
   it('should format verdict with citations per OpenAPI schema', () => {

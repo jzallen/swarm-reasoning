@@ -1,5 +1,5 @@
 import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
-import { GetVerdictUseCase } from '../../application/use-cases';
+import { GetVerdictUseCase } from '@app/use-cases';
 import { VerdictPresenter } from '../presenters/verdict.presenter';
 
 @Controller('sessions')

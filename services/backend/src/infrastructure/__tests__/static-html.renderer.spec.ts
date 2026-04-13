@@ -1,15 +1,15 @@
 import { StaticHtmlRenderer } from '../renderers/static-html.renderer';
-import { Verdict } from '../../domain/entities/verdict.entity';
-import { Citation } from '../../domain/entities/citation.entity';
-import { Session } from '../../domain/entities/session.entity';
-import { ProgressEvent } from '../../domain/entities/progress-event.entity';
+import { Verdict } from '@domain/entities/verdict.entity';
+import { Citation } from '@domain/entities/citation.entity';
+import { Session } from '@domain/entities/session.entity';
+import { ProgressEvent } from '@domain/entities/progress-event.entity';
 import {
   RatingLabel,
   SessionStatus,
   ValidationStatus,
   ProgressPhase,
   ProgressType,
-} from '../../domain/enums';
+} from '@domain/enums';
 
 function makeVerdict(
   overrides: Partial<ConstructorParameters<typeof Verdict>[0]> = {},

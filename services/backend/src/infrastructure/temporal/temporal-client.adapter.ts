@@ -10,7 +10,7 @@ import {
   WorkflowClient,
   WorkflowNotFoundError,
 } from '@temporalio/client';
-import { TemporalClientPort } from '../../application/interfaces';
+import { TemporalClientPort } from '@app/interfaces';
 
 const TASK_QUEUE = 'claim-verification';
 const WORKFLOW_TYPE = 'ClaimVerificationWorkflow';

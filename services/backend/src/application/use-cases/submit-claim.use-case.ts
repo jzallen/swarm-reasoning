@@ -6,10 +6,10 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
-import { Session } from '../../domain/entities/session.entity.js';
-import { Run } from '../../domain/entities/run.entity.js';
-import { Claim } from '../../domain/value-objects/claim.js';
-import { RunStatus, SessionStatus } from '../../domain/enums/index.js';
+import { Session } from '@domain/entities/session.entity.js';
+import { Run } from '@domain/entities/run.entity.js';
+import { Claim } from '@domain/value-objects/claim.js';
+import { RunStatus, SessionStatus } from '@domain/enums/index.js';
 import { SESSION_REPOSITORY } from '../interfaces/session.repository.js';
 import { RUN_REPOSITORY } from '../interfaces/run.repository.js';
 import { TEMPORAL_CLIENT } from '../interfaces/temporal-client.interface.js';

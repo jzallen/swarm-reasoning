@@ -1,6 +1,6 @@
 import { CleanupExpiredSessionsUseCase } from '../use-cases/cleanup-expired-sessions.use-case';
-import { Session } from '../../domain/entities';
-import { SessionStatus } from '../../domain/enums';
+import { Session } from '@domain/entities';
+import { SessionStatus } from '@domain/enums';
 
 function makeMocks() {
   const mockSessionRepo = {

@@ -25,7 +25,7 @@ import {
   TEMPORAL_CLIENT,
   SNAPSHOT_STORE,
   HTML_RENDERER,
-} from '../../application/interfaces';
+} from '@app/interfaces';
 
 const sessionRepoProvider = {
   provide: SESSION_REPOSITORY,

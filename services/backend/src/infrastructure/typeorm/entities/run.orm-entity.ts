@@ -13,29 +13,29 @@ import { VerdictOrmEntity } from './verdict.orm-entity';
 @Entity('runs')
 export class RunOrmEntity {
   @PrimaryColumn('uuid')
-  runId: string;
+  runId!: string;
 
   @Column('uuid')
-  sessionId: string;
+  sessionId!: string;
 
   @Column({ type: 'varchar', length: 20 })
-  status: string;
+  status!: string;
 
   @Column({ type: 'varchar', length: 50, nullable: true })
-  phase: string | null;
+  phase!: string | null;
 
   @CreateDateColumn()
-  createdAt: Date;
+  createdAt!: Date;
 
   @Column({ type: 'timestamptz', nullable: true })
-  completedAt: Date | null;
+  completedAt!: Date | null;
 
   @ManyToOne(() => SessionOrmEntity, (session) => session.runs, {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'sessionId' })
-  session: SessionOrmEntity;
+  session!: SessionOrmEntity;
 
   @OneToOne(() => VerdictOrmEntity, (verdict) => verdict.run)
-  verdict: VerdictOrmEntity;
+  verdict!: VerdictOrmEntity;
 }

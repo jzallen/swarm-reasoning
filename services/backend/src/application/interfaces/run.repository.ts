@@ -1,4 +1,4 @@
-import { Run } from '../../domain/entities';
+import { Run } from '@domain/entities';
 
 export interface RunRepository {
   save(run: Run): Promise<Run>;

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Session } from '../../domain/entities';
+import { Session } from '@domain/entities';
 
 export interface SessionResponse {
   sessionId: string;

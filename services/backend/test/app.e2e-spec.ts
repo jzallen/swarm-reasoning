@@ -4,16 +4,16 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { ConfigModule } from '@nestjs/config';
 import { DataSource } from 'typeorm';
-import { Session } from '../src/domain/entities/session.entity';
-import { Run } from '../src/domain/entities/run.entity';
-import { Verdict } from '../src/domain/entities/verdict.entity';
-import { Citation } from '../src/domain/entities/citation.entity';
+import { Session } from '@domain/entities/session.entity';
+import { Run } from '@domain/entities/run.entity';
+import { Verdict } from '@domain/entities/verdict.entity';
+import { Citation } from '@domain/entities/citation.entity';
 import {
   SessionStatus,
   RunStatus,
   RatingLabel,
   ValidationStatus,
-} from '../src/domain/enums';
+} from '@domain/enums';
 import {
   SESSION_REPOSITORY,
   RUN_REPOSITORY,
@@ -23,20 +23,20 @@ import {
   STREAM_READER,
   SNAPSHOT_STORE,
   HTML_RENDERER,
-} from '../src/application/interfaces';
+} from '@app/interfaces';
 import {
   CreateSessionUseCase,
   GetSessionUseCase,
   SubmitClaimUseCase,
   GetVerdictUseCase,
-} from '../src/application/use-cases';
-import { SessionController } from '../src/adapters/controllers/session.controller';
-import { ClaimController } from '../src/adapters/controllers/claim.controller';
-import { VerdictController } from '../src/adapters/controllers/verdict.controller';
-import { HealthController } from '../src/adapters/controllers/health.controller';
-import { VerdictPresenter } from '../src/adapters/presenters/verdict.presenter';
-import { SessionPresenter } from '../src/adapters/presenters/session.presenter';
-import { GlobalExceptionFilter } from '../src/adapters/filters/http-exception.filter';
+} from '@app/use-cases';
+import { SessionController } from '@adapters/controllers/session.controller';
+import { ClaimController } from '@adapters/controllers/claim.controller';
+import { VerdictController } from '@adapters/controllers/verdict.controller';
+import { HealthController } from '@adapters/controllers/health.controller';
+import { VerdictPresenter } from '@adapters/presenters/verdict.presenter';
+import { SessionPresenter } from '@adapters/presenters/session.presenter';
+import { GlobalExceptionFilter } from '@adapters/filters/http-exception.filter';
 
 // ---------------------------------------------------------------------------
 // In-memory repository implementations

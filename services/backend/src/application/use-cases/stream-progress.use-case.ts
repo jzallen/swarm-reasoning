@@ -4,8 +4,8 @@ import {
   NotFoundException,
   GoneException,
 } from '@nestjs/common';
-import { ProgressEvent } from '../../domain/entities/progress-event.entity.js';
-import { SessionStatus } from '../../domain/enums/session-status.enum.js';
+import { ProgressEvent } from '@domain/entities/progress-event.entity.js';
+import { SessionStatus } from '@domain/enums/session-status.enum.js';
 import { SESSION_REPOSITORY } from '../interfaces/session.repository.js';
 import { RUN_REPOSITORY } from '../interfaces/run.repository.js';
 import { STREAM_READER } from '../interfaces/stream-reader.interface.js';

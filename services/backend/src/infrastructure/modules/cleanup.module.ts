@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Injectable } from '@nestjs/common';
-import { CleanupExpiredSessionsUseCase } from '../../application/use-cases';
+import { CleanupExpiredSessionsUseCase } from '@app/use-cases';
 import { InfrastructureModule } from './infrastructure.module';
 
 @Injectable()

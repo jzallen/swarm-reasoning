@@ -1,4 +1,4 @@
-import { ProgressEvent } from '../../domain/entities';
+import { ProgressEvent } from '@domain/entities';
 
 export interface StreamReader {
   readProgress(

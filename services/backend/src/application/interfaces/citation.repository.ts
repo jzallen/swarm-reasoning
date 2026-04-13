@@ -1,4 +1,4 @@
-import { Citation } from '../../domain/entities';
+import { Citation } from '@domain/entities';
 
 export interface CitationRepository {
   saveMany(citations: Citation[]): Promise<Citation[]>;

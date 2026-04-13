@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Verdict, Citation } from '../../domain/entities';
+import { Verdict, Citation } from '@domain/entities';
 
 export interface VerdictResponse {
   verdictId: string;

@@ -10,7 +10,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { StreamProgressUseCase } from '../../application/use-cases/index.js';
+import { StreamProgressUseCase } from '@app/use-cases/index.js';
 import {
   mapProgressTypeToSseEvent,
   isTerminalEvent,

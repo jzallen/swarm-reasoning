@@ -1,5 +1,5 @@
 import { CreateSessionUseCase } from '../use-cases/create-session.use-case';
-import { SessionStatus } from '../../domain/enums';
+import { SessionStatus } from '@domain/enums';
 
 describe('CreateSessionUseCase', () => {
   it('should create a session with active status and UUID', async () => {

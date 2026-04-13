@@ -1,4 +1,4 @@
-import { ProgressType } from '../../domain/enums/progress-type.enum';
+import { ProgressType } from '@domain/enums/progress-type.enum';
 
 export type SseEventName = 'progress' | 'verdict' | 'close';
 

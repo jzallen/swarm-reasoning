@@ -1,5 +1,5 @@
 import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
-import { GetObservationsUseCase } from '../../application/use-cases';
+import { GetObservationsUseCase } from '@app/use-cases';
 
 @Controller('sessions')
 export class ObservationController {

@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import type { Verdict } from '../../domain/entities/verdict.entity.js';
-import type { Citation } from '../../domain/entities/citation.entity.js';
-import type { Session } from '../../domain/entities/session.entity.js';
-import type { ProgressEvent } from '../../domain/entities/progress-event.entity.js';
-import { ProgressPhase } from '../../domain/enums/progress-phase.enum.js';
-import { ValidationStatus } from '../../domain/enums/validation-status.enum.js';
+import type { Verdict } from '@domain/entities/verdict.entity.js';
+import type { Citation } from '@domain/entities/citation.entity.js';
+import type { Session } from '@domain/entities/session.entity.js';
+import type { ProgressEvent } from '@domain/entities/progress-event.entity.js';
+import { ProgressPhase } from '@domain/enums/progress-phase.enum.js';
+import { ValidationStatus } from '@domain/enums/validation-status.enum.js';
 
 const PHASE_ORDER: Record<string, number> = {
   [ProgressPhase.Ingestion]: 0,

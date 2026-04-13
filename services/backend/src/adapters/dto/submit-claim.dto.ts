@@ -11,7 +11,7 @@ export class SubmitClaimDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(2000)
-  claimText: string;
+  claimText!: string;
 
   @IsOptional()
   @IsUrl()

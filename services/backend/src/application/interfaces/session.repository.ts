@@ -1,4 +1,4 @@
-import { Session } from '../../domain/entities';
+import { Session } from '@domain/entities';
 
 export interface SessionRepository {
   save(session: Session): Promise<Session>;

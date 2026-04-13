@@ -1,7 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { GetSessionUseCase } from '../use-cases/get-session.use-case';
-import { Session } from '../../domain/entities';
-import { SessionStatus } from '../../domain/enums';
+import { Session } from '@domain/entities';
+import { SessionStatus } from '@domain/enums';
 
 describe('GetSessionUseCase', () => {
   const mockSession = new Session({
