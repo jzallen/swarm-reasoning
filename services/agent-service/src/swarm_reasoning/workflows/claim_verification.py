@@ -1,9 +1,8 @@
 """ClaimVerificationWorkflow: three-phase DAG executor (ADR-0016).
 
-Orchestrates 10 agents across three phases:
+Orchestrates 9 agents across three phases:
   Phase 1 (sequential): ingestion-agent, claim-detector, entity-extractor
-  Phase 2 (parallel): claimreview-matcher, coverage-left, coverage-center,
-                       coverage-right, domain-evidence
+  Phase 2 (parallel): evidence, coverage-left, coverage-center, coverage-right
   Phase 3 (sequential): validation, synthesizer
 
 The workflow is deterministic — all I/O happens inside activities.
@@ -249,7 +248,7 @@ class ClaimVerificationWorkflow:
         return False
 
     async def _run_analysis(self, input: WorkflowInput) -> None:
-        """Phase 2: parallel fan-out (5 evidence-gathering agents)."""
+        """Phase 2: parallel fan-out (4 evidence-gathering agents)."""
         await self._set_status(input.run_id, "analyzing")
 
         self._phase = "2"

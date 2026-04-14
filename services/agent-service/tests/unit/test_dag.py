@@ -7,8 +7,8 @@ def test_dag_has_three_phases():
     assert len(DAG) == 3
 
 
-def test_total_agent_count_is_10():
-    assert len(ALL_AGENTS) == 10
+def test_total_agent_count_is_9():
+    assert len(ALL_AGENTS) == 9
 
 
 def test_no_duplicate_agents():
@@ -28,12 +28,11 @@ def test_phase_2_fanout_parallel():
     assert p.id == "2"
     assert p.name == "fanout"
     assert p.mode == PhaseMode.PARALLEL
-    assert len(p.agents) == 5
-    assert "claimreview-matcher" in p.agents
+    assert len(p.agents) == 4
+    assert "evidence" in p.agents
     assert "coverage-left" in p.agents
     assert "coverage-center" in p.agents
     assert "coverage-right" in p.agents
-    assert "domain-evidence" in p.agents
 
 
 def test_phase_3_synthesis_sequential():
@@ -47,8 +46,8 @@ def test_phase_3_synthesis_sequential():
 def test_all_agents_tuple():
     expected = (
         "ingestion-agent", "claim-detector", "entity-extractor",
-        "claimreview-matcher", "coverage-left", "coverage-center",
-        "coverage-right", "domain-evidence",
+        "evidence", "coverage-left", "coverage-center",
+        "coverage-right",
         "validation", "synthesizer",
     )
     assert ALL_AGENTS == expected

@@ -59,26 +59,26 @@ def _full_resolved_set() -> ResolvedObservationSet:
     return ResolvedObservationSet(
         observations=[
             _obs("DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK",
-                 agent="domain-evidence", seq=1),
-            _obs("DOMAIN_CONFIDENCE", "0.9", agent="domain-evidence", seq=2,
+                 agent="evidence", seq=1),
+            _obs("DOMAIN_CONFIDENCE", "0.9", agent="evidence", seq=2,
                  value_type="NM"),
             _obs("CLAIMREVIEW_MATCH", "TRUE^Match Found^FCK",
-                 agent="claimreview-matcher", seq=3),
+                 agent="evidence", seq=3),
             _obs("CLAIMREVIEW_VERDICT", "TRUE^True^POLITIFACT",
-                 agent="claimreview-matcher", seq=4),
-            _obs("CLAIMREVIEW_MATCH_SCORE", "0.95", agent="claimreview-matcher",
+                 agent="evidence", seq=4),
+            _obs("CLAIMREVIEW_MATCH_SCORE", "0.95", agent="evidence",
                  seq=5, value_type="NM"),
             _obs("CROSS_SPECTRUM_CORROBORATION", "TRUE^Corroborated^FCK",
-                 agent="blindspot-detector", seq=6),
+                 agent="validation", seq=6),
             _obs("COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK",
                  agent="coverage-left", seq=7),
             _obs("COVERAGE_FRAMING", "NEUTRAL^Neutral^FCK",
                  agent="coverage-center", seq=8),
             _obs("COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK",
                  agent="coverage-right", seq=9),
-            _obs("SOURCE_CONVERGENCE_SCORE", "0.85", agent="source-validator",
+            _obs("SOURCE_CONVERGENCE_SCORE", "0.85", agent="validation",
                  seq=10, value_type="NM"),
-            _obs("BLINDSPOT_SCORE", "0.1", agent="blindspot-detector",
+            _obs("BLINDSPOT_SCORE", "0.1", agent="validation",
                  seq=11, value_type="NM"),
         ],
         synthesis_signal_count=11,
@@ -90,26 +90,26 @@ def _low_confidence_resolved_set() -> ResolvedObservationSet:
     return ResolvedObservationSet(
         observations=[
             _obs("DOMAIN_EVIDENCE_ALIGNMENT", "CONTRADICTS^Contradicts^FCK",
-                 agent="domain-evidence", seq=1),
-            _obs("DOMAIN_CONFIDENCE", "0.9", agent="domain-evidence", seq=2,
+                 agent="evidence", seq=1),
+            _obs("DOMAIN_CONFIDENCE", "0.9", agent="evidence", seq=2,
                  value_type="NM"),
             _obs("CLAIMREVIEW_MATCH", "TRUE^Match Found^FCK",
-                 agent="claimreview-matcher", seq=3),
+                 agent="evidence", seq=3),
             _obs("CLAIMREVIEW_VERDICT", "FALSE^False^POLITIFACT",
-                 agent="claimreview-matcher", seq=4),
-            _obs("CLAIMREVIEW_MATCH_SCORE", "0.92", agent="claimreview-matcher",
+                 agent="evidence", seq=4),
+            _obs("CLAIMREVIEW_MATCH_SCORE", "0.92", agent="evidence",
                  seq=5, value_type="NM"),
             _obs("CROSS_SPECTRUM_CORROBORATION", "FALSE^Not Corroborated^FCK",
-                 agent="blindspot-detector", seq=6),
+                 agent="validation", seq=6),
             _obs("COVERAGE_FRAMING", "CRITICAL^Critical^FCK",
                  agent="coverage-left", seq=7),
             _obs("COVERAGE_FRAMING", "CRITICAL^Critical^FCK",
                  agent="coverage-center", seq=8),
             _obs("COVERAGE_FRAMING", "CRITICAL^Critical^FCK",
                  agent="coverage-right", seq=9),
-            _obs("SOURCE_CONVERGENCE_SCORE", "0.1", agent="source-validator",
+            _obs("SOURCE_CONVERGENCE_SCORE", "0.1", agent="validation",
                  seq=10, value_type="NM"),
-            _obs("BLINDSPOT_SCORE", "0.8", agent="blindspot-detector",
+            _obs("BLINDSPOT_SCORE", "0.8", agent="validation",
                  seq=11, value_type="NM"),
         ],
         synthesis_signal_count=11,
@@ -459,31 +459,31 @@ class TestToolPipelineOverride:
         resolved = ResolvedObservationSet(
             observations=[
                 _obs("DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK",
-                     agent="domain-evidence", seq=1),
-                _obs("DOMAIN_CONFIDENCE", "1.0", agent="domain-evidence",
+                     agent="evidence", seq=1),
+                _obs("DOMAIN_CONFIDENCE", "1.0", agent="evidence",
                      seq=2, value_type="NM"),
                 _obs("CLAIMREVIEW_MATCH", "TRUE^Match Found^FCK",
-                     agent="claimreview-matcher", seq=3),
+                     agent="evidence", seq=3),
                 _obs("CLAIMREVIEW_VERDICT", "FALSE^False^POLITIFACT",
-                     agent="claimreview-matcher", seq=4),
-                _obs("CLAIMREVIEW_MATCH_SCORE", "0.98", agent="claimreview-matcher",
+                     agent="evidence", seq=4),
+                _obs("CLAIMREVIEW_MATCH_SCORE", "0.98", agent="evidence",
                      seq=5, value_type="NM"),
                 ResolvedObservation(
-                    agent="claimreview-matcher", code="CLAIMREVIEW_SOURCE",
+                    agent="evidence", code="CLAIMREVIEW_SOURCE",
                     value="PolitiFact", value_type="ST", seq=6, status="F",
                     resolution_method="LATEST_F", timestamp="2026-01-01T00:00:00Z",
                 ),
                 _obs("CROSS_SPECTRUM_CORROBORATION", "TRUE^Corroborated^FCK",
-                     agent="blindspot-detector", seq=7),
+                     agent="validation", seq=7),
                 _obs("COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK",
                      agent="coverage-left", seq=8),
                 _obs("COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK",
                      agent="coverage-center", seq=9),
                 _obs("COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK",
                      agent="coverage-right", seq=10),
-                _obs("SOURCE_CONVERGENCE_SCORE", "0.9", agent="source-validator",
+                _obs("SOURCE_CONVERGENCE_SCORE", "0.9", agent="validation",
                      seq=11, value_type="NM"),
-                _obs("BLINDSPOT_SCORE", "0.0", agent="blindspot-detector",
+                _obs("BLINDSPOT_SCORE", "0.0", agent="validation",
                      seq=12, value_type="NM"),
             ],
             synthesis_signal_count=12,
@@ -595,7 +595,7 @@ class TestSerializationIntegrity:
         resolved = ResolvedObservationSet(
             observations=[
                 ResolvedObservation(
-                    agent="domain-evidence", code="DOMAIN_EVIDENCE_ALIGNMENT",
+                    agent="evidence", code="DOMAIN_EVIDENCE_ALIGNMENT",
                     value="SUPPORTS^Supports^FCK", value_type="CWE", seq=1,
                     status="F", resolution_method="LATEST_F",
                     timestamp="2026-01-01T00:00:00Z",
@@ -663,22 +663,22 @@ class TestResolverScorerIntegration:
 
         stream = FakeStream()
         # Add all the observations a full run would produce
-        stream.add_obs("run1", "domain-evidence", seq=1,
+        stream.add_obs("run1", "evidence", seq=1,
                        code="DOMAIN_EVIDENCE_ALIGNMENT",
                        value="SUPPORTS^Supports^FCK", value_type="CWE")
-        stream.add_obs("run1", "domain-evidence", seq=2,
+        stream.add_obs("run1", "evidence", seq=2,
                        code="DOMAIN_CONFIDENCE",
                        value="0.85", value_type="NM")
-        stream.add_obs("run1", "claimreview-matcher", seq=1,
+        stream.add_obs("run1", "evidence", seq=1,
                        code="CLAIMREVIEW_MATCH",
                        value="TRUE^Match Found^FCK", value_type="CWE")
-        stream.add_obs("run1", "claimreview-matcher", seq=2,
+        stream.add_obs("run1", "evidence", seq=2,
                        code="CLAIMREVIEW_VERDICT",
                        value="MOSTLY_TRUE^Mostly True^POLITIFACT", value_type="CWE")
-        stream.add_obs("run1", "claimreview-matcher", seq=3,
+        stream.add_obs("run1", "evidence", seq=3,
                        code="CLAIMREVIEW_MATCH_SCORE",
                        value="0.88", value_type="NM")
-        stream.add_obs("run1", "blindspot-detector", seq=1,
+        stream.add_obs("run1", "validation", seq=1,
                        code="CROSS_SPECTRUM_CORROBORATION",
                        value="TRUE^Corroborated^FCK", value_type="CWE")
         stream.add_obs("run1", "coverage-left", seq=1,
@@ -690,10 +690,10 @@ class TestResolverScorerIntegration:
         stream.add_obs("run1", "coverage-right", seq=1,
                        code="COVERAGE_FRAMING",
                        value="CRITICAL^Critical^FCK", value_type="CWE")
-        stream.add_obs("run1", "source-validator", seq=1,
+        stream.add_obs("run1", "validation", seq=1,
                        code="SOURCE_CONVERGENCE_SCORE",
                        value="0.65", value_type="NM")
-        stream.add_obs("run1", "blindspot-detector", seq=2,
+        stream.add_obs("run1", "validation", seq=2,
                        code="BLINDSPOT_SCORE",
                        value="0.15", value_type="NM")
 
@@ -714,13 +714,13 @@ class TestResolverScorerIntegration:
         from swarm_reasoning.agents.synthesizer.scorer import ConfidenceScorer
 
         stream = FakeStream()
-        stream.add_obs("run1", "domain-evidence", seq=1,
+        stream.add_obs("run1", "evidence", seq=1,
                        code="DOMAIN_EVIDENCE_ALIGNMENT",
                        value="SUPPORTS^Supports^FCK", value_type="CWE")
-        stream.add_obs("run1", "claimreview-matcher", seq=1,
+        stream.add_obs("run1", "evidence", seq=1,
                        code="CLAIMREVIEW_MATCH",
                        value="FALSE^No Match^FCK", value_type="CWE")
-        stream.add_obs("run1", "blindspot-detector", seq=1,
+        stream.add_obs("run1", "validation", seq=1,
                        code="BLINDSPOT_SCORE",
                        value="0.5", value_type="NM")
 

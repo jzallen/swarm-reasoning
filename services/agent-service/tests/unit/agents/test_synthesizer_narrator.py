@@ -38,11 +38,11 @@ def _basic_resolved() -> ResolvedObservationSet:
     return ResolvedObservationSet(
         observations=[
             _obs(
-                "DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK", agent="domain-evidence", seq=1
+                "DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK", agent="evidence", seq=1
             ),
-            _nm_obs("DOMAIN_CONFIDENCE", "0.9", agent="domain-evidence", seq=2),
-            _obs("CLAIMREVIEW_MATCH", "TRUE^Match Found^FCK", agent="claimreview-matcher", seq=3),
-            _obs("CLAIMREVIEW_VERDICT", "TRUE^True^POLITIFACT", agent="claimreview-matcher", seq=4),
+            _nm_obs("DOMAIN_CONFIDENCE", "0.9", agent="evidence", seq=2),
+            _obs("CLAIMREVIEW_MATCH", "TRUE^Match Found^FCK", agent="evidence", seq=3),
+            _obs("CLAIMREVIEW_VERDICT", "TRUE^True^POLITIFACT", agent="evidence", seq=4),
             _obs(
                 "CROSS_SPECTRUM_CORROBORATION",
                 "TRUE^Corroborated^FCK",

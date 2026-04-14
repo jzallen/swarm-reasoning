@@ -99,7 +99,7 @@ class TestResolutionCOverF:
     async def test_c_wins_over_f(self, stream, resolver):
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=1,
             code="DOMAIN_EVIDENCE_ALIGNMENT",
             value="SUPPORTS^Supports^FCK",
@@ -108,7 +108,7 @@ class TestResolutionCOverF:
         )
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=2,
             code="DOMAIN_EVIDENCE_ALIGNMENT",
             value="CONTRADICTS^Contradicts^FCK",
@@ -127,7 +127,7 @@ class TestResolutionCOverF:
     async def test_latest_c_by_seq(self, stream, resolver):
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=5,
             code="DOMAIN_EVIDENCE_ALIGNMENT",
             value="SUPPORTS^Supports^FCK",
@@ -136,7 +136,7 @@ class TestResolutionCOverF:
         )
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=10,
             code="DOMAIN_EVIDENCE_ALIGNMENT",
             value="PARTIAL^Partial^FCK",
@@ -158,7 +158,7 @@ class TestResolutionLatestF:
     async def test_latest_f_by_seq(self, stream, resolver):
         stream.add_obs(
             "run1",
-            "claimreview-matcher",
+            "evidence",
             seq=5,
             code="CLAIMREVIEW_VERDICT",
             value="TRUE^True^POLITIFACT",
@@ -167,7 +167,7 @@ class TestResolutionLatestF:
         )
         stream.add_obs(
             "run1",
-            "claimreview-matcher",
+            "evidence",
             seq=8,
             code="CLAIMREVIEW_VERDICT",
             value="FALSE^False^POLITIFACT",
@@ -186,7 +186,7 @@ class TestResolutionLatestF:
     async def test_single_f(self, stream, resolver):
         stream.add_obs(
             "run1",
-            "claimreview-matcher",
+            "evidence",
             seq=5,
             code="CLAIMREVIEW_VERDICT",
             value="TRUE^True^POLITIFACT",
@@ -207,7 +207,7 @@ class TestExclusion:
     async def test_x_excluded(self, stream, resolver):
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=9,
             code="DOMAIN_CONFIDENCE",
             value="0.8",
@@ -246,7 +246,7 @@ class TestExclusion:
         """F observation should still be picked even alongside P and X observations."""
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=1,
             code="DOMAIN_CONFIDENCE",
             value="0.5",
@@ -257,7 +257,7 @@ class TestExclusion:
         )
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=2,
             code="DOMAIN_CONFIDENCE",
             value="0.7",
@@ -268,7 +268,7 @@ class TestExclusion:
         )
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=3,
             code="DOMAIN_CONFIDENCE",
             value="0.9",
@@ -293,7 +293,7 @@ class TestSignalCount:
         # 3 different (agent, code) pairs
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=1,
             code="DOMAIN_EVIDENCE_ALIGNMENT",
             value="SUPPORTS^Supports^FCK",
@@ -302,7 +302,7 @@ class TestSignalCount:
         )
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=2,
             code="DOMAIN_CONFIDENCE",
             value="0.9",
@@ -376,7 +376,7 @@ class TestMixedStatuses:
     async def test_c_wins_in_mixed(self, stream, resolver):
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=1,
             code="DOMAIN_EVIDENCE_ALIGNMENT",
             value="SUPPORTS^Supports^FCK",
@@ -385,7 +385,7 @@ class TestMixedStatuses:
         )
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=5,
             code="DOMAIN_EVIDENCE_ALIGNMENT",
             value="PARTIAL^Partial^FCK",
@@ -394,7 +394,7 @@ class TestMixedStatuses:
         )
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=10,
             code="DOMAIN_EVIDENCE_ALIGNMENT",
             value="CONTRADICTS^Contradicts^FCK",
@@ -403,7 +403,7 @@ class TestMixedStatuses:
         )
         stream.add_obs(
             "run1",
-            "domain-evidence",
+            "evidence",
             seq=15,
             code="DOMAIN_EVIDENCE_ALIGNMENT",
             value="ABSENT^Absent^FCK",
@@ -429,17 +429,17 @@ class TestEmptyStreams:
 
     @pytest.mark.asyncio
     async def test_only_start_stop(self, stream, resolver):
-        stream.add_start("run1", "domain-evidence")
-        stream.add_stop("run1", "domain-evidence", count=0)
+        stream.add_start("run1", "evidence")
+        stream.add_stop("run1", "evidence", count=0)
 
         result = await resolver.resolve("run1", stream)
         assert result.synthesis_signal_count == 0
 
 
 class TestUpstreamAgentCount:
-    """Verify all 9 upstream agents are read."""
+    """Verify all 8 upstream agents are read."""
 
     def test_upstream_agents_list(self):
-        assert len(UPSTREAM_AGENTS) == 9
+        assert len(UPSTREAM_AGENTS) == 8
         assert "synthesizer" not in UPSTREAM_AGENTS
         assert "validation" in UPSTREAM_AGENTS

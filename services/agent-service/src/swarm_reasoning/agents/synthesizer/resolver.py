@@ -10,16 +10,15 @@ from swarm_reasoning.stream.key import stream_key
 
 logger = logging.getLogger(__name__)
 
-# All 9 upstream agent names the synthesizer reads from.
+# All 8 upstream agent names the synthesizer reads from.
 UPSTREAM_AGENTS = [
     "ingestion-agent",
     "claim-detector",
     "entity-extractor",
-    "claimreview-matcher",
+    "evidence",
     "coverage-left",
     "coverage-center",
     "coverage-right",
-    "domain-evidence",
     "validation",
 ]
 
@@ -28,7 +27,7 @@ class ObservationResolver:
     """Resolve upstream observations using epistemic status precedence."""
 
     async def resolve(self, run_id: str, stream: ReasoningStream) -> ResolvedObservationSet:
-        """Read all 10 upstream agent streams and apply resolution algorithm.
+        """Read all 8 upstream agent streams and apply resolution algorithm.
 
         For each (agent, code) pair:
         1. If any C-status, use highest seq C -> resolution_method="LATEST_C"

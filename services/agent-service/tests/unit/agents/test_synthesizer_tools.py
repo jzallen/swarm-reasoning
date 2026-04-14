@@ -43,7 +43,7 @@ def _make_resolved_set(
     if observations is None:
         observations = [
             ResolvedObservation(
-                agent="domain-evidence",
+                agent="evidence",
                 code="DOMAIN_EVIDENCE_ALIGNMENT",
                 value="SUPPORTS^Supports^FCK",
                 value_type="CWE",
@@ -53,7 +53,7 @@ def _make_resolved_set(
                 timestamp="2026-04-13T12:00:00Z",
             ),
             ResolvedObservation(
-                agent="claimreview-matcher",
+                agent="evidence",
                 code="CLAIMREVIEW_MATCH",
                 value="TRUE^Matched^FCK",
                 value_type="CWE",
@@ -63,7 +63,7 @@ def _make_resolved_set(
                 timestamp="2026-04-13T12:00:01Z",
             ),
             ResolvedObservation(
-                agent="claimreview-matcher",
+                agent="evidence",
                 code="CLAIMREVIEW_VERDICT",
                 value="TRUE^True^POLITIFACT",
                 value_type="CWE",
@@ -73,7 +73,7 @@ def _make_resolved_set(
                 timestamp="2026-04-13T12:00:02Z",
             ),
             ResolvedObservation(
-                agent="claimreview-matcher",
+                agent="evidence",
                 code="CLAIMREVIEW_MATCH_SCORE",
                 value="0.95",
                 value_type="NM",
@@ -282,7 +282,7 @@ class TestComputeConfidenceTool:
         ctx = _make_context()
         resolved = _make_resolved_set(signal_count=3, observations=[
             ResolvedObservation(
-                agent="domain-evidence", code="DOMAIN_EVIDENCE_ALIGNMENT",
+                agent="evidence", code="DOMAIN_EVIDENCE_ALIGNMENT",
                 value="SUPPORTS", value_type="CWE", seq=1, status="F",
                 resolution_method="LATEST_F", timestamp="2026-04-13T12:00:00Z",
             ),

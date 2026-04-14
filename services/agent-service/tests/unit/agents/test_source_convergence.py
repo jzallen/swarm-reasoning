@@ -68,7 +68,7 @@ class TestConvergenceScore:
                 url="https://cdc.gov/data",
                 associations=[
                     UrlAssociation("coverage-center", "COVERAGE_TOP_SOURCE_URL", "CDC"),
-                    UrlAssociation("domain-evidence", "DOMAIN_SOURCE_URL", "CDC"),
+                    UrlAssociation("evidence", "DOMAIN_SOURCE_URL", "CDC"),
                 ],
             ),
             # URL 2: cited by 2 agents (converging)
@@ -76,7 +76,7 @@ class TestConvergenceScore:
                 url="https://reuters.com/article",
                 associations=[
                     UrlAssociation("coverage-left", "COVERAGE_TOP_SOURCE_URL", "Reuters"),
-                    UrlAssociation("claimreview-matcher", "CLAIMREVIEW_URL", "Reuters"),
+                    UrlAssociation("evidence", "CLAIMREVIEW_URL", "Reuters"),
                 ],
             ),
             # URL 3: cited by 1 agent (not converging)
@@ -145,7 +145,7 @@ class TestConvergenceScore:
             ),
             ExtractedUrl(
                 url="https://cdc.gov/covid/data/#section2",
-                associations=[UrlAssociation("domain-evidence", "DOMAIN_SOURCE_URL", "CDC")],
+                associations=[UrlAssociation("evidence", "DOMAIN_SOURCE_URL", "CDC")],
             ),
         ]
         analyzer = ConvergenceAnalyzer()
@@ -160,15 +160,16 @@ class TestConvergenceCount:
                 url="https://cdc.gov/data",
                 associations=[
                     UrlAssociation("coverage-center", "COVERAGE_TOP_SOURCE_URL", "CDC"),
-                    UrlAssociation("domain-evidence", "DOMAIN_SOURCE_URL", "CDC"),
-                    UrlAssociation("claimreview-matcher", "CLAIMREVIEW_URL", "CDC"),
+                    UrlAssociation("evidence", "DOMAIN_SOURCE_URL", "CDC"),
+                    UrlAssociation("evidence", "CLAIMREVIEW_URL", "CDC"),
                 ],
             ),
         ]
         analyzer = ConvergenceAnalyzer()
         groups = analyzer.get_convergence_groups(extracted)
         count = analyzer.get_convergence_count("https://cdc.gov/data", groups)
-        assert count == 3
+        # 2 unique agents: coverage-center and evidence (evidence cited twice)
+        assert count == 2
 
     def test_convergence_count_single_agent(self):
         extracted = [

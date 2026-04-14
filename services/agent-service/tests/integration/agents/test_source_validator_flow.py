@@ -48,16 +48,16 @@ def _standard_cross_agent_data(num_urls: int = 5) -> dict:
         ("https://foxnews.com/article/3", "coverage-right", "COVERAGE_TOP_SOURCE_URL", "Fox News"),
         (
             "https://www.politifact.com/factchecks/2023/test",
-            "claimreview-matcher",
+            "evidence",
             "CLAIMREVIEW_URL",
             "PolitiFact",
         ),
-        ("https://www.cdc.gov/covid/data/", "domain-evidence", "DOMAIN_SOURCE_URL", "CDC"),
-        ("https://who.int/news/item/2023", "domain-evidence", "DOMAIN_SOURCE_URL", "WHO"),
+        ("https://www.cdc.gov/covid/data/", "evidence", "DOMAIN_SOURCE_URL", "CDC"),
+        ("https://who.int/news/item/2023", "evidence", "DOMAIN_SOURCE_URL", "WHO"),
         ("https://bbc.com/news/article-1", "coverage-center", "COVERAGE_TOP_SOURCE_URL", "BBC"),
         ("https://nytimes.com/2023/article", "coverage-left", "COVERAGE_TOP_SOURCE_URL", "NYT"),
         ("https://wsj.com/articles/test", "coverage-right", "COVERAGE_TOP_SOURCE_URL", "WSJ"),
-        ("https://snopes.com/fact-check/test", "claimreview-matcher", "CLAIMREVIEW_URL", "Snopes"),
+        ("https://snopes.com/fact-check/test", "evidence", "CLAIMREVIEW_URL", "Snopes"),
     ]
     return {
         "urls": [
@@ -137,13 +137,13 @@ class TestSourceValidatorFullFlow:
                 },
                 {
                     "url": "https://cdc.gov/covid/data",
-                    "agent": "domain-evidence",
+                    "agent": "evidence",
                     "code": "DOMAIN_SOURCE_URL",
                     "source_name": "CDC",
                 },
                 {
                     "url": "https://cdc.gov/covid/data",
-                    "agent": "claimreview-matcher",
+                    "agent": "evidence",
                     "code": "CLAIMREVIEW_URL",
                     "source_name": "CDC",
                 },
@@ -198,7 +198,8 @@ class TestSourceValidatorFullFlow:
                 score = float(msg.observation.value)
                 assert score > 0.0
 
-        # Check CITATION_LIST has convergenceCount = 3 for CDC
+        # Check CITATION_LIST has convergenceCount = 2 for CDC
+        # (2 unique agents: coverage-center and evidence)
         for call in stream_mock.publish.call_args_list:
             msg = call[0][1]
             if (
@@ -209,7 +210,7 @@ class TestSourceValidatorFullFlow:
                 cdc_citations = [
                     c for c in citations if c["sourceUrl"] == "https://cdc.gov/covid/data"
                 ]
-                assert all(c["convergenceCount"] == 3 for c in cdc_citations)
+                assert all(c["convergenceCount"] == 2 for c in cdc_citations)
 
     @pytest.mark.asyncio
     async def test_mixed_validation_statuses(self):

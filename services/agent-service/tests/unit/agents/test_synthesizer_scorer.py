@@ -51,11 +51,11 @@ def _full_evidence_set(
 ) -> ResolvedObservationSet:
     """Create a full evidence set with configurable values."""
     obs_list = [
-        _obs("DOMAIN_EVIDENCE_ALIGNMENT", alignment, agent="domain-evidence", seq=1),
-        _nm_obs("DOMAIN_CONFIDENCE", domain_conf, agent="domain-evidence", seq=2),
-        _obs("CLAIMREVIEW_MATCH", cr_match, agent="claimreview-matcher", seq=3),
-        _obs("CLAIMREVIEW_VERDICT", cr_verdict, agent="claimreview-matcher", seq=4),
-        _nm_obs("CLAIMREVIEW_MATCH_SCORE", cr_score, agent="claimreview-matcher", seq=5),
+        _obs("DOMAIN_EVIDENCE_ALIGNMENT", alignment, agent="evidence", seq=1),
+        _nm_obs("DOMAIN_CONFIDENCE", domain_conf, agent="evidence", seq=2),
+        _obs("CLAIMREVIEW_MATCH", cr_match, agent="evidence", seq=3),
+        _obs("CLAIMREVIEW_VERDICT", cr_verdict, agent="evidence", seq=4),
+        _nm_obs("CLAIMREVIEW_MATCH_SCORE", cr_score, agent="evidence", seq=5),
         _obs("CROSS_SPECTRUM_CORROBORATION", corroboration, agent="validation", seq=6),
         _obs("COVERAGE_FRAMING", framing_left, agent="coverage-left", seq=7),
         _obs("COVERAGE_FRAMING", framing_center, agent="coverage-center", seq=8),

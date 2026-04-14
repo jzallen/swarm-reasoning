@@ -42,11 +42,11 @@ def _resolved_with_claimreview(
 ) -> ResolvedObservationSet:
     return ResolvedObservationSet(
         observations=[
-            _obs("CLAIMREVIEW_MATCH", cr_match, agent="claimreview-matcher"),
-            _obs("CLAIMREVIEW_VERDICT", cr_verdict, agent="claimreview-matcher"),
-            _nm_obs("CLAIMREVIEW_MATCH_SCORE", cr_score, agent="claimreview-matcher"),
+            _obs("CLAIMREVIEW_MATCH", cr_match, agent="evidence"),
+            _obs("CLAIMREVIEW_VERDICT", cr_verdict, agent="evidence"),
+            _nm_obs("CLAIMREVIEW_MATCH_SCORE", cr_score, agent="evidence"),
             ResolvedObservation(
-                agent="claimreview-matcher",
+                agent="evidence",
                 code="CLAIMREVIEW_SOURCE",
                 value=cr_source,
                 value_type="ST",

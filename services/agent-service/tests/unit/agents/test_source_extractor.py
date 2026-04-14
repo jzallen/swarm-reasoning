@@ -29,13 +29,13 @@ class TestLinkExtractorFullExtraction:
                 },
                 {
                     "url": "https://www.politifact.com/factchecks/2023/test",
-                    "agent": "claimreview-matcher",
+                    "agent": "evidence",
                     "code": "CLAIMREVIEW_URL",
                     "source_name": "PolitiFact",
                 },
                 {
                     "url": "https://www.cdc.gov/covid/data/",
-                    "agent": "domain-evidence",
+                    "agent": "evidence",
                     "code": "DOMAIN_SOURCE_URL",
                     "source_name": "CDC",
                 },
@@ -49,8 +49,8 @@ class TestLinkExtractorFullExtraction:
             "coverage-left",
             "coverage-center",
             "coverage-right",
-            "claimreview-matcher",
-            "domain-evidence",
+            "evidence",
+            "evidence",
         }
 
     def test_preserves_source_names(self):
@@ -81,7 +81,7 @@ class TestLinkExtractorDeduplication:
                 },
                 {
                     "url": "https://www.cdc.gov/covid/data/",
-                    "agent": "domain-evidence",
+                    "agent": "evidence",
                     "code": "DOMAIN_SOURCE_URL",
                     "source_name": "CDC",
                 },
@@ -92,7 +92,7 @@ class TestLinkExtractorDeduplication:
         assert len(result) == 1
         assert len(result[0].associations) == 2
         agents = {a.agent for a in result[0].associations}
-        assert agents == {"coverage-center", "domain-evidence"}
+        assert agents == {"coverage-center", "evidence"}
 
 
 class TestLinkExtractorEmpty:

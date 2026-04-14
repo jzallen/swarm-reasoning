@@ -47,7 +47,7 @@ def run_store():
 
 @pytest.mark.asyncio
 async def test_workflow_completes_all_agents(run_store):
-    """Full run with 10 stub agents should complete successfully."""
+    """Full run with 9 stub agents should complete successfully."""
 
     @activity.defn(name="run_agent_activity")
     async def stub_agent(input: AgentActivityInput) -> AgentActivityOutput:
@@ -82,7 +82,7 @@ async def test_workflow_completes_all_agents(run_store):
             )
 
         assert result.final_status == "completed"
-        assert len(result.agent_results) == 10
+        assert len(result.agent_results) == 9
 
         dispatched = {r.agent_name for r in result.agent_results}
         assert dispatched == set(ALL_AGENTS)
@@ -136,7 +136,7 @@ async def test_workflow_check_worthiness_gate(run_store):
         dispatched = [r.agent_name for r in result.agent_results]
         assert "ingestion-agent" in dispatched
         assert "claim-detector" in dispatched
-        assert "claimreview-matcher" not in dispatched
+        assert "evidence" not in dispatched
         assert "synthesizer" not in dispatched
         assert run_store[input.run_id] == RunStatusEnum.CANCELLED
 
@@ -187,8 +187,8 @@ async def test_workflow_sequential_ordering(run_store):
 
         # Phase 2 fanout agents must come before Phase 3
         val_idx = execution_order.index("validation")
-        for fanout_agent in ["claimreview-matcher", "coverage-left", "coverage-center",
-                             "coverage-right", "domain-evidence"]:
+        for fanout_agent in ["evidence", "coverage-left", "coverage-center",
+                             "coverage-right"]:
             assert execution_order.index(fanout_agent) < val_idx
 
         # Phase 3 must come last, validation before synthesizer
@@ -528,11 +528,10 @@ async def test_cancellation_signal_idempotent_on_completed(run_store):
 # ---------------------------------------------------------------------------
 
 FANOUT_AGENTS = {
-    "claimreview-matcher",
+    "evidence",
     "coverage-left",
     "coverage-center",
     "coverage-right",
-    "domain-evidence",
 }
 
 
@@ -579,7 +578,7 @@ async def test_fanout_single_agent_failure(run_store):
             )
 
     assert result.final_status == "completed"
-    assert len(result.agent_results) == 10
+    assert len(result.agent_results) == 9
 
     by_name = {r.agent_name: r for r in result.agent_results}
     assert by_name["coverage-left"].terminal_status == "X"
@@ -646,7 +645,7 @@ async def test_fanout_mixed_results(run_store):
     Two agents fail, three succeed — workflow completes with partial results.
     """
 
-    failing = {"coverage-right", "domain-evidence"}
+    failing = {"coverage-right", "evidence"}
 
     @activity.defn(name="run_agent_activity")
     async def stub_mixed(input: AgentActivityInput) -> AgentActivityOutput:
@@ -683,7 +682,7 @@ async def test_fanout_mixed_results(run_store):
             )
 
     assert result.final_status == "completed"
-    assert len(result.agent_results) == 10
+    assert len(result.agent_results) == 9
 
     by_name = {r.agent_name: r for r in result.agent_results}
 

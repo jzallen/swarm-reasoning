@@ -141,7 +141,7 @@ class TestObservation:
     def test_valid_cwe_observation(self):
         obs = Observation(
             **_make_obs(
-                agent="claimreview-matcher",
+                agent="evidence",
                 code="CLAIMREVIEW_MATCH",
                 value="TRUE^Match Found^FCK",
                 valueType="CWE",
@@ -188,7 +188,7 @@ class TestObservation:
         with pytest.raises(ValidationError, match="CODE\\^Display\\^System"):
             Observation(
                 **_make_obs(
-                    agent="claimreview-matcher",
+                    agent="evidence",
                     code="CLAIMREVIEW_MATCH",
                     value="just a string",
                     valueType="CWE",

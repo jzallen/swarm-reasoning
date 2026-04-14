@@ -41,12 +41,12 @@ class TestCitationAggregation:
             ExtractedUrl(
                 url="https://politifact.com/check",
                 associations=[
-                    UrlAssociation("claimreview-matcher", "CLAIMREVIEW_URL", "PolitiFact")
+                    UrlAssociation("evidence", "CLAIMREVIEW_URL", "PolitiFact")
                 ],
             ),
             ExtractedUrl(
                 url="https://cdc.gov/data",
-                associations=[UrlAssociation("domain-evidence", "DOMAIN_SOURCE_URL", "CDC")],
+                associations=[UrlAssociation("evidence", "DOMAIN_SOURCE_URL", "CDC")],
             ),
         ]
         validations = {
@@ -80,7 +80,7 @@ class TestCitationAggregation:
                 url="https://cdc.gov/data",
                 associations=[
                     UrlAssociation("coverage-center", "COVERAGE_TOP_SOURCE_URL", "CDC"),
-                    UrlAssociation("domain-evidence", "DOMAIN_SOURCE_URL", "CDC"),
+                    UrlAssociation("evidence", "DOMAIN_SOURCE_URL", "CDC"),
                 ],
             ),
         ]
@@ -96,7 +96,7 @@ class TestCitationAggregation:
         assert len(citations) == 2
         assert all(c.convergence_count == 2 for c in citations)
         agents = {c.agent for c in citations}
-        assert agents == {"coverage-center", "domain-evidence"}
+        assert agents == {"coverage-center", "evidence"}
 
     def test_mixed_validation_statuses(self):
         extracted = [
@@ -158,11 +158,11 @@ class TestCitationSorting:
             ),
             ExtractedUrl(
                 url="https://a.com",
-                associations=[UrlAssociation("claimreview-matcher", "CLAIMREVIEW_URL", "A")],
+                associations=[UrlAssociation("evidence", "CLAIMREVIEW_URL", "A")],
             ),
             ExtractedUrl(
                 url="https://m.com",
-                associations=[UrlAssociation("domain-evidence", "DOMAIN_SOURCE_URL", "M")],
+                associations=[UrlAssociation("evidence", "DOMAIN_SOURCE_URL", "M")],
             ),
         ]
         validations = {
@@ -177,9 +177,9 @@ class TestCitationSorting:
         citations = agg.aggregate(extracted, validations, groups)
 
         assert [c.agent for c in citations] == [
-            "claimreview-matcher",
             "coverage-right",
-            "domain-evidence",
+            "evidence",
+            "evidence",
         ]
 
 
@@ -187,7 +187,7 @@ class TestCitationJsonSerialization:
     def test_json_roundtrip(self):
         citations = [
             Citation(
-                "https://cdc.gov/data", "CDC", "domain-evidence", "DOMAIN_SOURCE_URL", "live", 2
+                "https://cdc.gov/data", "CDC", "evidence", "DOMAIN_SOURCE_URL", "live", 2
             ),
             Citation(
                 "https://reuters.com/article",
@@ -234,12 +234,12 @@ class TestCitationJsonSerialization:
 
 class TestCitationModel:
     def test_to_dict(self):
-        c = Citation("https://cdc.gov", "CDC", "domain-evidence", "DOMAIN_SOURCE_URL", "live", 2)
+        c = Citation("https://cdc.gov", "CDC", "evidence", "DOMAIN_SOURCE_URL", "live", 2)
         d = c.to_dict()
         assert d == {
             "sourceUrl": "https://cdc.gov",
             "sourceName": "CDC",
-            "agent": "domain-evidence",
+            "agent": "evidence",
             "observationCode": "DOMAIN_SOURCE_URL",
             "validationStatus": "live",
             "convergenceCount": 2,

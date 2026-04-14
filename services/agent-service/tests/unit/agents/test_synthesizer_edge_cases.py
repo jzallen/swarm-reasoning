@@ -71,11 +71,11 @@ def _full_evidence_set(**overrides) -> ResolvedObservationSet:
     defaults.update(overrides)
     d = defaults
     obs_list = [
-        _obs("DOMAIN_EVIDENCE_ALIGNMENT", d["alignment"], agent="domain-evidence", seq=1),
-        _nm_obs("DOMAIN_CONFIDENCE", d["domain_conf"], agent="domain-evidence", seq=2),
-        _obs("CLAIMREVIEW_MATCH", d["cr_match"], agent="claimreview-matcher", seq=3),
-        _obs("CLAIMREVIEW_VERDICT", d["cr_verdict"], agent="claimreview-matcher", seq=4),
-        _nm_obs("CLAIMREVIEW_MATCH_SCORE", d["cr_score"], agent="claimreview-matcher", seq=5),
+        _obs("DOMAIN_EVIDENCE_ALIGNMENT", d["alignment"], agent="evidence", seq=1),
+        _nm_obs("DOMAIN_CONFIDENCE", d["domain_conf"], agent="evidence", seq=2),
+        _obs("CLAIMREVIEW_MATCH", d["cr_match"], agent="evidence", seq=3),
+        _obs("CLAIMREVIEW_VERDICT", d["cr_verdict"], agent="evidence", seq=4),
+        _nm_obs("CLAIMREVIEW_MATCH_SCORE", d["cr_score"], agent="evidence", seq=5),
         _obs("CROSS_SPECTRUM_CORROBORATION", d["corroboration"], agent="blindspot-detector", seq=6),
         _obs("COVERAGE_FRAMING", d["framing_left"], agent="coverage-left", seq=7),
         _obs("COVERAGE_FRAMING", d["framing_center"], agent="coverage-center", seq=8),
@@ -182,9 +182,9 @@ class TestResolverStreamFailure:
     @pytest.mark.asyncio
     async def test_partial_stream_failure(self):
         """If one agent stream fails, others are still resolved."""
-        stream = FailingStream(failing_agents={"domain-evidence"})
+        stream = FailingStream(failing_agents={"coverage-left"})
         stream.add_obs(
-            "run1", "claimreview-matcher", seq=1,
+            "run1", "evidence", seq=1,
             code="CLAIMREVIEW_MATCH", value="TRUE^Match^FCK", value_type="CWE",
         )
 
@@ -192,7 +192,7 @@ class TestResolverStreamFailure:
         result = await resolver.resolve("run1", stream)
 
         assert result.find("CLAIMREVIEW_MATCH") is not None
-        assert result.find("DOMAIN_EVIDENCE_ALIGNMENT") is None
+        assert result.find("COVERAGE_FRAMING", agent="coverage-left") is None
         assert result.synthesis_signal_count == 1
 
     @pytest.mark.asyncio
@@ -200,9 +200,9 @@ class TestResolverStreamFailure:
         """If all agent streams fail, empty result set with no crash."""
         all_agents = {
             "ingestion-agent", "claim-detector", "entity-extractor",
-            "claimreview-matcher", "coverage-left", "coverage-center",
-            "coverage-right", "domain-evidence", "source-validator",
-            "blindspot-detector",
+            "evidence", "coverage-left", "coverage-center",
+            "coverage-right",
+            "validation",
         }
         stream = FailingStream(failing_agents=all_agents)
 
@@ -222,7 +222,7 @@ class TestResolverStreamFailure:
             code="COVERAGE_FRAMING", value="NEUTRAL^Neutral^FCK", value_type="CWE",
         )
         stream.add_obs(
-            "run1", "domain-evidence", seq=1,
+            "run1", "evidence", seq=1,
             code="DOMAIN_EVIDENCE_ALIGNMENT", value="SUPPORTS^Supports^FCK",
             value_type="CWE",
         )
@@ -242,12 +242,12 @@ class TestResolverAllCancelled:
     async def test_all_x_status(self):
         stream = FakeStream()
         stream.add_obs(
-            "run1", "domain-evidence", seq=1,
+            "run1", "evidence", seq=1,
             code="DOMAIN_EVIDENCE_ALIGNMENT", value="SUPPORTS^Supports^FCK",
             value_type="CWE", status="X",
         )
         stream.add_obs(
-            "run1", "claimreview-matcher", seq=1,
+            "run1", "evidence", seq=1,
             code="CLAIMREVIEW_MATCH", value="TRUE^Match^FCK",
             value_type="CWE", status="X",
         )
@@ -264,7 +264,7 @@ class TestResolverAllCancelled:
         """Only P-status observations → all excluded with warnings."""
         stream = FakeStream()
         stream.add_obs(
-            "run1", "domain-evidence", seq=1,
+            "run1", "evidence", seq=1,
             code="DOMAIN_EVIDENCE_ALIGNMENT", value="SUPPORTS^Supports^FCK",
             value_type="CWE", status="P",
         )
@@ -323,7 +323,7 @@ class TestResolverHighSeqSelection:
         stream = FakeStream()
         for seq, val in [(1, "FALSE"), (5, "HALF_TRUE"), (3, "TRUE"), (10, "MOSTLY_TRUE")]:
             stream.add_obs(
-                "run1", "claimreview-matcher", seq=seq,
+                "run1", "evidence", seq=seq,
                 code="CLAIMREVIEW_VERDICT", value=f"{val}^{val}^POLITIFACT",
                 value_type="CWE", status="F",
             )
@@ -340,13 +340,13 @@ class TestResolverHighSeqSelection:
         stream = FakeStream()
         for seq, val in [(2, "FALSE"), (8, "TRUE"), (6, "HALF_TRUE")]:
             stream.add_obs(
-                "run1", "claimreview-matcher", seq=seq,
+                "run1", "evidence", seq=seq,
                 code="CLAIMREVIEW_VERDICT", value=f"{val}^{val}^POLITIFACT",
                 value_type="CWE", status="C",
             )
         # Also add F observation with higher seq (should be ignored)
         stream.add_obs(
-            "run1", "claimreview-matcher", seq=99,
+            "run1", "evidence", seq=99,
             code="CLAIMREVIEW_VERDICT", value="PANTS_FIRE^Pants on Fire^POLITIFACT",
             value_type="CWE", status="F",
         )
@@ -440,7 +440,7 @@ class TestScorerSingleComponent:
         resolved = ResolvedObservationSet(
             observations=[
                 _obs("DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK",
-                     agent="domain-evidence"),
+                     agent="evidence"),
             ],
             synthesis_signal_count=5,
         )
@@ -472,7 +472,7 @@ class TestScorerPartialCoverage:
         resolved = ResolvedObservationSet(
             observations=[
                 _obs("DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK",
-                     agent="domain-evidence"),
+                     agent="evidence"),
                 _obs("COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK",
                      agent="coverage-left"),
             ],
@@ -488,7 +488,7 @@ class TestScorerPartialCoverage:
         resolved = ResolvedObservationSet(
             observations=[
                 _obs("DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK",
-                     agent="domain-evidence"),
+                     agent="evidence"),
                 _obs("COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK",
                      agent="coverage-left"),
                 _obs("COVERAGE_FRAMING", "CRITICAL^Critical^FCK",
@@ -616,11 +616,11 @@ class TestMapperOverrideEdgeCases:
         mapper = VerdictMapper()
         resolved = ResolvedObservationSet(
             observations=[
-                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="claimreview-matcher"),
-                _obs("CLAIMREVIEW_VERDICT", "TRUE^True^POLITIFACT", agent="claimreview-matcher"),
-                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.90", agent="claimreview-matcher"),
+                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="evidence"),
+                _obs("CLAIMREVIEW_VERDICT", "TRUE^True^POLITIFACT", agent="evidence"),
+                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.90", agent="evidence"),
                 ResolvedObservation(
-                    agent="claimreview-matcher", code="CLAIMREVIEW_SOURCE",
+                    agent="evidence", code="CLAIMREVIEW_SOURCE",
                     value="PolitiFact", value_type="ST", seq=4, status="F",
                     resolution_method="LATEST_F", timestamp="2026-01-01T00:00:00Z",
                 ),
@@ -636,9 +636,9 @@ class TestMapperOverrideEdgeCases:
         mapper = VerdictMapper()
         resolved = ResolvedObservationSet(
             observations=[
-                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="claimreview-matcher"),
-                _obs("CLAIMREVIEW_VERDICT", "TRUE^True^POLITIFACT", agent="claimreview-matcher"),
-                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.8999", agent="claimreview-matcher"),
+                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="evidence"),
+                _obs("CLAIMREVIEW_VERDICT", "TRUE^True^POLITIFACT", agent="evidence"),
+                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.8999", agent="evidence"),
             ],
             synthesis_signal_count=3,
         )
@@ -651,9 +651,9 @@ class TestMapperOverrideEdgeCases:
         mapper = VerdictMapper()
         resolved = ResolvedObservationSet(
             observations=[
-                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="claimreview-matcher"),
-                _obs("CLAIMREVIEW_VERDICT", "FALSE^False^POLITIFACT", agent="claimreview-matcher"),
-                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.95", agent="claimreview-matcher"),
+                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="evidence"),
+                _obs("CLAIMREVIEW_VERDICT", "FALSE^False^POLITIFACT", agent="evidence"),
+                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.95", agent="evidence"),
                 # No CLAIMREVIEW_SOURCE
             ],
             synthesis_signal_count=3,
@@ -667,9 +667,9 @@ class TestMapperOverrideEdgeCases:
         mapper = VerdictMapper()
         resolved = ResolvedObservationSet(
             observations=[
-                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="claimreview-matcher"),
-                _obs("CLAIMREVIEW_VERDICT", "FALSE^False^POLITIFACT", agent="claimreview-matcher"),
-                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "not-a-number", agent="claimreview-matcher"),
+                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="evidence"),
+                _obs("CLAIMREVIEW_VERDICT", "FALSE^False^POLITIFACT", agent="evidence"),
+                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "not-a-number", agent="evidence"),
             ],
             synthesis_signal_count=3,
         )
@@ -682,11 +682,11 @@ class TestMapperOverrideEdgeCases:
         mapper = VerdictMapper()
         resolved = ResolvedObservationSet(
             observations=[
-                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="claimreview-matcher"),
-                _obs("CLAIMREVIEW_VERDICT", "UNKNOWN^Unknown^FCK", agent="claimreview-matcher"),
-                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.95", agent="claimreview-matcher"),
+                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="evidence"),
+                _obs("CLAIMREVIEW_VERDICT", "UNKNOWN^Unknown^FCK", agent="evidence"),
+                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.95", agent="evidence"),
                 ResolvedObservation(
-                    agent="claimreview-matcher", code="CLAIMREVIEW_SOURCE",
+                    agent="evidence", code="CLAIMREVIEW_SOURCE",
                     value="PolitiFact", value_type="ST", seq=4, status="F",
                     resolution_method="LATEST_F", timestamp="2026-01-01T00:00:00Z",
                 ),
@@ -705,8 +705,8 @@ class TestMapperOverrideEdgeCases:
         mapper = VerdictMapper()
         resolved = ResolvedObservationSet(
             observations=[
-                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="claimreview-matcher"),
-                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.95", agent="claimreview-matcher"),
+                _obs("CLAIMREVIEW_MATCH", "TRUE^Match^FCK", agent="evidence"),
+                _nm_obs("CLAIMREVIEW_MATCH_SCORE", "0.95", agent="evidence"),
             ],
             synthesis_signal_count=2,
         )
@@ -736,7 +736,7 @@ class TestNarratorFallbackEdgeCases:
         resolved = ResolvedObservationSet(
             observations=[
                 _obs("DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK",
-                     agent="domain-evidence"),
+                     agent="evidence"),
             ],
             synthesis_signal_count=5,
         )

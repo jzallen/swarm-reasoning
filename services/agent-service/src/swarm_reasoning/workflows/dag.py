@@ -33,11 +33,10 @@ DAG: tuple[Phase, ...] = (
         id="2",
         name="fanout",
         agents=(
-            "claimreview-matcher",
+            "evidence",
             "coverage-left",
             "coverage-center",
             "coverage-right",
-            "domain-evidence",
         ),
         mode=PhaseMode.PARALLEL,
     ),

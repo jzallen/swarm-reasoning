@@ -59,7 +59,7 @@ def _url_data(converging: bool = False) -> list[dict]:
         urls.append({
             "url": "https://reuters.com/article/1",
             "associations": [
-                {"agent": "domain-evidence", "observation_code": "DOMAIN_SOURCE_URL", "source_name": "Reuters"},
+                {"agent": "evidence", "observation_code": "DOMAIN_SOURCE_URL", "source_name": "Reuters"},
             ],
         })
     return urls

@@ -38,7 +38,7 @@ class ObservationCode(str, Enum):
     ENTITY_LOCATION = "ENTITY_LOCATION"
     ENTITY_STATISTIC = "ENTITY_STATISTIC"
 
-    # claimreview-matcher
+    # evidence (ClaimReview)
     CLAIMREVIEW_MATCH = "CLAIMREVIEW_MATCH"
     CLAIMREVIEW_VERDICT = "CLAIMREVIEW_VERDICT"
     CLAIMREVIEW_SOURCE = "CLAIMREVIEW_SOURCE"
@@ -56,7 +56,7 @@ class ObservationCode(str, Enum):
     BLINDSPOT_DIRECTION = "BLINDSPOT_DIRECTION"
     CROSS_SPECTRUM_CORROBORATION = "CROSS_SPECTRUM_CORROBORATION"
 
-    # domain-evidence
+    # evidence (domain)
     DOMAIN_SOURCE_NAME = "DOMAIN_SOURCE_NAME"
     DOMAIN_SOURCE_URL = "DOMAIN_SOURCE_URL"
     DOMAIN_EVIDENCE_ALIGNMENT = "DOMAIN_EVIDENCE_ALIGNMENT"
@@ -157,35 +157,35 @@ _CODE_METADATA: dict[ObservationCode, dict] = {
     },
     ObservationCode.CLAIMREVIEW_MATCH: {
         "display": "ClaimReview Match Found",
-        "owner_agent": "claimreview-matcher",
+        "owner_agent": "evidence",
         "value_type": ValueType.CWE,
         "units": None,
         "reference_range": None,
     },
     ObservationCode.CLAIMREVIEW_VERDICT: {
         "display": "ClaimReview Verdict",
-        "owner_agent": "claimreview-matcher",
+        "owner_agent": "evidence",
         "value_type": ValueType.CWE,
         "units": None,
         "reference_range": None,
     },
     ObservationCode.CLAIMREVIEW_SOURCE: {
         "display": "ClaimReview Source Organization",
-        "owner_agent": "claimreview-matcher",
+        "owner_agent": "evidence",
         "value_type": ValueType.ST,
         "units": None,
         "reference_range": None,
     },
     ObservationCode.CLAIMREVIEW_URL: {
         "display": "ClaimReview Source URL",
-        "owner_agent": "claimreview-matcher",
+        "owner_agent": "evidence",
         "value_type": ValueType.ST,
         "units": None,
         "reference_range": None,
     },
     ObservationCode.CLAIMREVIEW_MATCH_SCORE: {
         "display": "ClaimReview Semantic Match Score",
-        "owner_agent": "claimreview-matcher",
+        "owner_agent": "evidence",
         "value_type": ValueType.NM,
         "units": "score",
         "reference_range": "0.0-1.0",
@@ -241,28 +241,28 @@ _CODE_METADATA: dict[ObservationCode, dict] = {
     },
     ObservationCode.DOMAIN_SOURCE_NAME: {
         "display": "Domain Primary Source Name",
-        "owner_agent": "domain-evidence",
+        "owner_agent": "evidence",
         "value_type": ValueType.ST,
         "units": None,
         "reference_range": None,
     },
     ObservationCode.DOMAIN_SOURCE_URL: {
         "display": "Domain Primary Source URL",
-        "owner_agent": "domain-evidence",
+        "owner_agent": "evidence",
         "value_type": ValueType.ST,
         "units": None,
         "reference_range": None,
     },
     ObservationCode.DOMAIN_EVIDENCE_ALIGNMENT: {
         "display": "Domain Evidence Alignment",
-        "owner_agent": "domain-evidence",
+        "owner_agent": "evidence",
         "value_type": ValueType.CWE,
         "units": None,
         "reference_range": None,
     },
     ObservationCode.DOMAIN_CONFIDENCE: {
         "display": "Domain Evidence Confidence",
-        "owner_agent": "domain-evidence",
+        "owner_agent": "evidence",
         "value_type": ValueType.NM,
         "units": "score",
         "reference_range": "0.0-1.0",
