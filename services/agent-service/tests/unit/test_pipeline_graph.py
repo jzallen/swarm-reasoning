@@ -4,14 +4,32 @@ Verifies graph structure (correct nodes/edges) and routing behavior
 (check-worthy fan-out vs. not-check-worthy shortcut).
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
+from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.graph import (
     build_pipeline_graph,
     pipeline_graph,
     route_after_intake,
 )
 from swarm_reasoning.pipeline.state import PipelineState
+
+
+def _make_mock_pipeline_context() -> PipelineContext:
+    """Create a mock PipelineContext for tests that traverse the validation node."""
+    ctx = MagicMock(spec=PipelineContext)
+    ctx.publish_observation = AsyncMock()
+    ctx.publish_progress = AsyncMock()
+    ctx.heartbeat = MagicMock()
+    ctx.next_seq = MagicMock(return_value=1)
+    return ctx
+
+
+def _make_config_with_context() -> dict:
+    """Build a LangGraph-compatible config dict with a mock PipelineContext."""
+    return {"configurable": {"pipeline_context": _make_mock_pipeline_context()}}
 
 
 class TestGraphStructure:
@@ -86,7 +104,7 @@ class TestPipelineExecution:
             "observations": [],
             "errors": [],
         }
-        result = await pipeline_graph.ainvoke(state)
+        result = await pipeline_graph.ainvoke(state, _make_config_with_context())
         assert result["claim_text"] == "Test claim"
         assert result["run_id"] == "run-1"
 
@@ -115,7 +133,7 @@ class TestPipelineExecution:
             "observations": [],
             "errors": [],
         }
-        result = await pipeline_graph.ainvoke(state)
+        result = await pipeline_graph.ainvoke(state, _make_config_with_context())
         # Placeholder nodes don't append, so lists remain empty
         assert result["observations"] == []
         assert result["errors"] == []

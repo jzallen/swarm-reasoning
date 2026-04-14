@@ -18,6 +18,7 @@ import logging
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
+from swarm_reasoning.pipeline.nodes.validation import validation_node
 from swarm_reasoning.pipeline.state import PipelineState
 
 logger = logging.getLogger(__name__)
@@ -46,10 +47,7 @@ async def coverage_node(state: PipelineState) -> dict:
     return {}
 
 
-async def validation_node(state: PipelineState) -> dict:
-    """Placeholder: validation (M4) -- URL validation, convergence, blindspot analysis."""
-    logger.info("validation_node: placeholder (no-op)")
-    return {}
+# validation_node: imported from pipeline.nodes.validation (M4.1)
 
 
 async def synthesizer_node(state: PipelineState) -> dict:
