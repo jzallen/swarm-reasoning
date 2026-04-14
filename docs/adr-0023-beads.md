@@ -1,5 +1,19 @@
 # ADR-0023: LangGraph Pipeline — Implementation Beads
 
+Bead graph created 2026-04-14. 42 beads (9 epics + 33 tasks) across M0-M8, 5 dependency layers.
+
+| Epic | Bead ID | Tasks | Layer | Depends On |
+|------|---------|-------|-------|------------|
+| M0: Pipeline Infrastructure | sr-4me | 5 | 0 | — |
+| M1: Intake Node | sr-e2k | 3 | 1 | M0 |
+| M2: Evidence Node | sr-501 | 3 | 1 | M0 |
+| M3: Coverage Node | sr-yzd | 4 | 1 | M0 |
+| M4: Validation Node | sr-3kw | 3 | 1 | M0 |
+| M5: Synthesizer Node | sr-c37 | 3 | 1 | M0 |
+| M6: Graph Composition | sr-0tw | 4 | 2 | M1-M5 |
+| M7: Temporal Simplification | sr-etq | 4 | 3 | M6 |
+| M8: Cleanup | sr-qi2 | 4 | 4 | M7 |
+
 ## M0: Pipeline Infrastructure [epic] P1
 
 Pipeline skeleton: PipelineState TypedDict, PipelineContext (Redis client, run_id, observation publisher), graph skeleton with placeholder nodes, heartbeat callback, and the `run_langgraph_pipeline` Temporal activity wrapper.
