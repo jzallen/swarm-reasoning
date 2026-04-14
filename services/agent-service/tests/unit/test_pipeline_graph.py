@@ -1,16 +1,18 @@
-"""Tests for pipeline graph skeleton (M0.3).
+"""Tests for pipeline graph wiring (M0.3 + M1.2).
 
-Verifies graph structure (correct nodes/edges) and routing behavior
-(check-worthy fan-out vs. not-check-worthy shortcut).
+Verifies graph structure (correct nodes/edges), routing behavior
+(check-worthy fan-out vs. not-check-worthy shortcut), and that real
+node implementations are wired in and execute through the graph.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.graph import (
     build_pipeline_graph,
+    intake_node,
     pipeline_graph,
     route_after_intake,
 )
@@ -18,8 +20,11 @@ from swarm_reasoning.pipeline.state import PipelineState
 
 
 def _make_mock_pipeline_context() -> PipelineContext:
-    """Create a mock PipelineContext for tests that traverse the validation node."""
+    """Create a mock PipelineContext for tests that traverse real nodes."""
     ctx = MagicMock(spec=PipelineContext)
+    ctx.run_id = "run-test"
+    ctx.session_id = "sess-test"
+    ctx.redis_client = AsyncMock()
     ctx.publish_observation = AsyncMock()
     ctx.publish_progress = AsyncMock()
     ctx.heartbeat = MagicMock()
@@ -30,6 +35,24 @@ def _make_mock_pipeline_context() -> PipelineContext:
 def _make_config_with_context() -> dict:
     """Build a LangGraph-compatible config dict with a mock PipelineContext."""
     return {"configurable": {"pipeline_context": _make_mock_pipeline_context()}}
+
+
+def _intake_mocks():
+    """Context manager stack that mocks intake node's external dependencies."""
+    return (
+        patch(
+            "swarm_reasoning.pipeline.nodes.intake._get_anthropic_client",
+            return_value=AsyncMock(),
+        ),
+        patch(
+            "swarm_reasoning.pipeline.nodes.intake.check_duplicate",
+            return_value=False,
+        ),
+        patch(
+            "swarm_reasoning.pipeline.nodes.intake.call_claude",
+            return_value="POLITICS",
+        ),
+    )
 
 
 class TestGraphStructure:
@@ -56,6 +79,14 @@ class TestGraphStructure:
         g1 = build_pipeline_graph()
         g2 = build_pipeline_graph()
         assert set(g1.get_graph().nodes) == set(g2.get_graph().nodes)
+
+    def test_intake_node_is_wired(self):
+        """Verify intake_node is the real implementation, not a placeholder."""
+        from swarm_reasoning.pipeline.nodes.intake import (
+            intake_node as real_intake,
+        )
+
+        assert intake_node is real_intake
 
 
 class TestRouting:
@@ -92,48 +123,77 @@ class TestRouting:
 
 
 class TestPipelineExecution:
-    """End-to-end execution of the skeleton graph with placeholder nodes."""
+    """End-to-end execution of the pipeline graph with wired nodes."""
 
     @pytest.mark.asyncio
     async def test_check_worthy_path(self):
+        """Intake accepts claim and routes through fan-out path."""
         state: PipelineState = {
-            "claim_text": "Test claim",
+            "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
             "run_id": "run-1",
             "session_id": "sess-1",
-            "is_check_worthy": True,
             "observations": [],
             "errors": [],
         }
-        result = await pipeline_graph.ainvoke(state, _make_config_with_context())
-        assert result["claim_text"] == "Test claim"
+        mock_dup, mock_client, mock_claude = _intake_mocks()
+        with mock_dup, mock_client, mock_claude, patch(
+            "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
+        ) as mock_score, patch(
+            "swarm_reasoning.pipeline.nodes.intake.extract_entities_llm",
+        ) as mock_extract:
+            mock_score.return_value = MagicMock(
+                score=0.85, rationale="Strong factual claim",
+                proceed=True, passes=[0.85],
+            )
+            mock_extract.return_value = MagicMock(
+                persons=[], organizations=[], dates=["January 2024"],
+                locations=[], statistics=["3.5%"],
+            )
+            result = await pipeline_graph.ainvoke(
+                state, _make_config_with_context(),
+            )
+
+        assert result["is_check_worthy"] is True
+        assert result["normalized_claim"] is not None
         assert result["run_id"] == "run-1"
 
     @pytest.mark.asyncio
     async def test_not_check_worthy_path(self):
+        """Intake scores claim below threshold, shortcuts to synthesizer."""
         state: PipelineState = {
-            "claim_text": "What time is it?",
+            "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
             "run_id": "run-2",
             "session_id": "sess-2",
-            "is_check_worthy": False,
             "observations": [],
             "errors": [],
         }
-        result = await pipeline_graph.ainvoke(state)
-        assert result["claim_text"] == "What time is it?"
+        mock_dup, mock_client, mock_claude = _intake_mocks()
+        with mock_dup, mock_client, mock_claude, patch(
+            "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
+        ) as mock_score:
+            mock_score.return_value = MagicMock(
+                score=0.15, rationale="Not check-worthy",
+                proceed=False, passes=[0.15],
+            )
+            result = await pipeline_graph.ainvoke(
+                state, _make_config_with_context(),
+            )
+
         assert result["is_check_worthy"] is False
 
     @pytest.mark.asyncio
-    async def test_observations_and_errors_merge(self):
-        """Verify that list fields with add reducer don't lose data across branches."""
+    async def test_rejected_claim_routes_to_synthesizer(self):
+        """Claim too short for validation is rejected and routes to synthesizer."""
         state: PipelineState = {
-            "claim_text": "Test",
+            "claim_text": "Hi",
             "run_id": "run-3",
             "session_id": "sess-3",
-            "is_check_worthy": True,
             "observations": [],
             "errors": [],
         }
-        result = await pipeline_graph.ainvoke(state, _make_config_with_context())
-        # Placeholder nodes don't append, so lists remain empty
-        assert result["observations"] == []
-        assert result["errors"] == []
+        result = await pipeline_graph.ainvoke(
+            state, _make_config_with_context(),
+        )
+        # Rejected claim → is_check_worthy=False → synthesizer shortcut
+        assert result["is_check_worthy"] is False
+        assert any("rejected" in e.lower() for e in result["errors"])

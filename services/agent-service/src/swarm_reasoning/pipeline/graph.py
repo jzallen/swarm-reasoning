@@ -1,4 +1,4 @@
-"""Pipeline graph skeleton -- StateGraph with placeholder nodes (M0.3).
+"""Pipeline graph -- StateGraph wiring claim verification nodes (M0.3+).
 
 Defines the claim verification pipeline as a LangGraph StateGraph with 5 nodes:
 intake, evidence, coverage, validation, synthesizer.
@@ -8,7 +8,8 @@ Graph topology:
         -> [evidence, coverage] (parallel via Send) -> validation -> synthesizer -> END
         -> synthesizer (not-check-worthy shortcut)
 
-Placeholder nodes return empty dicts. M1-M5 replace them with real implementations.
+Wired nodes: intake (M1.2), validation (M4.1), synthesizer (M5.1).
+Placeholder nodes (evidence, coverage) return empty dicts until M2/M3.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
 from swarm_reasoning.pipeline.nodes.coverage import coverage_node
+from swarm_reasoning.pipeline.nodes.intake import intake_node
 from swarm_reasoning.pipeline.nodes.synthesizer import synthesizer_node
 from swarm_reasoning.pipeline.nodes.validation import validation_node
 from swarm_reasoning.pipeline.state import PipelineState
@@ -30,11 +32,7 @@ logger = logging.getLogger(__name__)
 # Placeholder nodes -- replaced by real implementations in M1-M5
 # ---------------------------------------------------------------------------
 
-
-async def intake_node(state: PipelineState) -> dict:
-    """Placeholder: intake (M1) -- claim intake, entity extraction, check-worthiness."""
-    logger.info("intake_node: placeholder (no-op)")
-    return {}
+# intake_node: imported from pipeline.nodes.intake (M1.2)
 
 
 async def evidence_node(state: PipelineState) -> dict:
