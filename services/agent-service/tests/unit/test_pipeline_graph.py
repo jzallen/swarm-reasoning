@@ -22,6 +22,7 @@ from swarm_reasoning.pipeline.graph import (
     intake_node,
     pipeline_graph,
     route_after_intake,
+    synthesizer_node,
     validation_node,
 )
 from swarm_reasoning.pipeline.state import PipelineState
@@ -104,6 +105,14 @@ class TestGraphStructure:
         )
 
         assert coverage_node is real_coverage
+
+    def test_synthesizer_node_is_wired(self):
+        """Verify synthesizer_node is the real implementation, not a placeholder."""
+        from swarm_reasoning.pipeline.nodes.synthesizer import (
+            synthesizer_node as real_synthesizer,
+        )
+
+        assert synthesizer_node is real_synthesizer
 
     def test_validation_node_is_wired(self):
         """Verify validation_node is the real implementation, not a placeholder."""
