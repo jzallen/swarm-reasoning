@@ -18,6 +18,7 @@ from swarm_reasoning.agents.synthesizer.narrator import NarrativeGenerator
 from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.graph import (
     build_pipeline_graph,
+    coverage_node,
     intake_node,
     pipeline_graph,
     route_after_intake,
@@ -95,6 +96,14 @@ class TestGraphStructure:
         )
 
         assert intake_node is real_intake
+
+    def test_coverage_node_is_wired(self):
+        """Verify coverage_node is the real implementation, not a placeholder."""
+        from swarm_reasoning.pipeline.nodes.coverage import (
+            coverage_node as real_coverage,
+        )
+
+        assert coverage_node is real_coverage
 
     def test_validation_node_is_wired(self):
         """Verify validation_node is the real implementation, not a placeholder."""
