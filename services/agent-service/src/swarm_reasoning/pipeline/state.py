@@ -22,7 +22,7 @@ class PipelineState(TypedDict, total=False):
 
     # --- Input (provided at pipeline invocation) ---
     claim_text: str
-    claim_url: str
+    claim_url: str | None
     submission_date: str
     run_id: str
     session_id: str
@@ -31,18 +31,18 @@ class PipelineState(TypedDict, total=False):
     normalized_claim: str
     claim_domain: str
     check_worthy_score: float
-    entities: dict
+    entities: dict[str, list[str]]  # {persons: [...], orgs: [...], ...}
     is_check_worthy: bool
 
     # --- Evidence output ---
     claimreview_matches: list[dict]
     domain_sources: list[dict]
-    evidence_confidence: float
+    evidence_confidence: float | None
 
     # --- Coverage output ---
-    coverage_left: dict
-    coverage_center: dict
-    coverage_right: dict
+    coverage_left: list[dict]
+    coverage_center: list[dict]
+    coverage_right: list[dict]
     framing_analysis: dict
 
     # --- Validation output ---
