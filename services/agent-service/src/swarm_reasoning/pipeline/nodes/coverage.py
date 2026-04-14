@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 
 import httpx
+from langgraph.types import RunnableConfig
 
 from swarm_reasoning.agents._utils import STOP_WORDS
 from swarm_reasoning.agents.coverage.core import (
@@ -333,7 +334,7 @@ async def _run_spectrum(
 # ===================================================================
 
 
-async def coverage_node(state: PipelineState, config: dict) -> dict:
+async def coverage_node(state: PipelineState, config: RunnableConfig) -> dict:
     """Coverage pipeline node: parameterized left/center/right news analysis.
 
     Runs three spectrum-specific analyses concurrently via asyncio.gather.
