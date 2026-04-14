@@ -14,6 +14,10 @@ class MissingApiKeyError(Exception):
     """Required API key is not configured — retrying won't fix it."""
 
 
+class NotCheckWorthyError(Exception):
+    """Claim scored below check-worthiness threshold — not a transient failure."""
+
+
 class SchemaValidationError(Exception):
     """Observation schema validation failed — retrying won't fix it."""
 
@@ -21,5 +25,6 @@ class SchemaValidationError(Exception):
 NON_RETRYABLE_ERROR_TYPES = [
     "InvalidClaimError",
     "MissingApiKeyError",
+    "NotCheckWorthyError",
     "SchemaValidationError",
 ]
