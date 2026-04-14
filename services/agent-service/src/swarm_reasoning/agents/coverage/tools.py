@@ -1,6 +1,6 @@
 """Coverage agent @tool definitions for LangChain agents (ADR-004).
 
-Wraps the pure functions from coverage_core.py as @tool-decorated functions.
+Wraps the pure functions from coverage/core.py as @tool-decorated functions.
 Each tool combines computation with observation publishing via AgentContext,
 matching the claim-detector tool pattern. Used by CoverageHandler and
 available for future LangGraph ReAct agent migration.
@@ -15,7 +15,7 @@ from typing import Annotated
 import httpx
 from langchain_core.tools import InjectedToolArg, tool
 
-from swarm_reasoning.agents.coverage_core import (
+from swarm_reasoning.agents.coverage.core import (
     NEWSAPI_URL,
     build_search_query,
     classify_framing,

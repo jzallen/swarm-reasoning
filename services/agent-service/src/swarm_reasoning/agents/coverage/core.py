@@ -310,7 +310,6 @@ class CoverageHandler(LangGraphBase):
     """
 
     SPECTRUM: str = ""
-    SOURCES_FILE: str = "sources.json"
 
     def __init__(self, redis_config: RedisConfig | None = None) -> None:
         super().__init__(redis_config)
@@ -318,17 +317,13 @@ class CoverageHandler(LangGraphBase):
 
     def _get_sources(self) -> list[dict]:
         if self._sources is None:
-            sources_path = Path(__file__).parent / self._source_dir() / self.SOURCES_FILE
+            sources_path = Path(__file__).parent / "sources" / f"{self.SPECTRUM}.json"
             self._sources = load_sources(sources_path)
         return self._sources
 
-    def _source_dir(self) -> str:
-        """Return the directory name for this spectrum's sources."""
-        return f"coverage_{self.SPECTRUM}"
-
     def _tools(self) -> list[BaseTool]:
-        # Lazy import to avoid circular dependency with coverage_core_tools
-        from swarm_reasoning.agents.coverage_core_tools import COVERAGE_TOOLS
+        # Lazy import to avoid circular dependency with coverage tools
+        from swarm_reasoning.agents.coverage.tools import COVERAGE_TOOLS
         from swarm_reasoning.agents.observation_tools import publish_progress
 
         return [*COVERAGE_TOOLS, publish_progress]

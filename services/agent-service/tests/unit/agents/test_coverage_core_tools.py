@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from swarm_reasoning.agents.coverage_core_tools import (
+from swarm_reasoning.agents.coverage.tools import (
     build_coverage_query,
     detect_coverage_framing,
     find_top_coverage_source,
@@ -61,7 +61,7 @@ class TestSearchCoverage:
 
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage_core_tools.httpx.AsyncClient") as mock_cls,
+            patch("swarm_reasoning.agents.coverage.tools.httpx.AsyncClient") as mock_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)

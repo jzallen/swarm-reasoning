@@ -12,16 +12,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from swarm_reasoning.agents.coverage_core import (
+from swarm_reasoning.agents.coverage.core import (
     CoverageHandler,
     build_search_query,
     classify_framing,
     compute_compound_sentiment,
     select_top_source,
 )
-from swarm_reasoning.agents.coverage_left.handler import CoverageLeftHandler
-from swarm_reasoning.agents.coverage_center.handler import CoverageCenterHandler
-from swarm_reasoning.agents.coverage_right.handler import CoverageRightHandler
+from swarm_reasoning.agents.coverage.handlers import (
+    CoverageLeftHandler,
+    CoverageCenterHandler,
+    CoverageRightHandler,
+)
 from swarm_reasoning.agents.fanout_base import ClaimContext
 from swarm_reasoning.agents.langgraph_base import LangGraphBase
 from swarm_reasoning.agents.tool_runtime import AgentContext
