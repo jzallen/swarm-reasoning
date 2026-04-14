@@ -1,4 +1,4 @@
-"""Tests for pipeline graph structure, routing, and synthesizer state output (M0.3 / M1.2 / M5.2).
+"""Tests for pipeline graph wiring and synthesizer state output (M0.3 / M1.2 / M2.2 / M5.2).
 
 Verifies graph structure (correct nodes/edges), routing behavior
 (check-worthy fan-out vs. not-check-worthy shortcut), that real
@@ -22,16 +22,17 @@ from swarm_reasoning.pipeline.graph import (
 from swarm_reasoning.pipeline.state import PipelineState
 
 
-def _make_mock_pipeline_context() -> PipelineContext:
-    """Create a mock PipelineContext for tests that traverse real nodes."""
-    ctx = MagicMock(spec=PipelineContext)
-    ctx.run_id = "run-test"
-    ctx.session_id = "sess-test"
-    ctx.redis_client = AsyncMock()
+def _make_mock_pipeline_context() -> MagicMock:
+    """Create a mock PipelineContext for tests that traverse pipeline nodes."""
+    ctx = MagicMock()
     ctx.publish_observation = AsyncMock()
     ctx.publish_progress = AsyncMock()
     ctx.heartbeat = MagicMock()
     ctx.next_seq = MagicMock(return_value=1)
+    ctx.run_id = "test-run"
+    ctx.session_id = "test-session"
+    ctx.redis_client = AsyncMock()
+    ctx.stream = AsyncMock()
     return ctx
 
 
@@ -129,8 +130,10 @@ class TestPipelineExecution:
     """End-to-end execution of the pipeline graph with wired nodes."""
 
     @pytest.mark.asyncio
-    async def test_check_worthy_path(self):
+    @patch("swarm_reasoning.pipeline.nodes.evidence.resilient_get", new_callable=AsyncMock)
+    async def test_check_worthy_path(self, mock_get):
         """Intake accepts claim and routes through fan-out path."""
+        mock_get.side_effect = ConnectionError("no network in tests")
         state: PipelineState = {
             "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
             "run_id": "run-1",

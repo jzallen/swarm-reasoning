@@ -24,6 +24,7 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 import httpx
+from langgraph.types import RunnableConfig
 
 from swarm_reasoning.agents._utils import STOP_WORDS, resilient_get
 from swarm_reasoning.agents.claimreview_matcher.scorer import cosine_similarity
@@ -357,7 +358,7 @@ def _build_search_query(normalized_claim: str, persons: list[str], organizations
     return truncated[:last_space] if last_space > 0 else truncated
 
 
-async def evidence_node(state: PipelineState, config: dict) -> dict:
+async def evidence_node(state: PipelineState, config: RunnableConfig) -> dict:
     """Evidence pipeline node: fact-check lookups and domain evidence research.
 
     Orchestrates the 4 evidence tools:

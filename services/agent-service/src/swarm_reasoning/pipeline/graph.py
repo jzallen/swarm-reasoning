@@ -8,8 +8,8 @@ Graph topology:
         -> [evidence, coverage] (parallel via Send) -> validation -> synthesizer -> END
         -> synthesizer (not-check-worthy shortcut)
 
-Wired nodes: intake (M1.2), coverage (M3.2), validation (M4.1), synthesizer (M5.1).
-Placeholder node: evidence returns empty dict until M2.
+Wired nodes: intake (M1.2), evidence (M2.2), coverage (M3.2),
+validation (M4.1), synthesizer (M5.1).
 """
 
 from __future__ import annotations
@@ -17,9 +17,10 @@ from __future__ import annotations
 import logging
 
 from langgraph.graph import END, StateGraph
-from langgraph.types import Send
+from langgraph.types import RunnableConfig, Send
 
 from swarm_reasoning.pipeline.nodes.coverage import coverage_node
+from swarm_reasoning.pipeline.nodes.evidence import evidence_node
 from swarm_reasoning.pipeline.nodes.intake import intake_node
 from swarm_reasoning.pipeline.nodes.synthesizer import synthesizer_node
 from swarm_reasoning.pipeline.nodes.validation import validation_node
@@ -29,18 +30,12 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Placeholder nodes -- replaced by real implementations in M1-M3
-# (validation: M4.1, synthesizer: M5.1 -- imported above)
+# All nodes wired -- no placeholders remaining
 # ---------------------------------------------------------------------------
 
 # intake_node: imported from pipeline.nodes.intake (M1.2)
 
-
-async def evidence_node(state: PipelineState) -> dict:
-    """Placeholder: evidence (M2) -- fact-check lookups and domain evidence."""
-    logger.info("evidence_node: placeholder (no-op)")
-    return {}
-
+# evidence_node: imported from pipeline.nodes.evidence (M2.2)
 
 # coverage_node: imported from pipeline.nodes.coverage (M3.2)
 
