@@ -407,6 +407,44 @@ class TestSynthesizerStateOutput:
     verdict, confidence, narrative, verdict_observations.
     """
 
+    @staticmethod
+    def _check_worthy_mocks():
+        """Return context managers that mock all external deps for check-worthy path."""
+        mock_dup, mock_client, mock_claude = _intake_mocks()
+        return [
+            mock_dup,
+            mock_client,
+            mock_claude,
+            patch(
+                "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
+                return_value=MagicMock(
+                    score=0.85, rationale="Factual claim", proceed=True, passes=[0.85],
+                ),
+            ),
+            patch(
+                "swarm_reasoning.pipeline.nodes.intake.extract_entities_llm",
+                return_value=MagicMock(
+                    persons=[], organizations=[], dates=[], locations=[], statistics=[],
+                ),
+            ),
+            patch(
+                "swarm_reasoning.pipeline.nodes.evidence.resilient_get",
+                new_callable=AsyncMock,
+                side_effect=ConnectionError("no network in tests"),
+            ),
+            patch.object(
+                NarrativeGenerator, "generate",
+                new_callable=AsyncMock, return_value="X" * 250,
+            ),
+        ]
+
+    async def _invoke_check_worthy(self, state):
+        """Run pipeline through check-worthy path with all external deps mocked."""
+        with ExitStack() as stack:
+            for cm in self._check_worthy_mocks():
+                stack.enter_context(cm)
+            return await pipeline_graph.ainvoke(state, _make_config_with_context())
+
     @pytest.mark.asyncio
     async def test_check_worthy_path_populates_verdict(self):
         """Check-worthy path with no upstream observations produces UNVERIFIABLE."""
@@ -414,14 +452,10 @@ class TestSynthesizerStateOutput:
             "claim_text": "The economy grew 5% last quarter",
             "run_id": "run-m52-1",
             "session_id": "sess-m52-1",
-            "is_check_worthy": True,
             "observations": [],
             "errors": [],
         }
-        with patch.object(
-            NarrativeGenerator, "generate", new_callable=AsyncMock, return_value="X" * 250,
-        ):
-            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+        result = await self._invoke_check_worthy(state)
 
         assert "verdict" in result
         assert result["verdict"] == "UNVERIFIABLE"
@@ -433,14 +467,10 @@ class TestSynthesizerStateOutput:
             "claim_text": "Claim for confidence test",
             "run_id": "run-m52-2",
             "session_id": "sess-m52-2",
-            "is_check_worthy": True,
             "observations": [],
             "errors": [],
         }
-        with patch.object(
-            NarrativeGenerator, "generate", new_callable=AsyncMock, return_value="X" * 250,
-        ):
-            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+        result = await self._invoke_check_worthy(state)
 
         assert "confidence" in result
         assert result["confidence"] is None
@@ -452,14 +482,10 @@ class TestSynthesizerStateOutput:
             "claim_text": "Claim for narrative test",
             "run_id": "run-m52-3",
             "session_id": "sess-m52-3",
-            "is_check_worthy": True,
             "observations": [],
             "errors": [],
         }
-        with patch.object(
-            NarrativeGenerator, "generate", new_callable=AsyncMock, return_value="X" * 250,
-        ):
-            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+        result = await self._invoke_check_worthy(state)
 
         assert "narrative" in result
         assert isinstance(result["narrative"], str)
@@ -472,14 +498,10 @@ class TestSynthesizerStateOutput:
             "claim_text": "Claim for observations test",
             "run_id": "run-m52-4",
             "session_id": "sess-m52-4",
-            "is_check_worthy": True,
             "observations": [],
             "errors": [],
         }
-        with patch.object(
-            NarrativeGenerator, "generate", new_callable=AsyncMock, return_value="X" * 250,
-        ):
-            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+        result = await self._invoke_check_worthy(state)
 
         assert "verdict_observations" in result
         assert isinstance(result["verdict_observations"], list)
@@ -495,12 +517,22 @@ class TestSynthesizerStateOutput:
             "claim_text": "What time is it?",
             "run_id": "run-m52-5",
             "session_id": "sess-m52-5",
-            "is_check_worthy": False,
-            "check_worthy_score": 0.12,
             "observations": [],
             "errors": [],
         }
-        result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+        mock_dup, mock_client, mock_claude = _intake_mocks()
+        with ExitStack() as stack:
+            stack.enter_context(mock_dup)
+            stack.enter_context(mock_client)
+            stack.enter_context(mock_claude)
+            stack.enter_context(patch(
+                "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
+                return_value=MagicMock(
+                    score=0.12, rationale="Not check-worthy",
+                    proceed=False, passes=[0.12],
+                ),
+            ))
+            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
 
         assert result["verdict"] == "NOT_CHECK_WORTHY"
         assert result["confidence"] == 1.0
@@ -514,11 +546,22 @@ class TestSynthesizerStateOutput:
             "claim_text": "Terminal node test",
             "run_id": "run-m52-6",
             "session_id": "sess-m52-6",
-            "is_check_worthy": False,
             "observations": [],
             "errors": [],
         }
-        result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+        mock_dup, mock_client, mock_claude = _intake_mocks()
+        with ExitStack() as stack:
+            stack.enter_context(mock_dup)
+            stack.enter_context(mock_client)
+            stack.enter_context(mock_claude)
+            stack.enter_context(patch(
+                "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
+                return_value=MagicMock(
+                    score=0.12, rationale="Not check-worthy",
+                    proceed=False, passes=[0.12],
+                ),
+            ))
+            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
 
         # All four synthesizer output fields must be present at graph output
         for field in ("verdict", "confidence", "narrative", "verdict_observations"):

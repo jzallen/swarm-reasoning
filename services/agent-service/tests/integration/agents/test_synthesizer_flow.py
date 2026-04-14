@@ -8,6 +8,7 @@ produces correct observations and output.
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -737,6 +738,74 @@ class TestResolverScorerIntegration:
 # ===================================================================
 
 
+def _make_fake_graph(tools):
+    """Create a fake LangGraph graph that calls the synthesis tools in order.
+
+    Simulates the ReAct agent by driving the tool chain directly.
+    """
+    tool_map = {t.name: t for t in tools}
+
+    async def ainvoke(inputs, config=None):
+        ctx = config["context"]
+
+        resolved_json = await tool_map["resolve_observations"].ainvoke(
+            {"run_id": ctx.run_id, "context": ctx}
+        )
+        data = json.loads(resolved_json)
+
+        score_json = await tool_map["compute_confidence"].ainvoke(
+            {"resolved_json": resolved_json, "context": ctx}
+        )
+        score_data = json.loads(score_json)
+
+        verdict_json = await tool_map["map_verdict"].ainvoke({
+            "confidence_score": score_data["score"],
+            "resolved_json": resolved_json,
+            "context": ctx,
+        })
+        verdict_data = json.loads(verdict_json)
+
+        await tool_map["generate_narrative"].ainvoke({
+            "resolved_json": resolved_json,
+            "verdict_code": verdict_data["verdict_code"],
+            "confidence_score": score_data["score"],
+            "override_reason": verdict_data["override_reason"],
+            "signal_count": data["synthesis_signal_count"],
+            "warnings_json": json.dumps(data["warnings"]),
+            "context": ctx,
+        })
+
+        return {"messages": []}
+
+    graph = MagicMock()
+    graph.ainvoke = AsyncMock(side_effect=ainvoke)
+    return graph
+
+
+def _handler_integration_patches(stream_mock, redis_mock):
+    """Return a context manager that patches handler integration dependencies.
+
+    Patches RedisReasoningStream, aioredis.Redis, activity (Temporal),
+    ChatAnthropic, and create_react_agent (with a fake tool-chain graph).
+    """
+    stack = ExitStack()
+    stack.enter_context(patch(
+        "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
+        return_value=stream_mock,
+    ))
+    stack.enter_context(patch(
+        "swarm_reasoning.agents.fanout_base.aioredis.Redis",
+        return_value=redis_mock,
+    ))
+    stack.enter_context(patch("swarm_reasoning.agents.fanout_base.activity"))
+    stack.enter_context(patch("swarm_reasoning.agents.synthesizer.handler.ChatAnthropic"))
+    stack.enter_context(patch(
+        "langgraph.prebuilt.create_react_agent",
+        side_effect=lambda *, model, tools, prompt, context_schema: _make_fake_graph(tools),
+    ))
+    return stack
+
+
 class TestSynthesizerHandlerIntegration:
     """Full handler.run() with mocked dependencies."""
 
@@ -768,17 +837,7 @@ class TestSynthesizerHandlerIntegration:
         redis_mock.xadd = AsyncMock()
         redis_mock.aclose = AsyncMock()
 
-        with (
-            patch(
-                "swarm_reasoning.agents.synthesizer.handler.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.synthesizer.handler.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.synthesizer.handler.activity"),
-        ):
+        with _handler_integration_patches(stream_mock, redis_mock):
             handler = SynthesizerHandler()
             inp = MagicMock()
             inp.run_id = "run-synth-001"
@@ -819,17 +878,7 @@ class TestSynthesizerHandlerIntegration:
         redis_mock.xadd = AsyncMock()
         redis_mock.aclose = AsyncMock()
 
-        with (
-            patch(
-                "swarm_reasoning.agents.synthesizer.handler.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.synthesizer.handler.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.synthesizer.handler.activity"),
-        ):
+        with _handler_integration_patches(stream_mock, redis_mock):
             handler = SynthesizerHandler()
             inp = MagicMock()
             inp.run_id = "run-synth-002"
@@ -852,7 +901,7 @@ class TestSynthesizerHandlerIntegration:
 
     @pytest.mark.asyncio
     async def test_handler_publishes_progress_events(self, monkeypatch):
-        """Handler publishes progress events to progress:{runId}."""
+        """Handler publishes lifecycle progress events to progress:{runId}."""
         resolved = _full_resolved_set()
 
         async def mock_resolve(self, run_id, stream):
@@ -878,17 +927,7 @@ class TestSynthesizerHandlerIntegration:
         redis_mock.xadd = AsyncMock()
         redis_mock.aclose = AsyncMock()
 
-        with (
-            patch(
-                "swarm_reasoning.agents.synthesizer.handler.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.synthesizer.handler.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.synthesizer.handler.activity"),
-        ):
+        with _handler_integration_patches(stream_mock, redis_mock):
             handler = SynthesizerHandler()
             inp = MagicMock()
             inp.run_id = "run-synth-003"
@@ -901,13 +940,10 @@ class TestSynthesizerHandlerIntegration:
         progress_keys = [call[0][0] for call in xadd_calls]
         assert all(k == "progress:run-synth-003" for k in progress_keys)
 
+        # Handler lifecycle publishes "starting" and "completed" progress events
         progress_messages = [call[0][1]["message"] for call in xadd_calls]
-        assert "Resolving observations..." in progress_messages
-        assert "Computing confidence..." in progress_messages
-        assert "Mapping verdict..." in progress_messages
-        assert "Generating narrative..." in progress_messages
-        # Final progress: "Verdict: TRUE" or similar
-        assert any(msg.startswith("Verdict:") for msg in progress_messages)
+        assert any("starting" in msg for msg in progress_messages)
+        assert any("completed" in msg for msg in progress_messages)
 
     @pytest.mark.asyncio
     async def test_handler_cleans_up_connections(self, monkeypatch):
@@ -937,17 +973,7 @@ class TestSynthesizerHandlerIntegration:
         redis_mock.xadd = AsyncMock()
         redis_mock.aclose = AsyncMock()
 
-        with (
-            patch(
-                "swarm_reasoning.agents.synthesizer.handler.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.synthesizer.handler.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.synthesizer.handler.activity"),
-        ):
+        with _handler_integration_patches(stream_mock, redis_mock):
             handler = SynthesizerHandler()
             inp = MagicMock()
             inp.run_id = "run-synth-004"
