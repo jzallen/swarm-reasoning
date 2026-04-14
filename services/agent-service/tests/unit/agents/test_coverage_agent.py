@@ -1,4 +1,10 @@
-"""Unit tests for coverage agents (left, center, right)."""
+"""Unit tests for coverage agents (left, center, right).
+
+Tests cover:
+  - Pure utility functions (build_search_query, sentiment, framing, source selection)
+  - LangGraphBase handler structure (tools, prompt, primary code)
+  - LangGraphBase handler execution (agent creation, source injection, seq sync)
+"""
 
 from __future__ import annotations
 
@@ -7,15 +13,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from swarm_reasoning.agents.coverage_core import (
+    CoverageHandler,
     build_search_query,
     classify_framing,
     compute_compound_sentiment,
     select_top_source,
 )
 from swarm_reasoning.agents.coverage_left.handler import CoverageLeftHandler
+from swarm_reasoning.agents.coverage_center.handler import CoverageCenterHandler
+from swarm_reasoning.agents.coverage_right.handler import CoverageRightHandler
 from swarm_reasoning.agents.fanout_base import ClaimContext
+from swarm_reasoning.agents.langgraph_base import LangGraphBase
+from swarm_reasoning.agents.tool_runtime import AgentContext
 from swarm_reasoning.models.observation import ObservationCode
-from swarm_reasoning.models.stream import ObsMessage, StopMessage
 
 # ---- Utility tests ----
 
@@ -126,7 +136,7 @@ class TestTopSourceSelection:
         assert result[0] == "Bloomberg"
 
 
-# ---- Handler tests ----
+# ---- Handler structure tests ----
 
 
 def _mock_upstream_streams() -> dict[str, list]:
@@ -156,30 +166,88 @@ def _make_input() -> MagicMock:
     return inp
 
 
-def _mock_newsapi_response(article_count: int = 5) -> MagicMock:
-    articles = []
-    for i in range(article_count):
-        articles.append({
-            "source": {"id": "msnbc", "name": "MSNBC"},
-            "title": f"Economy shows strong growth in latest report {i}",
-            "url": f"https://msnbc.com/article-{i}",
-        })
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = {"articles": articles}
-    return resp
+class TestHandlerStructure:
+    """Verify coverage handlers extend LangGraphBase correctly."""
+
+    def test_extends_langgraph_base(self):
+        assert issubclass(CoverageHandler, LangGraphBase)
+        assert issubclass(CoverageLeftHandler, LangGraphBase)
+        assert issubclass(CoverageCenterHandler, LangGraphBase)
+        assert issubclass(CoverageRightHandler, LangGraphBase)
+
+    def test_agent_names(self):
+        assert CoverageLeftHandler().AGENT_NAME == "coverage-left"
+        assert CoverageCenterHandler().AGENT_NAME == "coverage-center"
+        assert CoverageRightHandler().AGENT_NAME == "coverage-right"
+
+    def test_spectrum_labels(self):
+        assert CoverageLeftHandler().SPECTRUM == "left"
+        assert CoverageCenterHandler().SPECTRUM == "center"
+        assert CoverageRightHandler().SPECTRUM == "right"
+
+    def test_tools_includes_coverage_tools(self):
+        handler = CoverageLeftHandler()
+        tools = handler._tools()
+        tool_names = [t.name for t in tools]
+        assert "build_coverage_query" in tool_names
+        assert "search_coverage" in tool_names
+        assert "detect_coverage_framing" in tool_names
+        assert "find_top_coverage_source" in tool_names
+
+    def test_tools_includes_publish_progress(self):
+        handler = CoverageLeftHandler()
+        tools = handler._tools()
+        tool_names = [t.name for t in tools]
+        assert "publish_progress" in tool_names
+
+    def test_primary_code(self):
+        handler = CoverageLeftHandler()
+        assert handler._primary_code() == ObservationCode.COVERAGE_ARTICLE_COUNT
+
+    def test_system_prompt_contains_spectrum(self):
+        for handler_cls, spectrum in [
+            (CoverageLeftHandler, "left"),
+            (CoverageCenterHandler, "center"),
+            (CoverageRightHandler, "right"),
+        ]:
+            handler = handler_cls()
+            prompt = handler._system_prompt()
+            assert isinstance(prompt, str)
+            assert spectrum in prompt
+
+    def test_system_prompt_references_tools(self):
+        handler = CoverageLeftHandler()
+        prompt = handler._system_prompt()
+        assert "build_coverage_query" in prompt
+        assert "search_coverage" in prompt
+        assert "detect_coverage_framing" in prompt
+        assert "find_top_coverage_source" in prompt
 
 
-class TestCoverageArticlesFound:
+# ---- Handler execution tests ----
+
+
+class TestHandlerExecution:
+    """Verify the handler runs through LangGraphBase._execute correctly."""
+
     @pytest.mark.asyncio
-    async def test_publishes_4_observations(self):
+    async def test_creates_react_agent_with_tools(self):
+        """Verifies coverage tools are passed to create_react_agent."""
         streams = _mock_upstream_streams()
         stream_mock = _make_stream_mock(streams)
         redis_mock = AsyncMock()
         redis_mock.xadd = AsyncMock()
         redis_mock.aclose = AsyncMock()
 
-        mock_resp = _mock_newsapi_response(5)
+        mock_graph = MagicMock()
+        mock_graph.ainvoke = AsyncMock(return_value={"messages": []})
+
+        captured_kwargs = {}
+
+        def fake_create(*, model, tools, prompt, context_schema):
+            captured_kwargs["tools"] = tools
+            captured_kwargs["context_schema"] = context_schema
+            return mock_graph
 
         with (
             patch(
@@ -191,131 +259,118 @@ class TestCoverageArticlesFound:
                 return_value=redis_mock,
             ),
             patch("swarm_reasoning.agents.fanout_base.activity"),
-            patch("swarm_reasoning.agents.coverage_core_tools.httpx.AsyncClient") as mock_client_cls,
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
+            patch("langchain_anthropic.ChatAnthropic"),
             patch(
-                "swarm_reasoning.agents.coverage_core.load_sources",
-                return_value=[
-                    {"id": "msnbc", "name": "MSNBC", "credibility_rank": 60},
-                    {"id": "huffington-post", "name": "HuffPost", "credibility_rank": 65},
-                ],
+                "langgraph.prebuilt.create_react_agent",
+                side_effect=fake_create,
             ),
         ):
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+            handler = CoverageLeftHandler()
+            handler._sources = [
+                {"id": "msnbc", "name": "MSNBC", "credibility_rank": 60},
+            ]
+            await handler.run(_make_input())
 
+        assert captured_kwargs["context_schema"] is AgentContext
+        tool_names = [t.name for t in captured_kwargs["tools"]]
+        assert "build_coverage_query" in tool_names
+        assert "search_coverage" in tool_names
+        assert "detect_coverage_framing" in tool_names
+        assert "find_top_coverage_source" in tool_names
+        assert "publish_progress" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_injects_source_data_in_message(self):
+        """Verifies source IDs and sources JSON are included in the message."""
+        streams = _mock_upstream_streams()
+        stream_mock = _make_stream_mock(streams)
+        redis_mock = AsyncMock()
+        redis_mock.xadd = AsyncMock()
+        redis_mock.aclose = AsyncMock()
+
+        captured_inputs = {}
+
+        async def fake_ainvoke(inputs, config=None):
+            captured_inputs.update(inputs)
+            return {"messages": []}
+
+        mock_graph = MagicMock()
+        mock_graph.ainvoke = AsyncMock(side_effect=fake_ainvoke)
+
+        with (
+            patch(
+                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
+                return_value=stream_mock,
+            ),
+            patch(
+                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
+                return_value=redis_mock,
+            ),
+            patch("swarm_reasoning.agents.fanout_base.activity"),
+            patch("langchain_anthropic.ChatAnthropic"),
+            patch(
+                "langgraph.prebuilt.create_react_agent",
+                return_value=mock_graph,
+            ),
+        ):
             handler = CoverageLeftHandler()
             handler._sources = [
                 {"id": "msnbc", "name": "MSNBC", "credibility_rank": 60},
                 {"id": "huffington-post", "name": "HuffPost", "credibility_rank": 65},
             ]
-            result = await handler.run(_make_input())
-
-        assert result.terminal_status == "F"
-        assert result.observation_count == 4
-
-        # Verify observation codes
-        obs_codes = []
-        for call in stream_mock.publish.call_args_list:
-            msg = call[0][1]
-            if isinstance(msg, ObsMessage):
-                obs_codes.append(msg.observation.code)
-
-        assert obs_codes == [
-            ObservationCode.COVERAGE_ARTICLE_COUNT,
-            ObservationCode.COVERAGE_FRAMING,
-            ObservationCode.COVERAGE_TOP_SOURCE,
-            ObservationCode.COVERAGE_TOP_SOURCE_URL,
-        ]
-
-
-class TestCoverageNoArticles:
-    @pytest.mark.asyncio
-    async def test_publishes_2_observations_when_empty(self):
-        streams = _mock_upstream_streams()
-        stream_mock = _make_stream_mock(streams)
-        redis_mock = AsyncMock()
-        redis_mock.xadd = AsyncMock()
-        redis_mock.aclose = AsyncMock()
-
-        mock_resp = _mock_newsapi_response(0)
-
-        with (
-            patch(
-                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.fanout_base.activity"),
-            patch("swarm_reasoning.agents.coverage_core_tools.httpx.AsyncClient") as mock_client_cls,
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-        ):
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
-            handler = CoverageLeftHandler()
-            handler._sources = [{"id": "msnbc", "name": "MSNBC", "credibility_rank": 60}]
-            result = await handler.run(_make_input())
-
-        assert result.terminal_status == "F"
-        assert result.observation_count == 2
-
-        # Check COVERAGE_FRAMING is ABSENT
-        for call in stream_mock.publish.call_args_list:
-            msg = call[0][1]
-            if (
-                isinstance(msg, ObsMessage)
-                and msg.observation.code == ObservationCode.COVERAGE_FRAMING
-            ):
-                assert "ABSENT" in msg.observation.value
-
-        # STOP has F status (empty coverage is valid)
-        stop_calls = [
-            c[0][1] for c in stream_mock.publish.call_args_list
-            if isinstance(c[0][1], StopMessage)
-        ]
-        assert len(stop_calls) == 1
-        assert stop_calls[0].final_status == "F"
-        assert stop_calls[0].observation_count == 2
-
-
-class TestCoverageApiError:
-    @pytest.mark.asyncio
-    async def test_missing_api_key_produces_x_status_obs(self):
-        streams = _mock_upstream_streams()
-        stream_mock = _make_stream_mock(streams)
-        redis_mock = AsyncMock()
-        redis_mock.xadd = AsyncMock()
-        redis_mock.aclose = AsyncMock()
-
-        with (
-            patch(
-                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
-                return_value=stream_mock,
-            ),
-            patch(
-                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
-                return_value=redis_mock,
-            ),
-            patch("swarm_reasoning.agents.fanout_base.activity"),
-            patch.dict("os.environ", {}, clear=True),
-        ):
-            handler = CoverageLeftHandler()
-            handler._sources = [{"id": "msnbc", "name": "MSNBC", "credibility_rank": 60}]
             await handler.run(_make_input())
 
-        # Error observations should have X status
-        x_obs = [
-            c[0][1] for c in stream_mock.publish.call_args_list
-            if isinstance(c[0][1], ObsMessage) and c[0][1].observation.status == "X"
-        ]
-        assert len(x_obs) == 2
+        msgs = captured_inputs.get("messages", [])
+        assert len(msgs) == 1
+        content = msgs[0].content
+        # Claim context is included
+        assert "unemployment rate fell to 3.4%" in content
+        # Source IDs for search_coverage
+        assert "msnbc" in content
+        assert "huffington-post" in content
+        # Sources JSON for find_top_coverage_source
+        assert "MSNBC" in content
+        assert "credibility_rank" in content
+
+    @pytest.mark.asyncio
+    async def test_syncs_observation_count(self):
+        """Verifies AgentContext.seq_counter syncs to FanoutBase._seq."""
+        streams = _mock_upstream_streams()
+        stream_mock = _make_stream_mock(streams)
+        redis_mock = AsyncMock()
+        redis_mock.xadd = AsyncMock()
+        redis_mock.aclose = AsyncMock()
+
+        async def fake_ainvoke(inputs, config=None):
+            ctx = config["context"]
+            # Simulate tools publishing 4 observations
+            for _ in range(4):
+                ctx.next_seq()
+            return {"messages": []}
+
+        mock_graph = MagicMock()
+        mock_graph.ainvoke = AsyncMock(side_effect=fake_ainvoke)
+
+        with (
+            patch(
+                "swarm_reasoning.agents.fanout_base.RedisReasoningStream",
+                return_value=stream_mock,
+            ),
+            patch(
+                "swarm_reasoning.agents.fanout_base.aioredis.Redis",
+                return_value=redis_mock,
+            ),
+            patch("swarm_reasoning.agents.fanout_base.activity"),
+            patch("langchain_anthropic.ChatAnthropic"),
+            patch(
+                "langgraph.prebuilt.create_react_agent",
+                return_value=mock_graph,
+            ),
+        ):
+            handler = CoverageLeftHandler()
+            handler._sources = [
+                {"id": "msnbc", "name": "MSNBC", "credibility_rank": 60},
+            ]
+            result = await handler.run(_make_input())
+
+        assert result.observation_count == 4

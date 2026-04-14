@@ -2,6 +2,7 @@
 
 Provides NewsAPI query building, headline sentiment analysis (simplified
 VADER-style lexicon scoring), and top-source selection by credibility rank.
+CoverageHandler extends LangGraphBase for LLM-driven ReAct orchestration.
 """
 
 from __future__ import annotations
@@ -9,12 +10,16 @@ from __future__ import annotations
 import json
 import logging
 import re
+import warnings
 from pathlib import Path
 
 import redis.asyncio as aioredis
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import BaseTool
 
 from swarm_reasoning.agents._utils import STOP_WORDS
-from swarm_reasoning.agents.fanout_base import ClaimContext, FanoutBase
+from swarm_reasoning.agents.fanout_base import ClaimContext
+from swarm_reasoning.agents.langgraph_base import LangGraphBase, _format_claim_input
 from swarm_reasoning.agents.tool_runtime import AgentContext
 from swarm_reasoning.config import RedisConfig
 from swarm_reasoning.models.observation import ObservationCode, ValueType
@@ -294,12 +299,12 @@ def load_sources(sources_path: Path) -> list[dict]:
         return json.load(f)
 
 
-class CoverageHandler(FanoutBase):
-    """Shared implementation for coverage-left, coverage-center, coverage-right.
+class CoverageHandler(LangGraphBase):
+    """LangGraph ReAct agent for coverage-left, coverage-center, coverage-right.
 
-    Delegates to the search_coverage, detect_coverage_framing, and
-    find_top_coverage_source @tool definitions for observation publishing
-    via AgentContext.
+    Uses the coverage @tool definitions (search_coverage, detect_coverage_framing,
+    find_top_coverage_source) via an LLM-driven ReAct loop. Overrides _execute()
+    to inject spectrum-specific source data into the agent's input message.
 
     Subclassed per-spectrum to set AGENT_NAME, spectrum label, and sources path.
     """
@@ -321,6 +326,35 @@ class CoverageHandler(FanoutBase):
         """Return the directory name for this spectrum's sources."""
         return f"coverage_{self.SPECTRUM}"
 
+    def _tools(self) -> list[BaseTool]:
+        # Lazy import to avoid circular dependency with coverage_core_tools
+        from swarm_reasoning.agents.coverage_core_tools import COVERAGE_TOOLS
+        from swarm_reasoning.agents.observation_tools import publish_progress
+
+        return [*COVERAGE_TOOLS, publish_progress]
+
+    def _system_prompt(self) -> str:
+        return (
+            f"You are a media coverage analyzer for {self.SPECTRUM}-spectrum "
+            "news sources. Your job is to search for news articles from your "
+            "assigned sources, analyze their framing, and identify the most "
+            "credible source.\n\n"
+            "Steps:\n"
+            "1. Use publish_progress to announce you are searching media sources.\n"
+            "2. Call build_coverage_query with the normalized claim text to get "
+            "an optimized search query.\n"
+            "3. Call search_coverage with the query and the source_ids provided "
+            "in the input.\n"
+            "4. If articles were found, call detect_coverage_framing with the "
+            "article titles as a JSON array (first 5 titles). If no articles "
+            "were found, call detect_coverage_framing with \"[]\".\n"
+            "5. If articles were found, call find_top_coverage_source with the "
+            "articles JSON and sources JSON provided in the input.\n"
+            "6. Use publish_progress to report the outcome.\n\n"
+            "Call each tool exactly once in the order above. Do not fabricate "
+            "results."
+        )
+
     def _primary_code(self) -> ObservationCode:
         return ObservationCode.COVERAGE_ARTICLE_COUNT
 
@@ -338,7 +372,12 @@ class CoverageHandler(FanoutBase):
         sk: str,
         context: ClaimContext,
     ) -> None:
-        # Create AgentContext for @tool observation publishing
+        """Override to inject spectrum-specific source data into the message."""
+        from langgraph.prebuilt import create_react_agent
+
+        from swarm_reasoning.agents.prompts import TOOL_USAGE_SUFFIX
+        from langchain_anthropic import ChatAnthropic
+
         agent_ctx = AgentContext(
             stream=stream,
             redis_client=redis_client,
@@ -347,62 +386,38 @@ class CoverageHandler(FanoutBase):
             agent_name=self.AGENT_NAME,
         )
 
-        query = build_search_query(context)
+        # Load spectrum-specific sources
         sources = self._get_sources()
         source_ids = ",".join(s["id"] for s in sources[:20])  # NewsAPI max 20
+        sources_json = json.dumps(sources)
 
-        await self._publish_progress(
-            redis_client, run_id, f"Searching {self.SPECTRUM} media sources..."
-        )
+        model = ChatAnthropic(model=self._model_id())
+        tools = self._tools()
+        prompt = self._system_prompt() + TOOL_USAGE_SUFFIX
 
-        # Lazy import to avoid circular dependency with coverage_core_tools
-        from swarm_reasoning.agents.coverage_core_tools import (
-            detect_coverage_framing,
-            find_top_coverage_source,
-            search_coverage,
-        )
-
-        # Step 1: Search NewsAPI via @tool (publishes COVERAGE_ARTICLE_COUNT)
-        search_json = await search_coverage.ainvoke(
-            {"query": query, "source_ids": source_ids, "context": agent_ctx}
-        )
-        search_data = json.loads(search_json)
-        articles = search_data["articles"]
-        article_count = search_data["article_count"]
-
-        # If search had an error, observations are already published with X status
-        if search_data.get("error"):
-            logger.warning("NewsAPI error for %s: %s", self.AGENT_NAME, search_data["error"])
-            self._seq = agent_ctx.seq_counter
-            return
-
-        await self._publish_progress(
-            redis_client,
-            run_id,
-            f"Found {article_count} articles from {self.SPECTRUM} sources",
-        )
-
-        if article_count == 0:
-            # Publish ABSENT framing via @tool
-            await detect_coverage_framing.ainvoke(
-                {"headlines_json": "[]", "context": agent_ctx}
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="create_react_agent has been moved",
+                category=DeprecationWarning,
             )
-            self._seq = agent_ctx.seq_counter
-            return
+            graph = create_react_agent(
+                model=model,
+                tools=tools,
+                prompt=prompt,
+                context_schema=AgentContext,
+            )
 
-        # Step 2: Detect framing via @tool (publishes COVERAGE_FRAMING)
-        headlines = [a.get("title", "") for a in articles[:5]]
-        await detect_coverage_framing.ainvoke(
-            {"headlines_json": json.dumps(headlines), "context": agent_ctx}
+        claim_input = _format_claim_input(context)
+        message = (
+            f"{claim_input}\n\n"
+            f"Source IDs for search_coverage: {source_ids}\n"
+            f"Sources data for find_top_coverage_source: {sources_json}"
         )
 
-        # Step 3: Find top source via @tool (publishes COVERAGE_TOP_SOURCE + URL)
-        await find_top_coverage_source.ainvoke(
-            {
-                "articles_json": json.dumps(articles),
-                "sources_json": json.dumps(sources),
-                "context": agent_ctx,
-            }
+        await graph.ainvoke(
+            {"messages": [HumanMessage(content=message)]},
+            config={"context": agent_ctx},
         )
 
         # Sync observation count back to FanoutBase for STOP message
