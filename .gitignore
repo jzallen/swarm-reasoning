@@ -17,3 +17,8 @@ services/backend/snapshots/
 **/.runtime/
 .beads/
 embeddeddolt/
+.claude/
+.logs/
+state.json
+CLAUDE.md
+CLAUDE.local.md
