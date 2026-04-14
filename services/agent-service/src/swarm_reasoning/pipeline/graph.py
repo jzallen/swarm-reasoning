@@ -18,6 +18,7 @@ import logging
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
+from swarm_reasoning.pipeline.nodes.synthesizer import synthesizer_node
 from swarm_reasoning.pipeline.nodes.validation import validation_node
 from swarm_reasoning.pipeline.state import PipelineState
 
@@ -48,12 +49,6 @@ async def coverage_node(state: PipelineState) -> dict:
 
 
 # validation_node: imported from pipeline.nodes.validation (M4.1)
-
-
-async def synthesizer_node(state: PipelineState) -> dict:
-    """Placeholder: synthesizer (M5) -- verdict, confidence scoring, narrative."""
-    logger.info("synthesizer_node: placeholder (no-op)")
-    return {}
 
 
 # ---------------------------------------------------------------------------
