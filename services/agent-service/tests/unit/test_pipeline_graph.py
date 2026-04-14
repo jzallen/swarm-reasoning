@@ -1,14 +1,17 @@
-"""Tests for pipeline graph wiring (M0.3 + M1.2).
+"""Tests for pipeline graph structure, routing, and synthesizer state output (M0.3 / M1.2 / M5.2).
 
 Verifies graph structure (correct nodes/edges), routing behavior
-(check-worthy fan-out vs. not-check-worthy shortcut), and that real
-node implementations are wired in and execute through the graph.
+(check-worthy fan-out vs. not-check-worthy shortcut), that real
+node implementations are wired in and execute through the graph,
+and that the synthesizer terminal node populates verdict, confidence,
+narrative, and verdict_observations in the output state.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from swarm_reasoning.agents.synthesizer.narrator import NarrativeGenerator
 from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.graph import (
     build_pipeline_graph,
@@ -194,6 +197,132 @@ class TestPipelineExecution:
         result = await pipeline_graph.ainvoke(
             state, _make_config_with_context(),
         )
-        # Rejected claim → is_check_worthy=False → synthesizer shortcut
+        # Rejected claim -> is_check_worthy=False -> synthesizer shortcut
         assert result["is_check_worthy"] is False
         assert any("rejected" in e.lower() for e in result["errors"])
+
+
+class TestSynthesizerStateOutput:
+    """Verify synthesizer terminal node populates state output fields (M5.2).
+
+    The synthesizer is the terminal node. These tests verify that after
+    full graph execution, the output state contains the four key fields:
+    verdict, confidence, narrative, verdict_observations.
+    """
+
+    @pytest.mark.asyncio
+    async def test_check_worthy_path_populates_verdict(self):
+        """Check-worthy path with no upstream observations produces UNVERIFIABLE."""
+        state: PipelineState = {
+            "claim_text": "The economy grew 5% last quarter",
+            "run_id": "run-m52-1",
+            "session_id": "sess-m52-1",
+            "is_check_worthy": True,
+            "observations": [],
+            "errors": [],
+        }
+        with patch.object(
+            NarrativeGenerator, "generate", new_callable=AsyncMock, return_value="X" * 250,
+        ):
+            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+
+        assert "verdict" in result
+        assert result["verdict"] == "UNVERIFIABLE"
+
+    @pytest.mark.asyncio
+    async def test_check_worthy_path_populates_confidence(self):
+        """Check-worthy with no upstream data yields None confidence."""
+        state: PipelineState = {
+            "claim_text": "Claim for confidence test",
+            "run_id": "run-m52-2",
+            "session_id": "sess-m52-2",
+            "is_check_worthy": True,
+            "observations": [],
+            "errors": [],
+        }
+        with patch.object(
+            NarrativeGenerator, "generate", new_callable=AsyncMock, return_value="X" * 250,
+        ):
+            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+
+        assert "confidence" in result
+        assert result["confidence"] is None
+
+    @pytest.mark.asyncio
+    async def test_check_worthy_path_populates_narrative(self):
+        """Narrative field populated by synthesizer."""
+        state: PipelineState = {
+            "claim_text": "Claim for narrative test",
+            "run_id": "run-m52-3",
+            "session_id": "sess-m52-3",
+            "is_check_worthy": True,
+            "observations": [],
+            "errors": [],
+        }
+        with patch.object(
+            NarrativeGenerator, "generate", new_callable=AsyncMock, return_value="X" * 250,
+        ):
+            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+
+        assert "narrative" in result
+        assert isinstance(result["narrative"], str)
+        assert len(result["narrative"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_check_worthy_path_populates_verdict_observations(self):
+        """verdict_observations list is present and well-structured."""
+        state: PipelineState = {
+            "claim_text": "Claim for observations test",
+            "run_id": "run-m52-4",
+            "session_id": "sess-m52-4",
+            "is_check_worthy": True,
+            "observations": [],
+            "errors": [],
+        }
+        with patch.object(
+            NarrativeGenerator, "generate", new_callable=AsyncMock, return_value="X" * 250,
+        ):
+            result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+
+        assert "verdict_observations" in result
+        assert isinstance(result["verdict_observations"], list)
+        for obs in result["verdict_observations"]:
+            assert "agent" in obs
+            assert "code" in obs
+            assert "value" in obs
+
+    @pytest.mark.asyncio
+    async def test_not_check_worthy_populates_verdict_state(self):
+        """Not-check-worthy shortcut populates all four synthesizer output fields."""
+        state: PipelineState = {
+            "claim_text": "What time is it?",
+            "run_id": "run-m52-5",
+            "session_id": "sess-m52-5",
+            "is_check_worthy": False,
+            "check_worthy_score": 0.12,
+            "observations": [],
+            "errors": [],
+        }
+        result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+
+        assert result["verdict"] == "NOT_CHECK_WORTHY"
+        assert result["confidence"] == 1.0
+        assert "not check-worthy" in result["narrative"].lower()
+        assert isinstance(result["verdict_observations"], list)
+
+    @pytest.mark.asyncio
+    async def test_synthesizer_is_terminal_node(self):
+        """Verify synthesizer output fields survive to final state (no post-processing)."""
+        state: PipelineState = {
+            "claim_text": "Terminal node test",
+            "run_id": "run-m52-6",
+            "session_id": "sess-m52-6",
+            "is_check_worthy": False,
+            "observations": [],
+            "errors": [],
+        }
+        result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+
+        # All four synthesizer output fields must be present at graph output
+        for field in ("verdict", "confidence", "narrative", "verdict_observations"):
+            assert field in result, f"Missing synthesizer output field: {field}"

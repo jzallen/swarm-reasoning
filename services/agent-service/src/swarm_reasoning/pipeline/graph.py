@@ -1,4 +1,4 @@
-"""Pipeline graph -- StateGraph wiring claim verification nodes (M0.3+).
+"""Pipeline graph -- StateGraph with 5 nodes for claim verification.
 
 Defines the claim verification pipeline as a LangGraph StateGraph with 5 nodes:
 intake, evidence, coverage, validation, synthesizer.
@@ -8,8 +8,8 @@ Graph topology:
         -> [evidence, coverage] (parallel via Send) -> validation -> synthesizer -> END
         -> synthesizer (not-check-worthy shortcut)
 
-Wired nodes: intake (M1.2), validation (M4.1), synthesizer (M5.1).
-Placeholder nodes (evidence, coverage) return empty dicts until M2/M3.
+Wired nodes: intake (M1.2), coverage (M3.2), validation (M4.1), synthesizer (M5.1).
+Placeholder node: evidence returns empty dict until M2.
 """
 
 from __future__ import annotations
@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Placeholder nodes -- replaced by real implementations in M1-M5
+# Placeholder nodes -- replaced by real implementations in M1-M3
+# (validation: M4.1, synthesizer: M5.1 -- imported above)
 # ---------------------------------------------------------------------------
 
 # intake_node: imported from pipeline.nodes.intake (M1.2)
