@@ -64,6 +64,10 @@ class FanoutBase(abc.ABC):
         self._redis_config = redis_config or RedisConfig()
         self._seq = 0
 
+    def _phase(self) -> Phase:
+        """Return the execution phase for START messages. Override in subclasses."""
+        return Phase.FANOUT
+
     async def run(self, input: AgentActivityInput) -> AgentActivityOutput:
         """Execute the fanout agent: load context, run logic, publish results."""
 
@@ -88,7 +92,7 @@ class FanoutBase(abc.ABC):
                 StartMessage(
                     runId=run_id,
                     agent=self.AGENT_NAME,
-                    phase=Phase.FANOUT,
+                    phase=self._phase(),
                     timestamp=_now_iso(),
                 ),
             )

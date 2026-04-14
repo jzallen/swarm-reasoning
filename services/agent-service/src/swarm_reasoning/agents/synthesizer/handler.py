@@ -1,175 +1,150 @@
-"""SynthesizerHandler -- Temporal activity entry point for the synthesizer agent.
+"""SynthesizerHandler -- LangGraph ReAct agent for verdict synthesis (ADR-004, ADR-016).
 
-Final agent in the execution DAG: reads all 10 upstream agent streams,
-resolves observations, computes confidence score, maps verdict,
-generates narrative, and publishes 4-5 OBX observations + STOP.
+Final agent in the execution DAG: a LangGraph ReAct agent that orchestrates
+four @tool definitions (resolve_observations, compute_confidence, map_verdict,
+generate_narrative) to read all 10 upstream agent streams and produce a
+confidence-scored verdict with narrative.
 
-Delegates all observation publishing to @tool definitions (ADR-004).
+The LLM decides the tool call sequence; each tool enforces observation schema
+validity and publishes its own observations via AgentContext.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import time
+import warnings
+
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import BaseTool
 
 import redis.asyncio as aioredis
-from temporalio import activity
 
-from swarm_reasoning.activities.run_agent import AgentActivityInput, AgentActivityOutput
-from swarm_reasoning.agents._utils import now_iso, register_handler
-from swarm_reasoning.agents.synthesizer.tools.map_verdict import map_verdict
-from swarm_reasoning.agents.synthesizer.tools.narrate import generate_narrative
-from swarm_reasoning.agents.synthesizer.tools.resolve import resolve_observations
-from swarm_reasoning.agents.synthesizer.tools.score import compute_confidence
+from swarm_reasoning.agents._utils import register_handler
+from swarm_reasoning.agents.fanout_base import ClaimContext
+from swarm_reasoning.agents.langgraph_base import LangGraphBase
+from swarm_reasoning.agents.observation_tools import publish_progress
+from swarm_reasoning.agents.prompts import TOOL_USAGE_SUFFIX
+from swarm_reasoning.agents.synthesizer.tools import (
+    compute_confidence,
+    generate_narrative,
+    map_verdict,
+    resolve_observations,
+)
 from swarm_reasoning.agents.tool_runtime import AgentContext
-from swarm_reasoning.config import RedisConfig
-from swarm_reasoning.models.stream import Phase, StartMessage, StopMessage
-from swarm_reasoning.stream.key import stream_key
-from swarm_reasoning.stream.redis import RedisReasoningStream
+from swarm_reasoning.models.observation import ObservationCode, ValueType
+from swarm_reasoning.models.stream import Phase
+from swarm_reasoning.stream.base import ReasoningStream
 
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "synthesizer"
 
 
-async def _publish_progress(redis_client: aioredis.Redis, run_id: str, message: str) -> None:
-    """Publish a progress event to progress:{runId} stream."""
-    try:
-        await redis_client.xadd(
-            f"progress:{run_id}",
-            {"agent": AGENT_NAME, "message": message, "timestamp": now_iso()},
-        )
-    except Exception:
-        logger.warning("Failed to publish progress for %s", AGENT_NAME)
-
-
 @register_handler("synthesizer")
-class SynthesizerHandler:
-    """Orchestrates verdict synthesis from upstream agent observations.
+class SynthesizerHandler(LangGraphBase):
+    """Orchestrates verdict synthesis via LangGraph ReAct agent.
 
-    Delegates to four @tool definitions: resolve_observations,
-    compute_confidence, map_verdict, generate_narrative. Each tool
-    publishes its own observations via AgentContext.
+    Overrides ``_execute()`` because the synthesizer reads all upstream agent
+    streams via ``resolve_observations`` (keyed by run_id), rather than
+    receiving claim context from Phase 1 streams.
     """
 
-    def __init__(self, redis_config: RedisConfig | None = None) -> None:
-        self._redis_config = redis_config or RedisConfig()
+    AGENT_NAME = AGENT_NAME
 
-    async def run(self, input: AgentActivityInput) -> AgentActivityOutput:
-        """Execute the synthesizer: resolve, score, map, narrate."""
-        start = time.monotonic()
-        run_id = input.run_id
+    def _tools(self) -> list[BaseTool]:
+        return [
+            resolve_observations,
+            compute_confidence,
+            map_verdict,
+            generate_narrative,
+            publish_progress,
+        ]
 
-        stream = RedisReasoningStream(self._redis_config)
-        redis_client = aioredis.Redis(
-            host=self._redis_config.host,
-            port=self._redis_config.port,
-            db=self._redis_config.db,
+    def _system_prompt(self) -> str:
+        return (
+            "You are a verdict synthesis agent. Your job is to synthesize all "
+            "upstream agent observations into a final confidence-scored verdict "
+            "with a human-readable narrative.\n\n"
+            "Steps:\n"
+            "1. Use publish_progress to announce you are beginning synthesis.\n"
+            "2. Call resolve_observations with the run_id to gather and resolve "
+            "all upstream agent observations.\n"
+            "3. Call compute_confidence with the resolved_json output.\n"
+            "4. Call map_verdict with the confidence_score and resolved_json.\n"
+            "5. Call generate_narrative with the resolved_json, verdict_code, "
+            "confidence_score, override_reason, signal_count, and "
+            "warnings_json.\n"
+            "6. Use publish_progress to announce the final verdict.\n\n"
+            "You MUST call these tools in the order listed. Each tool requires "
+            "output from the previous one. Do not skip tools or fabricate "
+            "results."
         )
 
-        try:
-            heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            sk = stream_key(run_id, AGENT_NAME)
+    def _primary_code(self) -> ObservationCode:
+        return ObservationCode.VERDICT
 
-            # Create AgentContext for @tool observation publishing
-            agent_ctx = AgentContext(
-                stream=stream,
-                redis_client=redis_client,
-                run_id=run_id,
-                sk=sk,
-                agent_name=AGENT_NAME,
+    def _primary_value_type(self) -> ValueType:
+        return ValueType.CWE
+
+    def _timeout_value(self) -> str:
+        return "UNVERIFIABLE^Timeout^POLITIFACT"
+
+    def _phase(self) -> Phase:
+        return Phase.SYNTHESIS
+
+    async def _load_upstream_context(
+        self, stream: ReasoningStream, run_id: str
+    ) -> ClaimContext:
+        """Synthesizer reads ALL streams via resolve_observations; skip Phase 1 loading."""
+        return ClaimContext()
+
+    async def _execute(
+        self,
+        stream: ReasoningStream,
+        redis_client: aioredis.Redis,
+        run_id: str,
+        sk: str,
+        context: ClaimContext,
+    ) -> None:
+        """Custom _execute that passes run_id instead of claim context."""
+        from langgraph.prebuilt import create_react_agent
+
+        agent_ctx = AgentContext(
+            stream=stream,
+            redis_client=redis_client,
+            run_id=run_id,
+            sk=sk,
+            agent_name=self.AGENT_NAME,
+        )
+
+        model = ChatAnthropic(model=self._model_id())
+        tools = self._tools()
+        prompt = self._system_prompt() + TOOL_USAGE_SUFFIX
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="create_react_agent has been moved",
+                category=DeprecationWarning,
+            )
+            graph = create_react_agent(
+                model=model,
+                tools=tools,
+                prompt=prompt,
+                context_schema=AgentContext,
             )
 
-            # Publish START
-            await stream.publish(
-                sk,
-                StartMessage(
-                    runId=run_id,
-                    agent=AGENT_NAME,
-                    phase=Phase.SYNTHESIS,
-                    timestamp=now_iso(),
-                ),
-            )
+        message = (
+            f"Begin synthesis for run_id: {run_id}\n\n"
+            "Call resolve_observations, then compute_confidence, then "
+            "map_verdict, then generate_narrative — in that order."
+        )
 
-            # Step 1: Resolve observations via @tool
-            await _publish_progress(redis_client, run_id, "Resolving observations...")
-            resolved_json = await resolve_observations.ainvoke(
-                {"run_id": run_id, "context": agent_ctx}
-            )
-            resolved_data = json.loads(resolved_json)
-            signal_count = resolved_data["synthesis_signal_count"]
-            warnings = resolved_data["warnings"]
+        await graph.ainvoke(
+            {"messages": [HumanMessage(content=message)]},
+            config={"context": agent_ctx},
+        )
 
-            # Step 2: Compute confidence score via @tool
-            await _publish_progress(redis_client, run_id, "Computing confidence...")
-            score_json = await compute_confidence.ainvoke(
-                {"resolved_json": resolved_json, "context": agent_ctx}
-            )
-            confidence_score = json.loads(score_json)["score"]
-
-            # Step 3: Map verdict via @tool
-            await _publish_progress(redis_client, run_id, "Mapping verdict...")
-            verdict_json = await map_verdict.ainvoke(
-                {
-                    "confidence_score": confidence_score,
-                    "resolved_json": resolved_json,
-                    "context": agent_ctx,
-                }
-            )
-            verdict_data = json.loads(verdict_json)
-            verdict_code = verdict_data["verdict_code"]
-            override_reason = verdict_data["override_reason"]
-
-            # Step 4: Generate narrative via @tool
-            await _publish_progress(redis_client, run_id, "Generating narrative...")
-            await generate_narrative.ainvoke(
-                {
-                    "resolved_json": resolved_json,
-                    "verdict_code": verdict_code,
-                    "confidence_score": confidence_score,
-                    "override_reason": override_reason,
-                    "signal_count": signal_count,
-                    "warnings_json": json.dumps(warnings),
-                    "context": agent_ctx,
-                }
-            )
-
-            # Publish STOP
-            await stream.publish(
-                sk,
-                StopMessage(
-                    runId=run_id,
-                    agent=AGENT_NAME,
-                    finalStatus="F",
-                    observationCount=agent_ctx.seq_counter,
-                    timestamp=now_iso(),
-                ),
-            )
-
-            # Progress: verdict
-            await _publish_progress(redis_client, run_id, f"Verdict: {verdict_code}")
-
-            heartbeat_task.cancel()
-            duration_ms = int((time.monotonic() - start) * 1000)
-
-            return AgentActivityOutput(
-                agent_name=input.agent_name,
-                terminal_status="F",
-                observation_count=agent_ctx.seq_counter,
-                duration_ms=duration_ms,
-            )
-        finally:
-            await stream.close()
-            await redis_client.aclose()
-
-    @staticmethod
-    async def _heartbeat_loop() -> None:
-        """Send Temporal heartbeats every 10 seconds."""
-        try:
-            while True:
-                await asyncio.sleep(10)
-                activity.heartbeat()
-        except asyncio.CancelledError:
-            pass
+        self._seq = agent_ctx.seq_counter
