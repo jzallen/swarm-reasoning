@@ -18,6 +18,7 @@ import logging
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
+from swarm_reasoning.pipeline.nodes.coverage import coverage_node
 from swarm_reasoning.pipeline.nodes.synthesizer import synthesizer_node
 from swarm_reasoning.pipeline.nodes.validation import validation_node
 from swarm_reasoning.pipeline.state import PipelineState
@@ -42,11 +43,7 @@ async def evidence_node(state: PipelineState) -> dict:
     return {}
 
 
-async def coverage_node(state: PipelineState) -> dict:
-    """Placeholder: coverage (M3) -- left/center/right news coverage analysis."""
-    logger.info("coverage_node: placeholder (no-op)")
-    return {}
-
+# coverage_node: imported from pipeline.nodes.coverage (M3.2)
 
 # validation_node: imported from pipeline.nodes.validation (M4.1)
 
