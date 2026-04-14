@@ -186,7 +186,7 @@
     {
       "code": "BLINDSPOT_SCORE",
       "display": "Coverage Blindspot Score",
-      "owner_agent": "blindspot-detector",
+      "owner_agent": "validation",
       "value_type": "NM",
       "units": "score",
       "reference_range": "0.0-1.0",
@@ -195,7 +195,7 @@
     {
       "code": "BLINDSPOT_DIRECTION",
       "display": "Blindspot Direction",
-      "owner_agent": "blindspot-detector",
+      "owner_agent": "validation",
       "value_type": "CWE",
       "units": null,
       "reference_range": null,
@@ -204,7 +204,7 @@
     {
       "code": "CROSS_SPECTRUM_CORROBORATION",
       "display": "Cross-Spectrum Corroboration",
-      "owner_agent": "blindspot-detector",
+      "owner_agent": "validation",
       "value_type": "CWE",
       "units": null,
       "reference_range": null,
@@ -294,7 +294,7 @@
     {
       "code": "SOURCE_EXTRACTED_URL",
       "display": "Extracted Source URL",
-      "owner_agent": "source-validator",
+      "owner_agent": "validation",
       "value_type": "ST",
       "units": null,
       "reference_range": null,
@@ -303,7 +303,7 @@
     {
       "code": "SOURCE_VALIDATION_STATUS",
       "display": "Source URL Validation Status",
-      "owner_agent": "source-validator",
+      "owner_agent": "validation",
       "value_type": "CWE",
       "units": null,
       "reference_range": null,
@@ -312,7 +312,7 @@
     {
       "code": "SOURCE_CONVERGENCE_SCORE",
       "display": "Source Convergence Score",
-      "owner_agent": "source-validator",
+      "owner_agent": "validation",
       "value_type": "NM",
       "units": "score",
       "reference_range": "0.0-1.0",
@@ -321,7 +321,7 @@
     {
       "code": "CITATION_LIST",
       "display": "Aggregated Citation List",
-      "owner_agent": "source-validator",
+      "owner_agent": "validation",
       "value_type": "TX",
       "units": null,
       "reference_range": null,

@@ -35,7 +35,7 @@ class TestLatency:
         # Estimate fan-out duration from observation timestamps
         fanout_agents = {
             "coverage-left", "coverage-center", "coverage-right",
-            "domain-evidence", "source-validator", "blindspot-detector",
+            "domain-evidence",
         }
 
         fanout_timestamps: list[str] = []

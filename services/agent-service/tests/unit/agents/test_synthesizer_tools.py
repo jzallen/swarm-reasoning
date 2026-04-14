@@ -83,7 +83,7 @@ def _make_resolved_set(
                 timestamp="2026-04-13T12:00:03Z",
             ),
             ResolvedObservation(
-                agent="blindspot-detector",
+                agent="validation",
                 code="CROSS_SPECTRUM_CORROBORATION",
                 value="TRUE^Corroborated^FCK",
                 value_type="CWE",
@@ -123,7 +123,7 @@ def _make_resolved_set(
                 timestamp="2026-04-13T12:00:07Z",
             ),
             ResolvedObservation(
-                agent="source-validator",
+                agent="validation",
                 code="SOURCE_CONVERGENCE_SCORE",
                 value="0.85",
                 value_type="NM",
@@ -133,7 +133,7 @@ def _make_resolved_set(
                 timestamp="2026-04-13T12:00:08Z",
             ),
             ResolvedObservation(
-                agent="blindspot-detector",
+                agent="validation",
                 code="BLINDSPOT_SCORE",
                 value="0.2",
                 value_type="NM",

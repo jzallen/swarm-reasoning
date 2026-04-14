@@ -46,10 +46,10 @@ def _basic_resolved() -> ResolvedObservationSet:
             _obs(
                 "CROSS_SPECTRUM_CORROBORATION",
                 "TRUE^Corroborated^FCK",
-                agent="blindspot-detector",
+                agent="validation",
                 seq=5,
             ),
-            _nm_obs("BLINDSPOT_SCORE", "0.0", agent="blindspot-detector", seq=6),
+            _nm_obs("BLINDSPOT_SCORE", "0.0", agent="validation", seq=6),
         ],
         synthesis_signal_count=6,
     )
@@ -177,7 +177,7 @@ class TestFallbackNarrative:
     async def test_fallback_convergence(self, narrator):
         resolved = _basic_resolved()
         resolved.observations.append(
-            _nm_obs("SOURCE_CONVERGENCE_SCORE", "0.75", agent="source-validator", seq=7)
+            _nm_obs("SOURCE_CONVERGENCE_SCORE", "0.75", agent="validation", seq=7)
         )
         narrative = narrator._fallback_narrative(
             resolved,
@@ -212,7 +212,7 @@ class TestFallbackNarrative:
                 _obs(
                     "CROSS_SPECTRUM_CORROBORATION",
                     "TRUE^Corroborated^FCK",
-                    agent="blindspot-detector",
+                    agent="validation",
                     seq=1,
                 ),
             ],

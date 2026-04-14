@@ -21,8 +21,7 @@ class Phase:
     mode: PhaseMode
 
 
-# The static DAG: four phases mapping to three run states.
-# Phase 2a (parallel fan-out) and 2b (source validation) both map to "analyzing".
+# The static DAG: three phases mapping to three run states.
 DAG: tuple[Phase, ...] = (
     Phase(
         id="1",
@@ -31,7 +30,7 @@ DAG: tuple[Phase, ...] = (
         mode=PhaseMode.SEQUENTIAL,
     ),
     Phase(
-        id="2a",
+        id="2",
         name="fanout",
         agents=(
             "claimreview-matcher",
@@ -43,15 +42,9 @@ DAG: tuple[Phase, ...] = (
         mode=PhaseMode.PARALLEL,
     ),
     Phase(
-        id="2b",
-        name="fanout-validation",
-        agents=("source-validator",),
-        mode=PhaseMode.SEQUENTIAL,
-    ),
-    Phase(
         id="3",
         name="synthesis",
-        agents=("blindspot-detector", "synthesizer"),
+        agents=("validation", "synthesizer"),
         mode=PhaseMode.SEQUENTIAL,
     ),
 )

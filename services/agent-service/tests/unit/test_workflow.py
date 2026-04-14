@@ -47,7 +47,7 @@ def run_store():
 
 @pytest.mark.asyncio
 async def test_workflow_completes_all_agents(run_store):
-    """Full run with 11 stub agents should complete successfully."""
+    """Full run with 10 stub agents should complete successfully."""
 
     @activity.defn(name="run_agent_activity")
     async def stub_agent(input: AgentActivityInput) -> AgentActivityOutput:
@@ -82,7 +82,7 @@ async def test_workflow_completes_all_agents(run_store):
             )
 
         assert result.final_status == "completed"
-        assert len(result.agent_results) == 11
+        assert len(result.agent_results) == 10
 
         dispatched = {r.agent_name for r in result.agent_results}
         assert dispatched == set(ALL_AGENTS)
@@ -185,17 +185,15 @@ async def test_workflow_sequential_ordering(run_store):
         phase1 = execution_order[:3]
         assert phase1 == ["ingestion-agent", "claim-detector", "entity-extractor"]
 
-        # source-validator must come after the 5 fanout agents
-        sv_idx = execution_order.index("source-validator")
+        # Phase 2 fanout agents must come before Phase 3
+        val_idx = execution_order.index("validation")
         for fanout_agent in ["claimreview-matcher", "coverage-left", "coverage-center",
                              "coverage-right", "domain-evidence"]:
-            assert execution_order.index(fanout_agent) < sv_idx
+            assert execution_order.index(fanout_agent) < val_idx
 
-        # Phase 3 must come last
-        bd_idx = execution_order.index("blindspot-detector")
+        # Phase 3 must come last, validation before synthesizer
         syn_idx = execution_order.index("synthesizer")
-        assert bd_idx < syn_idx
-        assert sv_idx < bd_idx
+        assert val_idx < syn_idx
 
 
 @pytest.mark.asyncio
@@ -480,7 +478,7 @@ async def test_cancellation_signal_during_analysis(run_store):
     assert result.final_status == "cancelled"
     # Synthesis agents should not have run
     assert "synthesizer" not in execution_order
-    assert "blindspot-detector" not in execution_order
+    assert "validation" not in execution_order
     assert run_store[input.run_id] == RunStatusEnum.CANCELLED
 
 
@@ -581,7 +579,7 @@ async def test_fanout_single_agent_failure(run_store):
             )
 
     assert result.final_status == "completed"
-    assert len(result.agent_results) == 11
+    assert len(result.agent_results) == 10
 
     by_name = {r.agent_name: r for r in result.agent_results}
     assert by_name["coverage-left"].terminal_status == "X"
@@ -638,7 +636,7 @@ async def test_fanout_all_agents_fail(run_store):
 
     # Synthesis agents still ran
     assert by_name["synthesizer"].terminal_status == "F"
-    assert by_name["blindspot-detector"].terminal_status == "F"
+    assert by_name["validation"].terminal_status == "F"
 
 
 @pytest.mark.asyncio
@@ -685,7 +683,7 @@ async def test_fanout_mixed_results(run_store):
             )
 
     assert result.final_status == "completed"
-    assert len(result.agent_results) == 11
+    assert len(result.agent_results) == 10
 
     by_name = {r.agent_name: r for r in result.agent_results}
 

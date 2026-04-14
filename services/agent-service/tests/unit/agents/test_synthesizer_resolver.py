@@ -313,7 +313,7 @@ class TestSignalCount:
         )
         stream.add_obs(
             "run1",
-            "blindspot-detector",
+            "validation",
             seq=1,
             code="BLINDSPOT_SCORE",
             value="0.0",
@@ -328,14 +328,14 @@ class TestSignalCount:
         assert len(result.observations) == 3
 
 
-class TestSourceValidatorIncluded:
-    """Source-validator observations are included in resolution."""
+class TestValidationIncluded:
+    """Validation agent observations are included in resolution."""
 
     @pytest.mark.asyncio
     async def test_source_convergence_resolved(self, stream, resolver):
         stream.add_obs(
             "run1",
-            "source-validator",
+            "validation",
             seq=1,
             code="SOURCE_CONVERGENCE_SCORE",
             value="0.75",
@@ -349,14 +349,14 @@ class TestSourceValidatorIncluded:
         obs = result.find("SOURCE_CONVERGENCE_SCORE")
         assert obs is not None
         assert obs.value == "0.75"
-        assert obs.agent == "source-validator"
+        assert obs.agent == "validation"
 
     @pytest.mark.asyncio
     async def test_citation_list_resolved(self, stream, resolver):
         long_value = '{"citations":' + " " * 200 + "[]}"
         stream.add_obs(
             "run1",
-            "source-validator",
+            "validation",
             seq=2,
             code="CITATION_LIST",
             value=long_value,
@@ -437,10 +437,9 @@ class TestEmptyStreams:
 
 
 class TestUpstreamAgentCount:
-    """Verify all 10 upstream agents are read."""
+    """Verify all 9 upstream agents are read."""
 
     def test_upstream_agents_list(self):
-        assert len(UPSTREAM_AGENTS) == 10
+        assert len(UPSTREAM_AGENTS) == 9
         assert "synthesizer" not in UPSTREAM_AGENTS
-        assert "source-validator" in UPSTREAM_AGENTS
-        assert "blindspot-detector" in UPSTREAM_AGENTS
+        assert "validation" in UPSTREAM_AGENTS

@@ -26,8 +26,8 @@ class BaselineRunner:
 
     The baseline uses a stripped workflow that only activates the
     claimreview-matcher and synthesizer agents, bypassing coverage
-    agents, domain-evidence, blindspot-detector, source-validator,
-    entity-extractor, and claim-detector.
+    agents, domain-evidence, validation, entity-extractor, and
+    claim-detector.
     """
 
     def __init__(self, runner: HarnessRunner) -> None:

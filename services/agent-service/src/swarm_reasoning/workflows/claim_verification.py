@@ -1,11 +1,10 @@
 """ClaimVerificationWorkflow: three-phase DAG executor (ADR-0016).
 
-Orchestrates 11 agents across three phases:
+Orchestrates 10 agents across three phases:
   Phase 1 (sequential): ingestion-agent, claim-detector, entity-extractor
-  Phase 2a (parallel): claimreview-matcher, coverage-left, coverage-center,
-                        coverage-right, domain-evidence
-  Phase 2b (sequential): source-validator (needs Phase 2a URLs)
-  Phase 3 (sequential): blindspot-detector, synthesizer
+  Phase 2 (parallel): claimreview-matcher, coverage-left, coverage-center,
+                       coverage-right, domain-evidence
+  Phase 3 (sequential): validation, synthesizer
 
 The workflow is deterministic — all I/O happens inside activities.
 """
@@ -93,11 +92,7 @@ _PHASE_TIMEOUTS: dict[str, _PhaseTimeouts] = {
         start_to_close=timedelta(seconds=30),
         schedule_to_close=timedelta(seconds=60),
     ),
-    "2a": _PhaseTimeouts(
-        start_to_close=timedelta(seconds=45),
-        schedule_to_close=timedelta(seconds=90),
-    ),
-    "2b": _PhaseTimeouts(
+    "2": _PhaseTimeouts(
         start_to_close=timedelta(seconds=45),
         schedule_to_close=timedelta(seconds=90),
     ),
@@ -123,7 +118,7 @@ _STATUS_TIMEOUT = timedelta(seconds=10)
 class WorkflowStatus:
     run_id: str
     status: str  # "pending", "ingesting", "analyzing", "synthesizing", "completed", "cancelled", "failed"
-    phase: str  # Current phase id: "1", "2a", "2b", "3", or "" if not started / terminal
+    phase: str  # Current phase id: "1", "2", "3", or "" if not started / terminal
     agents_complete: int
     agents_total: int
 
@@ -164,7 +159,7 @@ class ClaimVerificationWorkflow:
 
     @workflow.query
     def current_phase(self) -> str:
-        """Return the current phase id (e.g. '1', '2a', '2b', '3', or '')."""
+        """Return the current phase id (e.g. '1', '2', '3', or '')."""
         return self._phase
 
     # --- Main run ------------------------------------------------------
@@ -195,7 +190,7 @@ class ClaimVerificationWorkflow:
                     agent_results=self._agent_results,
                 )
 
-            # Phase 2a — Parallel fan-out + Phase 2b — Source validation
+            # Phase 2 — Parallel fan-out
             await self._run_analysis(input)
 
             # Cooperative cancellation checkpoint before Phase 3
@@ -254,18 +249,17 @@ class ClaimVerificationWorkflow:
         return False
 
     async def _run_analysis(self, input: WorkflowInput) -> None:
-        """Phase 2a (parallel fan-out) + Phase 2b (sequential source validation)."""
+        """Phase 2: parallel fan-out (5 evidence-gathering agents)."""
         await self._set_status(input.run_id, "analyzing")
 
-        # Phase 2a — Parallel fan-out (5 evidence-gathering agents)
-        self._phase = "2a"
-        phase_2a = DAG[1]
-        assert phase_2a.mode == PhaseMode.PARALLEL
+        self._phase = "2"
+        phase_2 = DAG[1]
+        assert phase_2.mode == PhaseMode.PARALLEL
         fanout_results = await asyncio.gather(
-            *[self._dispatch_agent(agent, input) for agent in phase_2a.agents],
+            *[self._dispatch_agent(agent, input) for agent in phase_2.agents],
             return_exceptions=True,
         )
-        for agent_name, outcome in zip(phase_2a.agents, fanout_results):
+        for agent_name, outcome in zip(phase_2.agents, fanout_results):
             if isinstance(outcome, BaseException):
                 workflow.logger.warning(
                     "Fan-out agent %s failed in run %s: %s",
@@ -283,18 +277,12 @@ class ClaimVerificationWorkflow:
             else:
                 self._record_result(outcome)
 
-        # Phase 2b — Source validation (sequential, after 2a)
-        self._phase = "2b"
-        for agent_name in DAG[2].agents:
-            result = await self._dispatch_agent(agent_name, input)
-            self._record_result(result)
-
     async def _run_synthesis(self, input: WorkflowInput) -> None:
-        """Phase 3: sequential synthesis (blindspot-detector, synthesizer)."""
+        """Phase 3: sequential synthesis (validation, synthesizer)."""
         await self._set_status(input.run_id, "synthesizing")
         self._phase = "3"
 
-        for agent_name in DAG[3].agents:
+        for agent_name in DAG[2].agents:
             result = await self._dispatch_agent(agent_name, input)
             self._record_result(result)
 

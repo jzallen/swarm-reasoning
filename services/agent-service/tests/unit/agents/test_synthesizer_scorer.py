@@ -56,12 +56,12 @@ def _full_evidence_set(
         _obs("CLAIMREVIEW_MATCH", cr_match, agent="claimreview-matcher", seq=3),
         _obs("CLAIMREVIEW_VERDICT", cr_verdict, agent="claimreview-matcher", seq=4),
         _nm_obs("CLAIMREVIEW_MATCH_SCORE", cr_score, agent="claimreview-matcher", seq=5),
-        _obs("CROSS_SPECTRUM_CORROBORATION", corroboration, agent="blindspot-detector", seq=6),
+        _obs("CROSS_SPECTRUM_CORROBORATION", corroboration, agent="validation", seq=6),
         _obs("COVERAGE_FRAMING", framing_left, agent="coverage-left", seq=7),
         _obs("COVERAGE_FRAMING", framing_center, agent="coverage-center", seq=8),
         _obs("COVERAGE_FRAMING", framing_right, agent="coverage-right", seq=9),
-        _nm_obs("SOURCE_CONVERGENCE_SCORE", convergence, agent="source-validator", seq=10),
-        _nm_obs("BLINDSPOT_SCORE", blindspot, agent="blindspot-detector", seq=11),
+        _nm_obs("SOURCE_CONVERGENCE_SCORE", convergence, agent="validation", seq=10),
+        _nm_obs("BLINDSPOT_SCORE", blindspot, agent="validation", seq=11),
     ]
     return ResolvedObservationSet(
         observations=obs_list,

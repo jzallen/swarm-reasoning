@@ -227,7 +227,7 @@ def _resolve_phase(agent: str) -> StreamPhase:
         if agent in phase.agents:
             if phase.name == "ingestion":
                 return StreamPhase.INGESTION
-            elif phase.name in ("fanout", "fanout-validation"):
+            elif phase.name == "fanout":
                 return StreamPhase.FANOUT
             elif phase.name == "synthesis":
                 return StreamPhase.SYNTHESIS

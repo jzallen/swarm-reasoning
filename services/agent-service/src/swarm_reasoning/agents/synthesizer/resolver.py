@@ -10,7 +10,7 @@ from swarm_reasoning.stream.key import stream_key
 
 logger = logging.getLogger(__name__)
 
-# All 10 upstream agent names the synthesizer reads from.
+# All 9 upstream agent names the synthesizer reads from.
 UPSTREAM_AGENTS = [
     "ingestion-agent",
     "claim-detector",
@@ -20,8 +20,7 @@ UPSTREAM_AGENTS = [
     "coverage-center",
     "coverage-right",
     "domain-evidence",
-    "source-validator",
-    "blindspot-detector",
+    "validation",
 ]
 
 
