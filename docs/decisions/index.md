@@ -19,4 +19,4 @@
 | [ADR-0019](0019-static-html-verdict-snapshots.md) | Static HTML Verdict Snapshots with Ephemeral Sessions | Accepted | 2026-04-10 |
 | [ADR-0020](0020-cloudflare-aws-ecs-deployment.md) | Cloudflare Edge Proxy with AWS ECS Fargate Deployment | Accepted | 2026-04-10 |
 | [ADR-0021](0021-source-validator-agent.md) | Source-Validator Agent | Accepted | 2026-04-10 |
-| [ADR-0022](0022-simplify-langgraph-temporal-layering.md) | Simplify LangGraph + Temporal Layering | Proposed | 2026-04-14 |
+| [ADR-0022](0022-simplify-langgraph-temporal-layering.md) | Simplify LangGraph + Temporal Layering | Accepted | 2026-04-14 |

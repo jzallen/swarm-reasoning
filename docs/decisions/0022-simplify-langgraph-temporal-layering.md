@@ -1,7 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-04-14
-deciders: []
+deciders: [mel]
 ---
 
 # ADR-0022: Simplify LangGraph + Temporal Layering
@@ -83,17 +83,50 @@ These tools were designed for LLM tool-calling (they have docstrings, JSON schem
 
 **Impact**: Cognitive overhead. A reader must understand that `.ainvoke()` on a `@tool` is functionally equivalent to calling the underlying function, just with LangChain plumbing in the way.
 
-### Finding 5: ToolRuntime is unused dead code (LOW)
+### Finding 5: StreamNotFoundError class duplication (HIGH — latent bug)
+
+`fanout_base.py:51` defines its own `StreamNotFoundError`. `_utils.py:34` defines a separate `StreamNotFoundError`. `run_agent_activity` imports from `_utils` and lists it in `NON_RETRYABLE_ERRORS` (line 98). But FanoutBase raises its **local** class (line 202), which is a different Python type. Temporal's retry logic catches `NON_RETRYABLE_ERRORS` at line 193 — FanoutBase's `StreamNotFoundError` won't match, so Temporal will retry the activity indefinitely on a missing stream instead of failing fast.
+
+**Impact**: Agents that can't find upstream data (e.g., claim-detector stream missing) will retry until the activity timeout instead of failing immediately with a non-retryable error.
+
+### Finding 6: _execute() duplication is broader than CoverageHandler (HIGH)
+
+The `create_react_agent` construction block is duplicated in **four** places, not just `CoverageHandler`:
+- `langgraph_base.py:54-98` (canonical)
+- `coverage_core.py:367-424` (adds source IDs to message)
+- `synthesizer/handler.py:103-150` (adds synthesis-specific message)
+- `blindspot_detector/handler.py:88-135` (adds blindspot-specific message)
+
+All four duplicate: lazy import, `AgentContext` construction, `ChatAnthropic` instantiation, `warnings.catch_warnings()` suppression, `create_react_agent()` call, `graph.ainvoke()`, and `seq_counter` sync. The only variation is the human message content.
+
+### Finding 7: _heartbeat_loop duplicated across 4 files (LOW)
+
+Identical `_heartbeat_loop` static methods exist in `FanoutBase`, `IngestionAgentHandler`, `ClaimDetectorHandler`, and `EntityExtractorHandler`. Should be a shared utility in `_utils.py`.
+
+### Finding 8: _publish_progress leaks ReasoningStream abstraction (MEDIUM)
+
+`run_agent.py:213` accesses `_stream_client._redis` directly for progress events, bypassing the `ReasoningStream` interface. This ties the activity to the `RedisReasoningStream` implementation and would break if the transport abstraction (ADR-012) is swapped.
+
+### Finding 9: Orphaned handler registrations after agent consolidation (MEDIUM)
+
+After consolidation (commit 65c4226), three handler directories remain registered but are unreachable via the DAG:
+- `claimreview-matcher` (consolidated into `evidence`)
+- `domain-evidence` (consolidated into `evidence`)
+- `blindspot-detector` (consolidated into `validation`)
+
+These handlers import and register via `@register_handler` but are never dispatched by the workflow. If dispatched by name, `_resolve_phase` falls back to `INGESTION` phase, producing incorrect stream metadata.
+
+### Finding 10: ToolRuntime is unused dead code (LOW)
 
 `ToolRuntime` (`tool_runtime.py:90-105`) is a one-property wrapper around `AgentContext`. No production code uses it — agents create `AgentContext` directly and pass it through LangGraph's `context_schema`. The class exists only in test files.
 
 **Impact**: Minimal, but adds confusion about the "right" way to inject context.
 
-### Finding 6: DAG definition is clean and justified (KEEP)
+### Finding 11: DAG definition is clean and justified (KEEP)
 
 `dag.py` (52 lines) is a clean declarative definition. The workflow indexes into it for phase-specific dispatch. It serves as a single source of truth for agent membership and execution order. Unlike the reference pattern (single workflow, single agent), this system orchestrates 10 agents across three phases — a static DAG is appropriate.
 
-### Finding 7: No duplicate workflow file (NON-ISSUE)
+### Finding 12: No duplicate workflow file (NON-ISSUE)
 
 The concern about `temporal/workflow.py` vs `workflows/claim_verification.py` is moot — only the latter exists. `src/swarm_reasoning/temporal/` contains only `__init__.py` and `errors.py`.
 
@@ -153,7 +186,7 @@ def _build_input_message(self, context: ClaimContext) -> str:
     return f"{base}\n\nSource IDs: {source_ids}\nSources data: {json.dumps(sources)}"
 ```
 
-**Files to modify**: `langgraph_base.py`, `coverage_core.py`
+**Files to modify**: `langgraph_base.py`, `coverage_core.py`, `synthesizer/handler.py`, `blindspot_detector/handler.py`
 
 #### S4. Extract core logic from @tool wrappers for programmatic callers
 
@@ -179,12 +212,38 @@ Remove the `ToolRuntime` class. Update test files that reference it.
 
 **Files to modify**: `tool_runtime.py`, `tests/unit/agents/test_tool_runtime.py`, `tests/unit/agents/test_observation_tools.py`
 
+#### S6. Fix StreamNotFoundError class duplication (BUG FIX)
+
+Delete the local `StreamNotFoundError` in `fanout_base.py:51` and import from `_utils` instead. This is a latent bug — FanoutBase's local class is not caught by the activity's `NON_RETRYABLE_ERRORS` tuple, causing Temporal to retry stream-not-found errors indefinitely.
+
+**Files to modify**: `fanout_base.py`
+
+#### S7. Extract _heartbeat_loop into shared utility
+
+Move the duplicated `_heartbeat_loop` static method into `_utils.py`. Remove identical copies from `FanoutBase`, `IngestionAgentHandler`, `ClaimDetectorHandler`, and `EntityExtractorHandler`.
+
+**Files to modify**: `_utils.py`, `fanout_base.py`, `ingestion_agent/handler.py`, `claim_detector/handler.py`, `entity_extractor/handler.py`
+
+#### S8. Fix _publish_progress abstraction leak
+
+Add a `publish_progress(key, data)` method to the `ReasoningStream` interface (or use a raw Redis reference exposed properly) instead of accessing `_stream_client._redis` directly. This preserves the transport abstraction (ADR-012).
+
+**Files to modify**: `activities/run_agent.py`, `streams/reasoning_stream.py` (or equivalent interface)
+
+#### S9. Remove orphaned handler directories
+
+Delete or archive `claimreview_matcher/`, `domain_evidence/`, and `blindspot_detector/` handler directories and their `@register_handler` decorators. These are unreachable via the DAG after the consolidation in commit 65c4226.
+
+**Files to delete**: `agents/claimreview_matcher/`, `agents/domain_evidence/`, `agents/blindspot_detector/`
+
 ### Consequences
 
 - Good, because the execution path from Temporal activity → agent reasoning is clear and linear
 - Good, because lifecycle ownership is unambiguous (run_agent_activity owns it)
-- Good, because CoverageHandler and future agent types can customize input without copy-pasting _execute()
+- Good, because CoverageHandler, SynthesizerHandler, and future agent types can customize input without copy-pasting _execute()
 - Good, because programmatic tool callers skip LangChain's invoke machinery
+- Good, because S6 fixes a latent bug where stream-not-found errors retry indefinitely
+- Good, because S9 removes dead code paths that could produce incorrect stream metadata if accidentally dispatched
 - Bad, because S1 and S2 touch every agent handler (migration risk)
 - Bad, because S4 doubles the function count for affected tools (core + wrapper)
 
@@ -192,11 +251,15 @@ Remove the `ToolRuntime` class. Update test files that reference it.
 
 | Change | Impact | Effort | Priority |
 |--------|--------|--------|----------|
+| S6. Fix StreamNotFoundError duplication | High (bug fix) | Low | P0 |
 | S1. Unify lifecycle | High | Medium | P1 |
 | S3. Template method hook | High | Low | P1 |
 | S5. Delete ToolRuntime | Low | Low | P1 |
+| S9. Remove orphaned handlers | Medium | Low | P1 |
 | S2. Extract context loading | Medium | Medium | P2 |
 | S4. Core + wrapper split | Medium | Medium | P2 |
+| S7. Shared _heartbeat_loop | Low | Low | P2 |
+| S8. Fix _publish_progress leak | Medium | Low | P2 |
 
 ## More Information
 
