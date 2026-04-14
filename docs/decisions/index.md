@@ -20,3 +20,4 @@
 | [ADR-0020](0020-cloudflare-aws-ecs-deployment.md) | Cloudflare Edge Proxy with AWS ECS Fargate Deployment | Accepted | 2026-04-10 |
 | [ADR-0021](0021-source-validator-agent.md) | Source-Validator Agent | Accepted | 2026-04-10 |
 | [ADR-0022](0022-simplify-langgraph-temporal-layering.md) | Simplify LangGraph + Temporal Layering | Accepted | 2026-04-14 |
+| [ADR-0023](0023-langgraph-pipeline-architecture.md) | Monolithic LangGraph Pipeline Architecture | Proposed | 2026-04-14 |
