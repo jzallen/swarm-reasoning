@@ -1,12 +1,15 @@
-"""Tests for pipeline graph wiring and synthesizer state output (M0.3 / M1.2 / M2.2 / M5.2).
+"""Tests for pipeline graph wiring and state output (M0.3 / M1.2 / M2.2 / M4.2 / M5.2).
 
 Verifies graph structure (correct nodes/edges), routing behavior
 (check-worthy fan-out vs. not-check-worthy shortcut), that real
 node implementations are wired in and execute through the graph,
+that the validation node populates validated_urls, convergence_score,
+citations, blindspot_score, and blindspot_direction in the output state,
 and that the synthesizer terminal node populates verdict, confidence,
 narrative, and verdict_observations in the output state.
 """
 
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,6 +21,7 @@ from swarm_reasoning.pipeline.graph import (
     intake_node,
     pipeline_graph,
     route_after_intake,
+    validation_node,
 )
 from swarm_reasoning.pipeline.state import PipelineState
 
@@ -91,6 +95,14 @@ class TestGraphStructure:
         )
 
         assert intake_node is real_intake
+
+    def test_validation_node_is_wired(self):
+        """Verify validation_node is the real implementation, not a placeholder."""
+        from swarm_reasoning.pipeline.nodes.validation import (
+            validation_node as real_validation,
+        )
+
+        assert validation_node is real_validation
 
 
 class TestRouting:
@@ -203,6 +215,170 @@ class TestPipelineExecution:
         # Rejected claim -> is_check_worthy=False -> synthesizer shortcut
         assert result["is_check_worthy"] is False
         assert any("rejected" in e.lower() for e in result["errors"])
+
+
+class TestValidationStateOutput:
+    """Verify validation node populates state output fields (M4.2).
+
+    The validation node runs after evidence+coverage fan-in on the
+    check-worthy path. These tests verify that after full graph execution,
+    the output state contains the five validation fields: validated_urls,
+    convergence_score, citations, blindspot_score, blindspot_direction.
+    """
+
+    @staticmethod
+    def _check_worthy_mocks():
+        """Return context managers that mock all external deps for check-worthy path."""
+        mock_dup, mock_client, mock_claude = _intake_mocks()
+        return [
+            mock_dup,
+            mock_client,
+            mock_claude,
+            patch(
+                "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
+                return_value=MagicMock(
+                    score=0.85, rationale="Factual claim", proceed=True, passes=[0.85],
+                ),
+            ),
+            patch(
+                "swarm_reasoning.pipeline.nodes.intake.extract_entities_llm",
+                return_value=MagicMock(
+                    persons=[], organizations=[], dates=[], locations=[], statistics=[],
+                ),
+            ),
+            patch(
+                "swarm_reasoning.pipeline.nodes.evidence.resilient_get",
+                new_callable=AsyncMock,
+                side_effect=ConnectionError("no network in tests"),
+            ),
+            patch.object(
+                NarrativeGenerator, "generate",
+                new_callable=AsyncMock, return_value="X" * 250,
+            ),
+        ]
+
+    async def _invoke_check_worthy(self, state):
+        """Run pipeline through check-worthy path with all external deps mocked."""
+        with ExitStack() as stack:
+            for cm in self._check_worthy_mocks():
+                stack.enter_context(cm)
+            return await pipeline_graph.ainvoke(state, _make_config_with_context())
+
+    @pytest.mark.asyncio
+    async def test_check_worthy_path_populates_validated_urls(self):
+        """Check-worthy path with no upstream URLs produces empty validated_urls."""
+        state: PipelineState = {
+            "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
+            "run_id": "run-m42-1",
+            "session_id": "sess-m42-1",
+            "observations": [],
+            "errors": [],
+        }
+        result = await self._invoke_check_worthy(state)
+
+        assert "validated_urls" in result
+        assert isinstance(result["validated_urls"], list)
+
+    @pytest.mark.asyncio
+    async def test_check_worthy_path_populates_convergence_score(self):
+        """Check-worthy path populates convergence_score as a float."""
+        state: PipelineState = {
+            "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
+            "run_id": "run-m42-2",
+            "session_id": "sess-m42-2",
+            "observations": [],
+            "errors": [],
+        }
+        result = await self._invoke_check_worthy(state)
+
+        assert "convergence_score" in result
+        assert isinstance(result["convergence_score"], float)
+        assert 0.0 <= result["convergence_score"] <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_check_worthy_path_populates_citations(self):
+        """Check-worthy path populates citations list."""
+        state: PipelineState = {
+            "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
+            "run_id": "run-m42-3",
+            "session_id": "sess-m42-3",
+            "observations": [],
+            "errors": [],
+        }
+        result = await self._invoke_check_worthy(state)
+
+        assert "citations" in result
+        assert isinstance(result["citations"], list)
+
+    @pytest.mark.asyncio
+    async def test_check_worthy_path_populates_blindspot_score(self):
+        """Check-worthy path populates blindspot_score as a float."""
+        state: PipelineState = {
+            "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
+            "run_id": "run-m42-4",
+            "session_id": "sess-m42-4",
+            "observations": [],
+            "errors": [],
+        }
+        result = await self._invoke_check_worthy(state)
+
+        assert "blindspot_score" in result
+        assert isinstance(result["blindspot_score"], float)
+        assert 0.0 <= result["blindspot_score"] <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_check_worthy_path_populates_blindspot_direction(self):
+        """Check-worthy path populates blindspot_direction as a string."""
+        state: PipelineState = {
+            "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
+            "run_id": "run-m42-5",
+            "session_id": "sess-m42-5",
+            "observations": [],
+            "errors": [],
+        }
+        result = await self._invoke_check_worthy(state)
+
+        assert "blindspot_direction" in result
+        assert isinstance(result["blindspot_direction"], str)
+        assert len(result["blindspot_direction"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_all_validation_fields_present(self):
+        """All five validation output fields survive to final pipeline state."""
+        state: PipelineState = {
+            "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
+            "run_id": "run-m42-6",
+            "session_id": "sess-m42-6",
+            "observations": [],
+            "errors": [],
+        }
+        result = await self._invoke_check_worthy(state)
+
+        for field in (
+            "validated_urls",
+            "convergence_score",
+            "citations",
+            "blindspot_score",
+            "blindspot_direction",
+        ):
+            assert field in result, f"Missing validation output field: {field}"
+
+    @pytest.mark.asyncio
+    async def test_not_check_worthy_skips_validation(self):
+        """Not-check-worthy path shortcuts to synthesizer, skipping validation fields."""
+        state: PipelineState = {
+            "claim_text": "Hi",
+            "run_id": "run-m42-7",
+            "session_id": "sess-m42-7",
+            "observations": [],
+            "errors": [],
+        }
+        result = await pipeline_graph.ainvoke(state, _make_config_with_context())
+
+        # Rejected claim -> is_check_worthy=False -> synthesizer shortcut
+        # Validation fields should not be in output
+        assert "validated_urls" not in result
+        assert "convergence_score" not in result
 
 
 class TestSynthesizerStateOutput:
