@@ -4,6 +4,7 @@ Each node is an async function accepting PipelineState + RunnableConfig
 and returning a dict of state updates for LangGraph to merge.
 """
 
+from swarm_reasoning.pipeline.nodes.evidence import evidence_node
 from swarm_reasoning.pipeline.nodes.intake import intake_node
 
-__all__ = ["intake_node"]
+__all__ = ["evidence_node", "intake_node"]
