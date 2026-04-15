@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ProgressEvent } from '@/api/types';
 import type { SessionPhase } from '@/hooks/useSession';
-import { ProgressBubble } from './ProgressBubble';
+import { ProgressBubble } from '@/components/ProgressBubble';
 import styles from './ChatInterface.module.css';
 
 interface ChatInterfaceProps {

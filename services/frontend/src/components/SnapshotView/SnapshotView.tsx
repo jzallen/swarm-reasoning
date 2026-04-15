@@ -1,4 +1,4 @@
-import { PrintButton } from "./PrintButton";
+import { PrintButton } from '@/components/PrintButton';
 import styles from "./SnapshotView.module.css";
 
 interface SnapshotViewProps {

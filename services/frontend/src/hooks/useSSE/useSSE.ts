@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { ProgressEvent } from '@/api/types';
-import type { SessionAction, SessionPhase } from './useSession';
+import type { SessionAction, SessionPhase } from '@/hooks/useSession';
 
 interface UseSSEOptions {
   sessionId: string | null;

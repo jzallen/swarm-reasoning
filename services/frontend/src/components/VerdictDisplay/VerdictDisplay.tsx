@@ -1,6 +1,6 @@
 import type { Verdict, RatingLabel, CoverageEntry } from '@/api/types';
-import { CitationTable } from './CitationTable';
-import { PrintButton } from './PrintButton';
+import { CitationTable } from '@/components/CitationTable';
+import { PrintButton } from '@/components/PrintButton';
 import styles from './VerdictDisplay.module.css';
 
 const RATING_CONFIG: Record<RatingLabel, { text: string; className: string }> = {
