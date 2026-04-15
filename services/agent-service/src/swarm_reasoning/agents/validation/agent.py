@@ -1,20 +1,27 @@
-"""Validation agent -- procedural 5-tool chain (no LLM).
+"""Validation agent -- LangGraph StateGraph (fixed 5-node sequence, no LLM).
 
-Executes in fixed order:
-  1. extract_source_urls  -- extract + deduplicate URLs from upstream data
-  2. validate_urls        -- HTTP HEAD validation with soft-404 detection
-  3. compute_convergence  -- convergence scoring across agents
-  4. aggregate_citations  -- combine extraction + validation + convergence
-  5. analyze_blindspots   -- coverage gap detection + cross-spectrum corroboration
+Unlike LLM-driven agents that use create_react_agent, the validation agent
+uses a fixed-sequence StateGraph because its 5 steps always execute in the
+same order with deterministic routing.
 
-Accepts ValidationInput + PipelineContext, returns ValidationOutput.
+Node sequence:
+  1. extract_urls        -- extract + deduplicate URLs from upstream data
+  2. validate_urls       -- HTTP HEAD validation with soft-404 detection
+  3. compute_convergence -- convergence scoring across agents
+  4. aggregate_citations -- combine extraction + validation + convergence
+  5. analyze_blindspots  -- coverage gap detection + cross-spectrum corroboration
+
+Accepts ValidationInput fields as graph state, returns ValidationOutput fields.
 Publishes observations as side effects via PipelineContext.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, TypedDict
+
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, StateGraph
 
 from swarm_reasoning.agents.blindspot_detector.analysis import (
     compute_blindspot_direction,
@@ -28,11 +35,10 @@ from swarm_reasoning.agents.blindspot_detector.models import (
 from swarm_reasoning.agents.source_validator.aggregator import CitationAggregator
 from swarm_reasoning.agents.source_validator.convergence import ConvergenceAnalyzer
 from swarm_reasoning.agents.source_validator.extractor import LinkExtractor
-from swarm_reasoning.agents.source_validator.models import ValidationResult
 from swarm_reasoning.agents.source_validator.validator import UrlValidator
 from swarm_reasoning.agents.validation.models import ValidationInput, ValidationOutput
 from swarm_reasoning.models.observation import ObservationCode, ValueType
-from swarm_reasoning.pipeline.context import PipelineContext
+from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
 
 logger = logging.getLogger(__name__)
 
@@ -40,121 +46,250 @@ AGENT_NAME = "validation"
 
 
 # ---------------------------------------------------------------------------
-# Step 1: extract source URLs
+# Internal state for the validation StateGraph
 # ---------------------------------------------------------------------------
 
 
-async def _extract_source_urls(
-    cross_agent_urls: list[dict], ctx: PipelineContext
-) -> list[Any]:
-    """Extract and deduplicate URLs from upstream cross-agent data."""
+class ValidationGraphState(TypedDict, total=False):
+    """Internal state threaded through the validation StateGraph.
+
+    Input fields are populated by the caller before invocation.
+    Working fields are populated sequentially by each graph node.
+    """
+
+    # Input (provided at graph invocation)
+    cross_agent_urls: list[dict]
+    coverage_left: list[dict]
+    coverage_center: list[dict]
+    coverage_right: list[dict]
+
+    # After extract_urls node
+    extracted_urls: list  # list[ExtractedUrl] from LinkExtractor
+
+    # After validate_urls node
+    validations: dict  # dict[str, ValidationResult]
+    validated_urls: list[dict]  # Output: URL validation results with status
+
+    # After compute_convergence node
+    convergence_score: float  # Output
+    convergence_groups: dict  # dict[str, int]
+
+    # After aggregate_citations node
+    citations: list[dict]  # Output: serialized citation list
+
+    # After analyze_blindspots node
+    blindspot_score: float  # Output: coverage gap score
+    blindspot_direction: str  # Output: CWE-coded blindspot direction
+
+
+# ---------------------------------------------------------------------------
+# Graph nodes
+# ---------------------------------------------------------------------------
+
+
+async def extract_urls_node(state: ValidationGraphState, config: RunnableConfig) -> dict:
+    """Extract and deduplicate URLs from upstream cross-agent data.
+
+    Publishes SOURCE_EXTRACTED_URL observation for each extracted URL.
+    """
+    ctx = _get_ctx(config)
+    if ctx is not None:
+        ctx.heartbeat(AGENT_NAME)
+
+    cross_agent_urls = state.get("cross_agent_urls", [])
+
     extractor = LinkExtractor()
     extracted = extractor.extract_urls({"urls": cross_agent_urls})
 
-    for eu in extracted:
-        await ctx.publish_observation(
-            agent=AGENT_NAME,
-            code=ObservationCode.SOURCE_EXTRACTED_URL,
-            value=eu.url,
-            value_type=ValueType.ST,
-        )
+    if ctx is not None:
+        for eu in extracted:
+            await ctx.publish_observation(
+                agent=AGENT_NAME,
+                code=ObservationCode.SOURCE_EXTRACTED_URL,
+                value=eu.url,
+                value_type=ValueType.ST,
+            )
 
-    logger.info("extract_source_urls: %d URLs extracted", len(extracted))
-    return extracted
-
-
-# ---------------------------------------------------------------------------
-# Step 2: validate URLs
-# ---------------------------------------------------------------------------
+    logger.info("extract_urls_node: %d URLs extracted", len(extracted))
+    return {"extracted_urls": extracted}
 
 
-async def _validate_urls(
-    extracted_urls: list[Any], ctx: PipelineContext
-) -> dict[str, ValidationResult]:
-    """Validate extracted URLs via HTTP HEAD with soft-404 detection."""
+async def validate_urls_node(state: ValidationGraphState, config: RunnableConfig) -> dict:
+    """Validate extracted URLs via HTTP HEAD with soft-404 detection.
+
+    Publishes SOURCE_VALIDATION_STATUS for each validated URL.
+    Also builds the validated_urls output list combining extraction
+    associations with validation status.
+    """
+    ctx = _get_ctx(config)
+    if ctx is not None:
+        ctx.heartbeat(AGENT_NAME)
+
+    extracted_urls: list[Any] = state.get("extracted_urls", [])
+
     urls = [eu.url for eu in extracted_urls]
     if not urls:
-        logger.info("validate_urls: no URLs to validate")
-        return {}
+        logger.info("validate_urls_node: no URLs to validate")
+        return {"validations": {}, "validated_urls": []}
 
     validator = UrlValidator()
     validations = await validator.validate_all(urls)
 
-    for _url, result in validations.items():
-        await ctx.publish_observation(
-            agent=AGENT_NAME,
-            code=ObservationCode.SOURCE_VALIDATION_STATUS,
-            value=result.status.to_cwe(),
-            value_type=ValueType.CWE,
+    if ctx is not None:
+        for _url, result in validations.items():
+            await ctx.publish_observation(
+                agent=AGENT_NAME,
+                code=ObservationCode.SOURCE_VALIDATION_STATUS,
+                value=result.status.to_cwe(),
+                value_type=ValueType.CWE,
+            )
+
+    # Build validated_urls output
+    validated_urls = []
+    for eu in extracted_urls:
+        validation = validations.get(eu.url)
+        status = validation.status.value if validation else "NOT_VALIDATED"
+        validated_urls.append(
+            {
+                "url": eu.url,
+                "status": status,
+                "associations": [
+                    {
+                        "agent": a.agent,
+                        "observation_code": a.observation_code,
+                        "source_name": a.source_name,
+                    }
+                    for a in eu.associations
+                ],
+            }
         )
 
-    logger.info("validate_urls: %d URLs validated", len(validations))
-    return validations
+    logger.info("validate_urls_node: %d URLs validated", len(validations))
+    return {"validations": validations, "validated_urls": validated_urls}
 
 
-# ---------------------------------------------------------------------------
-# Step 3: compute convergence
-# ---------------------------------------------------------------------------
+async def compute_convergence_node(state: ValidationGraphState, config: RunnableConfig) -> dict:
+    """Compute source convergence score across agents.
 
+    Publishes SOURCE_CONVERGENCE_SCORE observation.
+    """
+    ctx = _get_ctx(config)
+    if ctx is not None:
+        ctx.heartbeat(AGENT_NAME)
 
-async def _compute_convergence(
-    extracted_urls: list[Any], ctx: PipelineContext
-) -> tuple[float, dict[str, int]]:
-    """Compute source convergence score across agents."""
+    extracted_urls = state.get("extracted_urls", [])
+
     analyzer = ConvergenceAnalyzer()
     score = analyzer.compute_convergence_score(extracted_urls)
     groups = analyzer.get_convergence_groups(extracted_urls)
 
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.SOURCE_CONVERGENCE_SCORE,
-        value=str(score),
-        value_type=ValueType.NM,
-        units="score",
-        reference_range="0.0-1.0",
-    )
+    if ctx is not None:
+        await ctx.publish_observation(
+            agent=AGENT_NAME,
+            code=ObservationCode.SOURCE_CONVERGENCE_SCORE,
+            value=str(score),
+            value_type=ValueType.NM,
+            units="score",
+            reference_range="0.0-1.0",
+        )
 
-    logger.info("compute_convergence: score=%.4f", score)
-    return score, groups
-
-
-# ---------------------------------------------------------------------------
-# Step 4: aggregate citations
-# ---------------------------------------------------------------------------
+    logger.info("compute_convergence_node: score=%.4f", score)
+    return {"convergence_score": score, "convergence_groups": groups}
 
 
-async def _aggregate_citations(
-    extracted_urls: list[Any],
-    validations: dict[str, ValidationResult],
-    convergence_groups: dict[str, int],
-    ctx: PipelineContext,
-) -> list[Any]:
-    """Combine extraction, validation, and convergence into citations."""
+async def aggregate_citations_node(state: ValidationGraphState, config: RunnableConfig) -> dict:
+    """Combine extraction, validation, and convergence into citations.
+
+    Publishes CITATION_LIST observation with serialized JSON.
+    Returns citations pre-serialized as list[dict].
+    """
+    ctx = _get_ctx(config)
+    if ctx is not None:
+        ctx.heartbeat(AGENT_NAME)
+
+    extracted_urls = state.get("extracted_urls", [])
+    validations: dict = state.get("validations", {})
+    convergence_groups: dict = state.get("convergence_groups", {})
+
     convergence_analyzer = ConvergenceAnalyzer()
     aggregator = CitationAggregator(convergence_analyzer)
     citations = aggregator.aggregate(extracted_urls, validations, convergence_groups)
     json_str = CitationAggregator.to_citation_list_json(citations)
 
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.CITATION_LIST,
-        value=json_str,
-        value_type=ValueType.TX,
-    )
+    if ctx is not None:
+        await ctx.publish_observation(
+            agent=AGENT_NAME,
+            code=ObservationCode.CITATION_LIST,
+            value=json_str,
+            value_type=ValueType.TX,
+        )
 
-    logger.info("aggregate_citations: %d citations", len(citations))
-    return citations
+    logger.info("aggregate_citations_node: %d citations", len(citations))
+    return {"citations": [c.to_dict() for c in citations]}
+
+
+async def analyze_blindspots_node(state: ValidationGraphState, config: RunnableConfig) -> dict:
+    """Detect coverage gaps and cross-spectrum corroboration.
+
+    Publishes BLINDSPOT_SCORE, BLINDSPOT_DIRECTION, and
+    CROSS_SPECTRUM_CORROBORATION observations.
+    """
+    ctx = _get_ctx(config)
+    if ctx is not None:
+        ctx.heartbeat(AGENT_NAME)
+
+    convergence_score = state.get("convergence_score")
+
+    coverage = _build_coverage_snapshot(state, convergence_score)
+
+    score = compute_blindspot_score(coverage)
+    direction = compute_blindspot_direction(coverage)
+    corroboration, corroboration_note = compute_corroboration(coverage)
+
+    if ctx is not None:
+        await ctx.publish_observation(
+            agent=AGENT_NAME,
+            code=ObservationCode.BLINDSPOT_SCORE,
+            value=str(score),
+            value_type=ValueType.NM,
+            units="score",
+            reference_range="0.0-1.0",
+        )
+        await ctx.publish_observation(
+            agent=AGENT_NAME,
+            code=ObservationCode.BLINDSPOT_DIRECTION,
+            value=direction,
+            value_type=ValueType.CWE,
+        )
+        await ctx.publish_observation(
+            agent=AGENT_NAME,
+            code=ObservationCode.CROSS_SPECTRUM_CORROBORATION,
+            value=corroboration,
+            value_type=ValueType.CWE,
+            note=corroboration_note,
+        )
+
+    logger.info("analyze_blindspots_node: score=%.4f, direction=%s", score, direction)
+    return {"blindspot_score": score, "blindspot_direction": direction}
 
 
 # ---------------------------------------------------------------------------
-# Step 5: analyze blindspots
+# Helpers
 # ---------------------------------------------------------------------------
+
+
+def _get_ctx(config: RunnableConfig) -> PipelineContext | None:
+    """Extract PipelineContext from config, returning None if absent."""
+    try:
+        return get_pipeline_context(config)
+    except (KeyError, TypeError):
+        return None
 
 
 def _build_coverage_snapshot(
-    input: ValidationInput, convergence_score: float | None
+    state: ValidationGraphState, convergence_score: float | None
 ) -> CoverageSnapshot:
-    """Build CoverageSnapshot from ValidationInput coverage fields."""
+    """Build CoverageSnapshot from graph state coverage fields."""
 
     def _segment(articles: list[dict]) -> SegmentCoverage:
         if not articles:
@@ -164,62 +299,59 @@ def _build_coverage_snapshot(
         return SegmentCoverage(article_count=len(articles), framing=framing)
 
     return CoverageSnapshot(
-        left=_segment(input["coverage_left"]),
-        center=_segment(input["coverage_center"]),
-        right=_segment(input["coverage_right"]),
+        left=_segment(state.get("coverage_left", [])),
+        center=_segment(state.get("coverage_center", [])),
+        right=_segment(state.get("coverage_right", [])),
         source_convergence_score=convergence_score,
     )
 
 
-async def _analyze_blindspots(
-    input: ValidationInput,
-    convergence_score: float | None,
-    ctx: PipelineContext,
-) -> tuple[float, str]:
-    """Detect coverage gaps and cross-spectrum corroboration."""
-    coverage = _build_coverage_snapshot(input, convergence_score)
-
-    score = compute_blindspot_score(coverage)
-    direction = compute_blindspot_direction(coverage)
-    corroboration, corroboration_note = compute_corroboration(coverage)
-
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.BLINDSPOT_SCORE,
-        value=str(score),
-        value_type=ValueType.NM,
-        units="score",
-        reference_range="0.0-1.0",
-    )
-
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.BLINDSPOT_DIRECTION,
-        value=direction,
-        value_type=ValueType.CWE,
-    )
-
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.CROSS_SPECTRUM_CORROBORATION,
-        value=corroboration,
-        value_type=ValueType.CWE,
-        note=corroboration_note,
-    )
-
-    logger.info("analyze_blindspots: score=%.4f, direction=%s", score, direction)
-    return score, direction
-
-
 # ---------------------------------------------------------------------------
-# Agent entry point
+# Graph construction
 # ---------------------------------------------------------------------------
 
 
-async def run_validation_agent(
-    input: ValidationInput, ctx: PipelineContext
-) -> ValidationOutput:
-    """Run the validation agent: 5-step procedural pipeline (no LLM).
+def build_validation_graph() -> StateGraph:
+    """Build the validation StateGraph: 5-node fixed sequence.
+
+    extract_urls → validate_urls → compute_convergence →
+    aggregate_citations → analyze_blindspots → END
+
+    Returns a compiled graph that accepts ``ValidationGraphState`` input
+    (minimally ``{"cross_agent_urls": [...], "coverage_*": [...]}``).
+    """
+    builder = StateGraph(ValidationGraphState)
+
+    builder.add_node("extract_urls", extract_urls_node)
+    builder.add_node("validate_urls", validate_urls_node)
+    builder.add_node("compute_convergence", compute_convergence_node)
+    builder.add_node("aggregate_citations", aggregate_citations_node)
+    builder.add_node("analyze_blindspots", analyze_blindspots_node)
+
+    builder.set_entry_point("extract_urls")
+    builder.add_edge("extract_urls", "validate_urls")
+    builder.add_edge("validate_urls", "compute_convergence")
+    builder.add_edge("compute_convergence", "aggregate_citations")
+    builder.add_edge("aggregate_citations", "analyze_blindspots")
+    builder.add_edge("analyze_blindspots", END)
+
+    return builder.compile()
+
+
+# Module-level compiled graph
+validation_graph = build_validation_graph()
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible entry point
+# ---------------------------------------------------------------------------
+
+
+async def run_validation_agent(input: ValidationInput, ctx: PipelineContext) -> ValidationOutput:
+    """Run the validation agent via its StateGraph.
+
+    Backward-compatible wrapper: accepts ValidationInput + PipelineContext,
+    invokes the compiled graph, and returns ValidationOutput.
 
     Args:
         input: Pre-extracted upstream data (URLs and coverage segments).
@@ -230,55 +362,13 @@ async def run_validation_agent(
         blindspot_score, and blindspot_direction.
     """
     ctx.heartbeat(AGENT_NAME)
-
-    # Step 1: Extract URLs from upstream data
-    extracted_urls = await _extract_source_urls(input["cross_agent_urls"], ctx)
-    ctx.heartbeat(AGENT_NAME)
-
-    # Step 2: Validate extracted URLs via HTTP
-    validations = await _validate_urls(extracted_urls, ctx)
-    ctx.heartbeat(AGENT_NAME)
-
-    # Step 3: Compute convergence score
-    convergence_score, convergence_groups = await _compute_convergence(
-        extracted_urls, ctx
-    )
-    ctx.heartbeat(AGENT_NAME)
-
-    # Step 4: Aggregate citations
-    citations = await _aggregate_citations(
-        extracted_urls, validations, convergence_groups, ctx
-    )
-    ctx.heartbeat(AGENT_NAME)
-
-    # Step 5: Analyze blindspots
-    blindspot_score, blindspot_direction = await _analyze_blindspots(
-        input, convergence_score, ctx
-    )
-    ctx.heartbeat(AGENT_NAME)
-
-    # Build validated_urls list
-    validated_urls = []
-    for eu in extracted_urls:
-        validation = validations.get(eu.url)
-        status = validation.status.value if validation else "NOT_VALIDATED"
-        validated_urls.append({
-            "url": eu.url,
-            "status": status,
-            "associations": [
-                {
-                    "agent": a.agent,
-                    "observation_code": a.observation_code,
-                    "source_name": a.source_name,
-                }
-                for a in eu.associations
-            ],
-        })
+    config: RunnableConfig = {"configurable": {"pipeline_context": ctx}}
+    result = await validation_graph.ainvoke(dict(input), config=config)
 
     return ValidationOutput(
-        validated_urls=validated_urls,
-        convergence_score=convergence_score,
-        citations=[c.to_dict() for c in citations],
-        blindspot_score=blindspot_score,
-        blindspot_direction=blindspot_direction,
+        validated_urls=result.get("validated_urls", []),
+        convergence_score=result.get("convergence_score", 0.0),
+        citations=result.get("citations", []),
+        blindspot_score=result.get("blindspot_score", 0.0),
+        blindspot_direction=result.get("blindspot_direction", "NONE"),
     )
