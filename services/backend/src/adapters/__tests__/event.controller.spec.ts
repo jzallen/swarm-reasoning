@@ -29,6 +29,8 @@ function makeMockResponse() {
       flushHeaders: jest.fn(),
       write: jest.fn((chunk: string) => written.push(chunk)),
       end: jest.fn(),
+      on: jest.fn(),
+      writableEnded: false,
     },
     written,
     headers,

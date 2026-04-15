@@ -2,9 +2,10 @@
 
 The run_langgraph_pipeline activity:
 1. Constructs initial PipelineState from the activity input
-2. Passes a heartbeat callback via LangGraph's RunnableConfig
-3. Invokes the compiled StateGraph
-4. Returns a PipelineResult constructed from the final PipelineState
+2. Creates a PipelineContext with Redis stream transport
+3. Passes heartbeat callback and pipeline context via LangGraph's RunnableConfig
+4. Invokes the compiled StateGraph
+5. Returns a PipelineResult constructed from the final PipelineState
 
 Design reference: ADR-0023 §D1, §D7; openspec temporal-simplification spec.
 """
@@ -16,9 +17,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+import redis.asyncio as aioredis
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from swarm_reasoning.config import RedisConfig
+from swarm_reasoning.pipeline.context import PipelineContext
+from swarm_reasoning.stream.redis import RedisReasoningStream
 from swarm_reasoning.temporal.errors import (
     InvalidClaimError,
     MissingApiKeyError,
@@ -158,10 +163,24 @@ async def run_langgraph_pipeline(input: PipelineActivityInput) -> PipelineResult
     # and to allow the graph module to be developed independently in M0.3)
     from swarm_reasoning.pipeline.graph import pipeline_graph
 
+    # Create stream transport and pipeline context for observation publishing
+    redis_cfg = RedisConfig()
+    stream = RedisReasoningStream(redis_cfg)
+    redis_client = aioredis.Redis(host=redis_cfg.host, port=redis_cfg.port, db=redis_cfg.db)
+
+    ctx = PipelineContext(
+        stream=stream,
+        redis_client=redis_client,
+        run_id=input.run_id,
+        session_id=input.session_id,
+        heartbeat_callback=_make_heartbeat_callback(),
+    )
+
     # Configure LangGraph with heartbeat callback and pipeline context
     config = {
         "configurable": {
-            "heartbeat_callback": _make_heartbeat_callback(),
+            "pipeline_context": ctx,
+            "heartbeat_callback": ctx.heartbeat_callback,
             "run_id": input.run_id,
             "session_id": input.session_id,
         }
@@ -183,6 +202,9 @@ async def run_langgraph_pipeline(input: PipelineActivityInput) -> PipelineResult
             type=type(exc).__name__,
             non_retryable=True,
         ) from exc
+    finally:
+        await stream.close()
+        await redis_client.aclose()
 
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     result = _build_result(input, final_state, elapsed_ms)

@@ -10,7 +10,8 @@ Tests cover:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,6 +28,27 @@ from swarm_reasoning.temporal.errors import (
     MissingApiKeyError,
     NotCheckWorthyError,
 )
+
+
+@contextmanager
+def _mock_redis_infra():
+    """Mock Redis stream and client so tests don't need a running Redis."""
+    mock_stream = MagicMock()
+    mock_stream.close = AsyncMock()
+    mock_redis = MagicMock()
+    mock_redis.aclose = AsyncMock()
+    with (
+        patch(
+            "swarm_reasoning.activities.run_pipeline.RedisReasoningStream",
+            return_value=mock_stream,
+        ),
+        patch(
+            "swarm_reasoning.activities.run_pipeline.aioredis.Redis",
+            return_value=mock_redis,
+        ),
+    ):
+        yield mock_stream, mock_redis
+
 
 # --- Input/Output construction tests ---
 
@@ -200,6 +222,7 @@ async def test_run_pipeline_success():
     )
 
     with (
+        _mock_redis_infra(),
         patch("swarm_reasoning.activities.run_pipeline.activity"),
         patch("swarm_reasoning.pipeline.graph.pipeline_graph", mock_graph),
     ):
@@ -221,6 +244,7 @@ async def test_run_pipeline_success():
     assert config["configurable"]["run_id"] == "run-001"
     assert config["configurable"]["session_id"] == "sess-001"
     assert callable(config["configurable"]["heartbeat_callback"])
+    assert config["configurable"]["pipeline_context"] is not None
 
 
 @pytest.mark.asyncio
@@ -236,6 +260,7 @@ async def test_run_pipeline_invalid_claim_error():
     )
 
     with (
+        _mock_redis_infra(),
         patch("swarm_reasoning.activities.run_pipeline.activity"),
         patch("swarm_reasoning.pipeline.graph.pipeline_graph", mock_graph),
     ):
@@ -262,6 +287,7 @@ async def test_run_pipeline_not_check_worthy_error():
     )
 
     with (
+        _mock_redis_infra(),
         patch("swarm_reasoning.activities.run_pipeline.activity"),
         patch("swarm_reasoning.pipeline.graph.pipeline_graph", mock_graph),
     ):
@@ -287,6 +313,7 @@ async def test_run_pipeline_missing_api_key_error():
     )
 
     with (
+        _mock_redis_infra(),
         patch("swarm_reasoning.activities.run_pipeline.activity"),
         patch("swarm_reasoning.pipeline.graph.pipeline_graph", mock_graph),
     ):
@@ -312,6 +339,7 @@ async def test_run_pipeline_retryable_error_propagates():
     )
 
     with (
+        _mock_redis_infra(),
         patch("swarm_reasoning.activities.run_pipeline.activity"),
         patch("swarm_reasoning.pipeline.graph.pipeline_graph", mock_graph),
     ):
@@ -337,6 +365,7 @@ async def test_run_pipeline_heartbeats_on_entry_and_exit():
     )
 
     with (
+        _mock_redis_infra(),
         patch("swarm_reasoning.activities.run_pipeline.activity") as mock_activity,
         patch("swarm_reasoning.pipeline.graph.pipeline_graph", mock_graph),
     ):
@@ -366,6 +395,7 @@ async def test_run_pipeline_config_has_heartbeat_callback():
     )
 
     with (
+        _mock_redis_infra(),
         patch("swarm_reasoning.activities.run_pipeline.activity") as mock_activity,
         patch("swarm_reasoning.pipeline.graph.pipeline_graph", mock_graph),
     ):
@@ -380,3 +410,63 @@ async def test_run_pipeline_config_has_heartbeat_callback():
         # When called, it should heartbeat with the correct format
         heartbeat_fn("validation")
         mock_activity.heartbeat.assert_any_call("executing:validation")
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_config_has_pipeline_context():
+    """The RunnableConfig should include a PipelineContext for observation publishing."""
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = {
+        "verdict": "true",
+        "confidence": 0.8,
+        "is_check_worthy": True,
+        "errors": [],
+    }
+
+    inp = PipelineActivityInput(
+        run_id="run-001",
+        session_id="sess-001",
+        claim_text="Test claim",
+    )
+
+    with (
+        _mock_redis_infra(),
+        patch("swarm_reasoning.activities.run_pipeline.activity"),
+        patch("swarm_reasoning.pipeline.graph.pipeline_graph", mock_graph),
+    ):
+        await run_langgraph_pipeline(inp)
+
+        config = mock_graph.ainvoke.call_args[1]["config"]
+        ctx = config["configurable"]["pipeline_context"]
+
+        # PipelineContext should be wired with correct identifiers
+        from swarm_reasoning.pipeline.context import PipelineContext
+
+        assert isinstance(ctx, PipelineContext)
+        assert ctx.run_id == "run-001"
+        assert ctx.session_id == "sess-001"
+        assert callable(ctx.heartbeat_callback)
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_cleans_up_on_error():
+    """Stream and Redis client should be closed even when pipeline raises."""
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.side_effect = RuntimeError("boom")
+
+    inp = PipelineActivityInput(
+        run_id="run-001",
+        session_id="sess-001",
+        claim_text="Test claim",
+    )
+
+    with (
+        _mock_redis_infra() as (mock_stream, mock_redis),
+        patch("swarm_reasoning.activities.run_pipeline.activity"),
+        patch("swarm_reasoning.pipeline.graph.pipeline_graph", mock_graph),
+    ):
+        with pytest.raises(RuntimeError, match="boom"):
+            await run_langgraph_pipeline(inp)
+
+        mock_stream.close.assert_awaited_once()
+        mock_redis.aclose.assert_awaited_once()
