@@ -16,12 +16,13 @@ from __future__ import annotations
 import logging
 from typing import Any, TypedDict
 
-from langgraph.graph import END, StateGraph
 from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, StateGraph
 
 from swarm_reasoning.agents.synthesizer.mapper import VerdictMapper
 from swarm_reasoning.agents.synthesizer.models import (
     ResolvedObservationSet,
+    SynthesizerInput,
     SynthesizerOutput,
 )
 from swarm_reasoning.agents.synthesizer.narrator import NarrativeGenerator
@@ -251,19 +252,23 @@ def _build_verdict_observations(
         },
     ]
     if confidence_score is not None:
-        obs.append({
-            "agent": AGENT_NAME,
-            "code": "CONFIDENCE_SCORE",
-            "value": f"{confidence_score:.4f}",
-            "value_type": "NM",
-        })
+        obs.append(
+            {
+                "agent": AGENT_NAME,
+                "code": "CONFIDENCE_SCORE",
+                "value": f"{confidence_score:.4f}",
+                "value_type": "NM",
+            }
+        )
     if override_reason:
-        obs.append({
-            "agent": AGENT_NAME,
-            "code": "SYNTHESIS_OVERRIDE_REASON",
-            "value": override_reason,
-            "value_type": "ST",
-        })
+        obs.append(
+            {
+                "agent": AGENT_NAME,
+                "code": "SYNTHESIS_OVERRIDE_REASON",
+                "value": override_reason,
+                "value_type": "ST",
+            }
+        )
     return obs
 
 
@@ -296,3 +301,43 @@ def build_synthesizer_graph() -> StateGraph:
 
 # Module-level compiled graph
 synthesizer_graph = build_synthesizer_graph()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+async def run_synthesizer(
+    input: SynthesizerInput,
+    ctx: PipelineContext,
+) -> SynthesizerOutput:
+    """Run the synthesizer agent: resolve → score → map → narrate.
+
+    Args:
+        input: Upstream observations from the pipeline.
+        ctx: PipelineContext for observation publishing and heartbeats.
+
+    Returns:
+        SynthesizerOutput with verdict, confidence, narrative,
+        verdict_observations, and override_reason.
+    """
+    ctx.heartbeat(AGENT_NAME)
+    await ctx.publish_progress(AGENT_NAME, "Beginning verdict synthesis")
+
+    config: RunnableConfig = {"configurable": {"pipeline_context": ctx}}
+
+    result = await synthesizer_graph.ainvoke(dict(input), config=config)
+
+    conf_score = result.get("confidence_score")
+    verdict_code = result.get("verdict_code", "UNVERIFIABLE")
+    conf_str = f"{conf_score:.4f}" if conf_score is not None else "unverifiable"
+    await ctx.publish_progress(AGENT_NAME, f"Verdict: {verdict_code} (confidence: {conf_str})")
+
+    return SynthesizerOutput(
+        verdict=verdict_code,
+        confidence=conf_score,
+        narrative=result.get("narrative", ""),
+        verdict_observations=result.get("verdict_observations", []),
+        override_reason=result.get("override_reason", ""),
+    )
