@@ -5,6 +5,7 @@ pipeline node wrapper in ``swarm_reasoning.pipeline.nodes.synthesizer``.
 """
 
 from swarm_reasoning.agents.synthesizer.agent import (
+    AGENT_NAME,
     build_synthesizer_graph,
     synthesizer_graph,
 )
@@ -16,6 +17,7 @@ from swarm_reasoning.agents.synthesizer.models import (
 )
 
 __all__ = [
+    "AGENT_NAME",
     "build_synthesizer_graph",
     "synthesizer_graph",
     "ResolvedObservation",
