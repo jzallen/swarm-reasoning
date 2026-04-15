@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from swarm_reasoning.pipeline.nodes.intake_scorer import (
+from swarm_reasoning.agents.intake.tools.scorer import (
     CHECK_WORTHY_THRESHOLD,
     ScoreResult,
     is_check_worthy,
