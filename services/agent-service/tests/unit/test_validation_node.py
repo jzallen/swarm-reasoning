@@ -1,7 +1,8 @@
-"""Tests for validation pipeline node (M4.1).
+"""Tests for validation pipeline node and validation agent.
 
-Tests the 5-tool procedural chain: extract → validate → convergence →
-aggregate → blindspots. Uses mock PipelineContext to avoid Redis/network.
+Tests the pipeline node translation layer and the 5-tool procedural chain:
+extract -> validate -> convergence -> aggregate -> blindspots.
+Uses mock PipelineContext to avoid Redis/network.
 """
 
 from __future__ import annotations
@@ -14,11 +15,16 @@ from swarm_reasoning.agents.source_validator.models import (
     ValidationResult,
     ValidationStatus,
 )
+from swarm_reasoning.agents.validation.agent import (
+    _build_coverage_snapshot,
+    run_validation_agent,
+)
+from swarm_reasoning.agents.validation.models import ValidationInput, ValidationOutput
 from swarm_reasoning.models.observation import ObservationCode
 from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.nodes.validation import (
-    _build_coverage_snapshot,
-    _build_cross_agent_data,
+    _build_cross_agent_urls,
+    _build_validation_input,
     validation_node,
 )
 from swarm_reasoning.pipeline.state import PipelineState
@@ -51,31 +57,36 @@ def _make_state(**overrides) -> PipelineState:
     return base
 
 
-class TestBuildCrossAgentData:
-    """Test _build_cross_agent_data extracts URLs from PipelineState."""
+# ---------------------------------------------------------------------------
+# Pipeline node translation layer
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCrossAgentUrls:
+    """Test _build_cross_agent_urls extracts URLs from PipelineState."""
 
     def test_empty_state(self):
         state = _make_state()
-        data = _build_cross_agent_data(state)
-        assert data == {"urls": []}
+        urls = _build_cross_agent_urls(state)
+        assert urls == []
 
     def test_claimreview_matches(self):
         state = _make_state(claimreview_matches=[
             {"url": "https://example.com/fact-check", "publisher": "PolitiFact"},
         ])
-        data = _build_cross_agent_data(state)
-        assert len(data["urls"]) == 1
-        assert data["urls"][0]["url"] == "https://example.com/fact-check"
-        assert data["urls"][0]["agent"] == "evidence"
+        urls = _build_cross_agent_urls(state)
+        assert len(urls) == 1
+        assert urls[0]["url"] == "https://example.com/fact-check"
+        assert urls[0]["agent"] == "evidence"
 
     def test_domain_sources(self):
         state = _make_state(domain_sources=[
             {"url": "https://cdc.gov/data", "name": "CDC"},
         ])
-        data = _build_cross_agent_data(state)
-        assert len(data["urls"]) == 1
-        assert data["urls"][0]["url"] == "https://cdc.gov/data"
-        assert data["urls"][0]["source_name"] == "CDC"
+        urls = _build_cross_agent_urls(state)
+        assert len(urls) == 1
+        assert urls[0]["url"] == "https://cdc.gov/data"
+        assert urls[0]["source_name"] == "CDC"
 
     def test_coverage_segments(self):
         state = _make_state(
@@ -83,9 +94,9 @@ class TestBuildCrossAgentData:
             coverage_center=[{"url": "https://center.com/a", "source": "CenterNews"}],
             coverage_right=[{"url": "https://right.com/a", "source": "RightNews"}],
         )
-        data = _build_cross_agent_data(state)
-        assert len(data["urls"]) == 3
-        agents = {u["agent"] for u in data["urls"]}
+        urls = _build_cross_agent_urls(state)
+        assert len(urls) == 3
+        agents = {u["agent"] for u in urls}
         assert agents == {"coverage-left", "coverage-center", "coverage-right"}
 
     def test_entries_without_urls_skipped(self):
@@ -93,16 +104,41 @@ class TestBuildCrossAgentData:
             claimreview_matches=[{"publisher": "NoUrl"}],
             domain_sources=[{"name": "NoUrl"}],
         )
-        data = _build_cross_agent_data(state)
-        assert data == {"urls": []}
+        urls = _build_cross_agent_urls(state)
+        assert urls == []
+
+
+class TestBuildValidationInput:
+    """Test _build_validation_input translates PipelineState to ValidationInput."""
+
+    def test_empty_state(self):
+        state = _make_state()
+        input = _build_validation_input(state)
+        assert input["cross_agent_urls"] == []
+        assert input["coverage_left"] == []
+        assert input["coverage_center"] == []
+        assert input["coverage_right"] == []
+
+    def test_coverage_passthrough(self):
+        left = [{"url": "https://l.com", "source": "L"}]
+        state = _make_state(coverage_left=left)
+        input = _build_validation_input(state)
+        assert input["coverage_left"] == left
+
+
+# ---------------------------------------------------------------------------
+# Agent: coverage snapshot building
+# ---------------------------------------------------------------------------
 
 
 class TestBuildCoverageSnapshot:
-    """Test _build_coverage_snapshot builds CoverageSnapshot from state."""
+    """Test _build_coverage_snapshot builds CoverageSnapshot from ValidationInput."""
 
     def test_empty_coverage(self):
-        state = _make_state()
-        snapshot = _build_coverage_snapshot(state, None)
+        input = ValidationInput(
+            cross_agent_urls=[], coverage_left=[], coverage_center=[], coverage_right=[]
+        )
+        snapshot = _build_coverage_snapshot(input, None)
         assert snapshot.left.article_count == 0
         assert snapshot.left.framing == "ABSENT"
         assert snapshot.center.article_count == 0
@@ -110,12 +146,13 @@ class TestBuildCoverageSnapshot:
         assert snapshot.source_convergence_score is None
 
     def test_full_coverage(self):
-        state = _make_state(
+        input = ValidationInput(
+            cross_agent_urls=[],
             coverage_left=[{"framing": "SUPPORTIVE"}],
             coverage_center=[{"framing": "NEUTRAL"}, {"framing": "NEUTRAL"}],
             coverage_right=[{"framing": "CRITICAL"}],
         )
-        snapshot = _build_coverage_snapshot(state, 0.75)
+        snapshot = _build_coverage_snapshot(input, 0.75)
         assert snapshot.left.article_count == 1
         assert snapshot.left.framing == "SUPPORTIVE"
         assert snapshot.center.article_count == 2
@@ -123,15 +160,22 @@ class TestBuildCoverageSnapshot:
         assert snapshot.source_convergence_score == 0.75
 
 
-class TestValidationNode:
-    """Integration tests for the full validation_node."""
+# ---------------------------------------------------------------------------
+# Agent: run_validation_agent
+# ---------------------------------------------------------------------------
+
+
+class TestRunValidationAgent:
+    """Test run_validation_agent (the 5-tool procedural chain)."""
 
     @pytest.mark.asyncio
-    async def test_empty_state_returns_defaults(self):
+    async def test_empty_input_returns_defaults(self):
         """With no upstream data, validation produces zero-value defaults."""
         ctx = _make_mock_ctx()
-        state = _make_state()
-        result = await validation_node(state, _make_config(ctx))
+        input = ValidationInput(
+            cross_agent_urls=[], coverage_left=[], coverage_center=[], coverage_right=[]
+        )
+        result = await run_validation_agent(input, ctx)
 
         assert result["validated_urls"] == []
         assert result["convergence_score"] == 0.0
@@ -141,15 +185,16 @@ class TestValidationNode:
 
     @pytest.mark.asyncio
     async def test_publishes_observations(self):
-        """Validation node publishes observations via PipelineContext."""
+        """Validation agent publishes observations via PipelineContext."""
         ctx = _make_mock_ctx()
-        state = _make_state(
-            claimreview_matches=[
-                {"url": "https://example.com/check", "publisher": "Test"},
+        input = ValidationInput(
+            cross_agent_urls=[
+                {"url": "https://example.com/check", "agent": "evidence",
+                 "code": "CLAIMREVIEW_URL", "source_name": "Test"},
             ],
+            coverage_left=[], coverage_center=[], coverage_right=[],
         )
 
-        # Mock UrlValidator to avoid real HTTP
         mock_validations = {
             "https://example.com/check": ValidationResult(
                 url="https://example.com/check",
@@ -157,17 +202,16 @@ class TestValidationNode:
             ),
         }
         with patch(
-            "swarm_reasoning.pipeline.nodes.validation.UrlValidator"
+            "swarm_reasoning.agents.validation.agent.UrlValidator"
         ) as MockValidator:
             instance = MockValidator.return_value
             instance.validate_all = AsyncMock(return_value=mock_validations)
 
-            result = await validation_node(state, _make_config(ctx))
+            result = await run_validation_agent(input, ctx)
 
         assert len(result["validated_urls"]) == 1
         assert result["validated_urls"][0]["status"] == "LIVE"
 
-        # Check observations were published
         obs_codes = [
             call.kwargs["code"]
             for call in ctx.publish_observation.call_args_list
@@ -182,10 +226,12 @@ class TestValidationNode:
 
     @pytest.mark.asyncio
     async def test_heartbeats_during_execution(self):
-        """Validation node sends heartbeats between tool steps."""
+        """Validation agent sends heartbeats between tool steps."""
         ctx = _make_mock_ctx()
-        state = _make_state()
-        await validation_node(state, _make_config(ctx))
+        input = ValidationInput(
+            cross_agent_urls=[], coverage_left=[], coverage_center=[], coverage_right=[]
+        )
+        await run_validation_agent(input, ctx)
 
         # 6 heartbeats: initial + after each of 5 tools
         assert ctx.heartbeat.call_count == 6
@@ -193,65 +239,21 @@ class TestValidationNode:
             assert call.args[0] == "validation"
 
     @pytest.mark.asyncio
-    async def test_partial_coverage_blindspot(self):
-        """Missing coverage segments produce non-zero blindspot score."""
-        ctx = _make_mock_ctx()
-        # Only left coverage present
-        state = _make_state(
-            coverage_left=[{"url": "https://left.com/a", "source": "L", "framing": "SUPPORTIVE"}],
-        )
-
-        with patch(
-            "swarm_reasoning.pipeline.nodes.validation.UrlValidator"
-        ) as MockValidator:
-            instance = MockValidator.return_value
-            instance.validate_all = AsyncMock(return_value={
-                "https://left.com/a": ValidationResult(
-                    url="https://left.com/a", status=ValidationStatus.LIVE,
-                ),
-            })
-            result = await validation_node(state, _make_config(ctx))
-
-        # 2 of 3 segments absent -> score = 2/3 ≈ 0.6667
-        assert result["blindspot_score"] == pytest.approx(0.6667, abs=0.001)
-        assert "MULTIPLE" in result["blindspot_direction"]
-
-    @pytest.mark.asyncio
-    async def test_full_coverage_no_blindspot(self):
-        """All 3 coverage segments present -> blindspot score 0."""
-        ctx = _make_mock_ctx()
-        state = _make_state(
-            coverage_left=[{"url": "https://l.com", "source": "L", "framing": "NEUTRAL"}],
-            coverage_center=[{"url": "https://c.com", "source": "C", "framing": "NEUTRAL"}],
-            coverage_right=[{"url": "https://r.com", "source": "R", "framing": "NEUTRAL"}],
-        )
-
-        with patch(
-            "swarm_reasoning.pipeline.nodes.validation.UrlValidator"
-        ) as MockValidator:
-            instance = MockValidator.return_value
-            instance.validate_all = AsyncMock(return_value={
-                "https://l.com": ValidationResult(url="https://l.com", status=ValidationStatus.LIVE),
-                "https://c.com": ValidationResult(url="https://c.com", status=ValidationStatus.LIVE),
-                "https://r.com": ValidationResult(url="https://r.com", status=ValidationStatus.LIVE),
-            })
-            result = await validation_node(state, _make_config(ctx))
-
-        assert result["blindspot_score"] == 0.0
-        assert "NONE" in result["blindspot_direction"]
-
-    @pytest.mark.asyncio
     async def test_convergence_with_shared_urls(self):
         """URLs cited by multiple agents produce higher convergence score."""
         ctx = _make_mock_ctx()
-        # Same URL from both evidence and coverage
-        state = _make_state(
-            domain_sources=[{"url": "https://shared.com/fact", "name": "SourceA"}],
-            coverage_center=[{"url": "https://shared.com/fact", "source": "SourceB"}],
+        input = ValidationInput(
+            cross_agent_urls=[
+                {"url": "https://shared.com/fact", "agent": "evidence",
+                 "code": "DOMAIN_SOURCE_URL", "source_name": "SourceA"},
+                {"url": "https://shared.com/fact", "agent": "coverage-center",
+                 "code": "COVERAGE_TOP_SOURCE_URL", "source_name": "SourceB"},
+            ],
+            coverage_left=[], coverage_center=[], coverage_right=[],
         )
 
         with patch(
-            "swarm_reasoning.pipeline.nodes.validation.UrlValidator"
+            "swarm_reasoning.agents.validation.agent.UrlValidator"
         ) as MockValidator:
             instance = MockValidator.return_value
             instance.validate_all = AsyncMock(return_value={
@@ -259,13 +261,96 @@ class TestValidationNode:
                     url="https://shared.com/fact", status=ValidationStatus.LIVE,
                 ),
             })
-            result = await validation_node(state, _make_config(ctx))
+            result = await run_validation_agent(input, ctx)
 
         # 1 unique URL cited by 2 agents -> convergence = 1.0
         assert result["convergence_score"] == 1.0
 
     @pytest.mark.asyncio
-    async def test_progress_messages_published(self):
+    async def test_partial_coverage_blindspot(self):
+        """Missing coverage segments produce non-zero blindspot score."""
+        ctx = _make_mock_ctx()
+        input = ValidationInput(
+            cross_agent_urls=[
+                {"url": "https://left.com/a", "agent": "coverage-left",
+                 "code": "COVERAGE_TOP_SOURCE_URL", "source_name": "L"},
+            ],
+            coverage_left=[{"url": "https://left.com/a", "source": "L", "framing": "SUPPORTIVE"}],
+            coverage_center=[],
+            coverage_right=[],
+        )
+
+        with patch(
+            "swarm_reasoning.agents.validation.agent.UrlValidator"
+        ) as MockValidator:
+            instance = MockValidator.return_value
+            instance.validate_all = AsyncMock(return_value={
+                "https://left.com/a": ValidationResult(
+                    url="https://left.com/a", status=ValidationStatus.LIVE,
+                ),
+            })
+            result = await run_validation_agent(input, ctx)
+
+        # 2 of 3 segments absent -> score = 2/3 ~ 0.6667
+        assert result["blindspot_score"] == pytest.approx(0.6667, abs=0.001)
+        assert "MULTIPLE" in result["blindspot_direction"]
+
+    @pytest.mark.asyncio
+    async def test_full_coverage_no_blindspot(self):
+        """All 3 coverage segments present -> blindspot score 0."""
+        ctx = _make_mock_ctx()
+        input = ValidationInput(
+            cross_agent_urls=[
+                {"url": "https://l.com", "agent": "coverage-left",
+                 "code": "COVERAGE_TOP_SOURCE_URL", "source_name": "L"},
+                {"url": "https://c.com", "agent": "coverage-center",
+                 "code": "COVERAGE_TOP_SOURCE_URL", "source_name": "C"},
+                {"url": "https://r.com", "agent": "coverage-right",
+                 "code": "COVERAGE_TOP_SOURCE_URL", "source_name": "R"},
+            ],
+            coverage_left=[{"url": "https://l.com", "source": "L", "framing": "NEUTRAL"}],
+            coverage_center=[{"url": "https://c.com", "source": "C", "framing": "NEUTRAL"}],
+            coverage_right=[{"url": "https://r.com", "source": "R", "framing": "NEUTRAL"}],
+        )
+
+        with patch(
+            "swarm_reasoning.agents.validation.agent.UrlValidator"
+        ) as MockValidator:
+            instance = MockValidator.return_value
+            instance.validate_all = AsyncMock(return_value={
+                "https://l.com": ValidationResult(url="https://l.com", status=ValidationStatus.LIVE),
+                "https://c.com": ValidationResult(url="https://c.com", status=ValidationStatus.LIVE),
+                "https://r.com": ValidationResult(url="https://r.com", status=ValidationStatus.LIVE),
+            })
+            result = await run_validation_agent(input, ctx)
+
+        assert result["blindspot_score"] == 0.0
+        assert "NONE" in result["blindspot_direction"]
+
+
+# ---------------------------------------------------------------------------
+# Pipeline node integration
+# ---------------------------------------------------------------------------
+
+
+class TestValidationNode:
+    """Test the pipeline node wrapper (PipelineState translation + agent call)."""
+
+    @pytest.mark.asyncio
+    async def test_empty_state_returns_defaults(self):
+        """With no upstream data, validation node produces zero-value defaults."""
+        ctx = _make_mock_ctx()
+        state = _make_state()
+        result = await validation_node(state, _make_config(ctx))
+
+        assert result["validated_urls"] == []
+        assert result["convergence_score"] == 0.0
+        assert result["citations"] == []
+        assert result["blindspot_score"] == 1.0
+        assert "MULTIPLE" in result["blindspot_direction"]
+
+    @pytest.mark.asyncio
+    async def test_pipeline_node_publishes_progress(self):
         """Validation node publishes start and completion progress."""
         ctx = _make_mock_ctx()
         state = _make_state()
@@ -275,3 +360,30 @@ class TestValidationNode:
         messages = [call.args[1] for call in ctx.publish_progress.call_args_list]
         assert "Starting" in messages[0]
         assert "complete" in messages[1].lower()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_node_with_upstream_data(self):
+        """Validation node translates PipelineState and calls agent."""
+        ctx = _make_mock_ctx()
+        state = _make_state(
+            claimreview_matches=[
+                {"url": "https://example.com/check", "publisher": "Test"},
+            ],
+        )
+
+        mock_validations = {
+            "https://example.com/check": ValidationResult(
+                url="https://example.com/check",
+                status=ValidationStatus.LIVE,
+            ),
+        }
+        with patch(
+            "swarm_reasoning.agents.validation.agent.UrlValidator"
+        ) as MockValidator:
+            instance = MockValidator.return_value
+            instance.validate_all = AsyncMock(return_value=mock_validations)
+
+            result = await validation_node(state, _make_config(ctx))
+
+        assert len(result["validated_urls"]) == 1
+        assert result["validated_urls"][0]["status"] == "LIVE"
