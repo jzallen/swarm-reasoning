@@ -18,17 +18,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from swarm_reasoning.agents.coverage.tools import (
+    build_search_query,
+    detect_coverage_framing,
+    find_top_coverage_source,
+    search_coverage,
+)
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.nodes.coverage import (
     _run_spectrum,
     _SPECTRUMS,
     _STATE_KEYS,
-    build_search_query,
     coverage_node,
-    detect_coverage_framing,
-    find_top_coverage_source,
-    search_coverage,
 )
 from swarm_reasoning.pipeline.state import PipelineState
 
@@ -167,7 +169,7 @@ class TestSearchCoverage:
 
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -212,7 +214,7 @@ class TestSearchCoverage:
         """Network exception → returns empty list with X-status observations."""
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
@@ -235,7 +237,7 @@ class TestSearchCoverage:
 
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -261,8 +263,8 @@ class TestSearchCoverage:
 
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
-            patch("swarm_reasoning.pipeline.nodes.coverage.asyncio.sleep", new_callable=AsyncMock),
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.asyncio.sleep", new_callable=AsyncMock),
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(side_effect=[mock_resp_429, mock_resp_200])
@@ -283,7 +285,7 @@ class TestSearchCoverage:
 
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -326,10 +328,10 @@ class TestDetectCoverageFraming:
         ]
 
         with patch(
-            "swarm_reasoning.pipeline.nodes.coverage.compute_compound_sentiment",
+            "swarm_reasoning.agents.coverage.tools.detect_framing.compute_compound_sentiment",
             return_value=0.5,
         ), patch(
-            "swarm_reasoning.pipeline.nodes.coverage.classify_framing",
+            "swarm_reasoning.agents.coverage.tools.detect_framing.classify_framing",
             return_value="SUPPORTIVE^Supportive^FCK",
         ):
             framing, compound = await detect_coverage_framing(articles, mock_ctx, "coverage-center")
@@ -347,10 +349,10 @@ class TestDetectCoverageFraming:
         articles = [{"title": f"Headline {i}"} for i in range(10)]
 
         with patch(
-            "swarm_reasoning.pipeline.nodes.coverage.compute_compound_sentiment",
+            "swarm_reasoning.agents.coverage.tools.detect_framing.compute_compound_sentiment",
             return_value=0.0,
         ) as mock_sentiment, patch(
-            "swarm_reasoning.pipeline.nodes.coverage.classify_framing",
+            "swarm_reasoning.agents.coverage.tools.detect_framing.classify_framing",
             return_value="NEUTRAL^Neutral^FCK",
         ):
             await detect_coverage_framing(articles, mock_ctx, "coverage-right")
@@ -370,10 +372,10 @@ class TestDetectCoverageFraming:
         ]
 
         with patch(
-            "swarm_reasoning.pipeline.nodes.coverage.compute_compound_sentiment",
+            "swarm_reasoning.agents.coverage.tools.detect_framing.compute_compound_sentiment",
             return_value=0.1,
         ) as mock_sentiment, patch(
-            "swarm_reasoning.pipeline.nodes.coverage.classify_framing",
+            "swarm_reasoning.agents.coverage.tools.detect_framing.classify_framing",
             return_value="SUPPORTIVE^Supportive^FCK",
         ):
             await detect_coverage_framing(articles, mock_ctx, "coverage-left")
@@ -483,7 +485,7 @@ class TestRunSpectrum:
                 return_value=mock_sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -508,7 +510,7 @@ class TestRunSpectrum:
                 return_value=mock_sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -536,7 +538,7 @@ class TestRunSpectrum:
                 return_value=mock_sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -571,7 +573,7 @@ class TestRunSpectrum:
                 return_value=mock_sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -642,7 +644,7 @@ class TestCoverageNode:
                 side_effect=lambda s: source_map[s],
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             self._setup_mocks(mock_client_cls)
             result = await coverage_node(base_state, mock_config)
@@ -669,7 +671,7 @@ class TestCoverageNode:
                 return_value=sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             result = await coverage_node(base_state, mock_config)
@@ -693,7 +695,7 @@ class TestCoverageNode:
                 return_value=sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             result = await coverage_node(base_state, mock_config)
@@ -743,7 +745,7 @@ class TestCoverageNode:
                 return_value=sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             await coverage_node(base_state, mock_config)
@@ -767,7 +769,7 @@ class TestCoverageNode:
                 return_value=sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             result = await coverage_node(base_state, mock_config)
@@ -792,7 +794,7 @@ class TestCoverageNode:
                 return_value=sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             await coverage_node(base_state, mock_config)
@@ -819,7 +821,7 @@ class TestCoverageNode:
                 return_value=sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
             patch(
                 "swarm_reasoning.pipeline.nodes.coverage.build_search_query",
                 wraps=build_search_query,
@@ -850,7 +852,7 @@ class TestCoverageNode:
                 return_value=sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
             patch(
                 "swarm_reasoning.pipeline.nodes.coverage.build_search_query",
                 wraps=build_search_query,
@@ -876,7 +878,7 @@ class TestCoverageNode:
                 return_value=sources,
             ),
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.pipeline.nodes.coverage.httpx.AsyncClient") as mock_client_cls,
+            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
         ):
             self._setup_mocks(mock_client_cls, articles_per_spectrum=[articles, articles, articles])
             await coverage_node(base_state, mock_config)

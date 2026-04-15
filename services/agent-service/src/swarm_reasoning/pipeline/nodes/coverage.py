@@ -22,20 +22,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from pathlib import Path
 
-import httpx
 from langgraph.types import RunnableConfig
 
-from swarm_reasoning.agents._utils import STOP_WORDS
-from swarm_reasoning.agents.coverage.core import (
-    NEWSAPI_URL,
-    classify_framing,
-    compute_compound_sentiment,
-    select_top_source,
+from swarm_reasoning.agents.coverage.tools import (
+    build_search_query,
+    detect_coverage_framing,
+    find_top_coverage_source,
+    search_coverage,
 )
-from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
 from swarm_reasoning.pipeline.state import PipelineState
 
@@ -71,204 +67,6 @@ def _load_sources(spectrum: str) -> list[dict]:
         with open(sources_path) as f:
             _sources_cache[spectrum] = json.load(f)
     return _sources_cache[spectrum]
-
-
-# ===================================================================
-# Tool 1: build_search_query
-# ===================================================================
-
-
-def build_search_query(normalized_claim: str) -> str:
-    """Build an optimized NewsAPI search query from a normalized claim.
-
-    Removes stop words and truncates to 100 characters at a word boundary.
-    """
-    words = normalized_claim.lower().split()
-    filtered = [w for w in words if w not in STOP_WORDS]
-    query = " ".join(filtered)
-
-    if len(query) <= 100:
-        return query
-
-    truncated = query[:100]
-    last_space = truncated.rfind(" ")
-    return truncated[:last_space] if last_space > 0 else truncated
-
-
-# ===================================================================
-# Tool 2: search_coverage
-# ===================================================================
-
-
-async def search_coverage(
-    query: str,
-    source_ids: str,
-    ctx: PipelineContext,
-    agent_name: str,
-) -> list[dict]:
-    """Search NewsAPI for articles from specific sources.
-
-    Publishes COVERAGE_ARTICLE_COUNT observation. Returns list of article dicts.
-    On error or missing API key, publishes X-status observations and returns [].
-    """
-    api_key = os.environ.get("NEWSAPI_KEY", "")
-    if not api_key:
-        logger.warning("NEWSAPI_KEY not configured for %s", agent_name)
-        await ctx.publish_observation(
-            agent=agent_name,
-            code=ObservationCode.COVERAGE_ARTICLE_COUNT,
-            value="0",
-            value_type=ValueType.NM,
-            status="X",
-            method="search_newsapi",
-            note="API key not configured",
-            units="count",
-        )
-        await ctx.publish_observation(
-            agent=agent_name,
-            code=ObservationCode.COVERAGE_FRAMING,
-            value="ABSENT^Not Covered^FCK",
-            value_type=ValueType.CWE,
-            status="X",
-            method="detect_framing",
-        )
-        return []
-
-    params = {
-        "q": query,
-        "sources": source_ids,
-        "sortBy": "relevancy",
-        "pageSize": "10",
-        "language": "en",
-        "apiKey": api_key,
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(NEWSAPI_URL, params=params)
-            if resp.status_code == 429:
-                await asyncio.sleep(1)
-                resp = await client.get(NEWSAPI_URL, params=params)
-
-            if resp.status_code >= 400:
-                raise httpx.HTTPStatusError(
-                    f"HTTP {resp.status_code}",
-                    request=resp.request,
-                    response=resp,
-                )
-
-            data = resp.json()
-            articles = data.get("articles", [])
-    except Exception as exc:
-        logger.warning("NewsAPI error for %s: %s", agent_name, exc)
-        await ctx.publish_observation(
-            agent=agent_name,
-            code=ObservationCode.COVERAGE_ARTICLE_COUNT,
-            value="0",
-            value_type=ValueType.NM,
-            status="X",
-            method="search_newsapi",
-            note=f"API error: {exc}",
-            units="count",
-        )
-        await ctx.publish_observation(
-            agent=agent_name,
-            code=ObservationCode.COVERAGE_FRAMING,
-            value="ABSENT^Not Covered^FCK",
-            value_type=ValueType.CWE,
-            status="X",
-            method="detect_framing",
-        )
-        return []
-
-    await ctx.publish_observation(
-        agent=agent_name,
-        code=ObservationCode.COVERAGE_ARTICLE_COUNT,
-        value=str(len(articles)),
-        value_type=ValueType.NM,
-        method="search_newsapi",
-        units="count",
-    )
-
-    return articles
-
-
-# ===================================================================
-# Tool 3: detect_coverage_framing
-# ===================================================================
-
-
-async def detect_coverage_framing(
-    articles: list[dict],
-    ctx: PipelineContext,
-    agent_name: str,
-) -> tuple[str, float]:
-    """Analyze headline sentiment and publish COVERAGE_FRAMING observation.
-
-    Returns (framing_cwe, compound_score).
-    """
-    if not articles:
-        framing = "ABSENT^Not Covered^FCK"
-        await ctx.publish_observation(
-            agent=agent_name,
-            code=ObservationCode.COVERAGE_FRAMING,
-            value=framing,
-            value_type=ValueType.CWE,
-            method="detect_framing",
-        )
-        return framing, 0.0
-
-    headlines = [a.get("title", "") for a in articles[:5] if a.get("title")]
-    compound = compute_compound_sentiment(headlines)
-    framing = classify_framing(compound)
-
-    await ctx.publish_observation(
-        agent=agent_name,
-        code=ObservationCode.COVERAGE_FRAMING,
-        value=framing,
-        value_type=ValueType.CWE,
-        method="detect_framing",
-    )
-
-    return framing, compound
-
-
-# ===================================================================
-# Tool 4: find_top_coverage_source
-# ===================================================================
-
-
-async def find_top_coverage_source(
-    articles: list[dict],
-    sources: list[dict],
-    ctx: PipelineContext,
-    agent_name: str,
-) -> dict | None:
-    """Select the highest-credibility source and publish observations.
-
-    Returns a dict with ``name`` and ``url``, or None if no articles.
-    """
-    top = select_top_source(articles, sources)
-
-    if top:
-        name, url = top
-        await ctx.publish_observation(
-            agent=agent_name,
-            code=ObservationCode.COVERAGE_TOP_SOURCE,
-            value=name,
-            value_type=ValueType.ST,
-            method="select_top_source",
-        )
-        await ctx.publish_observation(
-            agent=agent_name,
-            code=ObservationCode.COVERAGE_TOP_SOURCE_URL,
-            value=url,
-            value_type=ValueType.ST,
-            method="select_top_source",
-        )
-        return {"name": name, "url": url}
-
-    return None
 
 
 # ===================================================================
