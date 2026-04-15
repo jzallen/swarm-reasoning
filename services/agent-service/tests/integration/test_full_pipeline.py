@@ -1,4 +1,4 @@
-"""Integration test for the full LangGraph pipeline (M6.4).
+"""Integration test for the full LangGraph pipeline (M6.4 / M7.4).
 
 Exercises the compiled pipeline graph end-to-end through both major paths:
   1. Check-worthy path: intake -> evidence + coverage (fan-out) -> validation -> synthesizer
@@ -7,6 +7,9 @@ Exercises the compiled pipeline graph end-to-end through both major paths:
 All external I/O (Anthropic API, NewsAPI, HTTP fetches, Redis) is mocked.
 The graph topology, node wiring, state propagation, fan-out routing,
 fan-in merging, and observation accumulation are exercised for real.
+
+M7.4 additions: per-stage PipelineState verification via streaming, and
+specific observation code publishing verification per node.
 """
 
 from __future__ import annotations
@@ -19,7 +22,6 @@ import pytest
 from swarm_reasoning.agents.synthesizer.narrator import NarrativeGenerator
 from swarm_reasoning.pipeline.graph import pipeline_graph
 from swarm_reasoning.pipeline.state import PipelineState
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -149,7 +151,10 @@ def _base_state(run_suffix: str = "1") -> PipelineState:
 
 
 class TestCheckWorthyFullPipeline:
-    """Exercises the full check-worthy path: intake -> [evidence, coverage] -> validation -> synthesizer."""
+    """Exercises the full check-worthy path.
+
+    intake -> [evidence, coverage] -> validation -> synthesizer
+    """
 
     async def _invoke(self, state: PipelineState) -> dict:
         """Run the pipeline through the check-worthy fan-out path."""
@@ -242,15 +247,25 @@ class TestCheckWorthyFullPipeline:
         result = await self._invoke(_base_state("cw-all"))
         expected_fields = [
             # Intake
-            "normalized_claim", "claim_domain", "check_worthy_score",
-            "entities", "is_check_worthy",
+            "normalized_claim",
+            "claim_domain",
+            "check_worthy_score",
+            "entities",
+            "is_check_worthy",
             # Validation
-            "validated_urls", "convergence_score", "citations",
-            "blindspot_score", "blindspot_direction",
+            "validated_urls",
+            "convergence_score",
+            "citations",
+            "blindspot_score",
+            "blindspot_direction",
             # Synthesizer
-            "verdict", "confidence", "narrative", "verdict_observations",
+            "verdict",
+            "confidence",
+            "narrative",
+            "verdict_observations",
             # Metadata
-            "observations", "errors",
+            "observations",
+            "errors",
         ]
         for field in expected_fields:
             assert field in result, f"Missing output field: {field}"
@@ -438,3 +453,284 @@ class TestObservationPublishing:
             await pipeline_graph.ainvoke(state, config)
 
         assert ctx.heartbeat.call_count > 0
+
+
+# ---------------------------------------------------------------------------
+# Per-stage PipelineState verification via streaming (M7.4)
+# ---------------------------------------------------------------------------
+
+
+def _collect_observation_codes(ctx: MagicMock) -> list[str]:
+    """Extract observation code values from all publish_observation calls."""
+    codes: list[str] = []
+    for call in ctx.publish_observation.call_args_list:
+        code = call.kwargs.get("code") or (call.args[1] if len(call.args) > 1 else None)
+        if code is not None:
+            codes.append(code.value if hasattr(code, "value") else str(code))
+    return codes
+
+
+class TestPerStageState:
+    """Verify correct PipelineState at each pipeline stage via streaming.
+
+    Uses astream(stream_mode='updates') to capture per-node state updates
+    and verify the expected fields appear after each stage.
+    """
+
+    async def _stream_updates(self, state: PipelineState) -> dict[str, dict]:
+        """Run the pipeline with streaming and collect per-node state updates."""
+        mocks = _check_worthy_intake_mocks() + _downstream_mocks() + [_newsapi_env()]
+        updates: dict[str, dict] = {}
+        with ExitStack() as stack:
+            for cm in mocks:
+                stack.enter_context(cm)
+            async for chunk in pipeline_graph.astream(state, _make_config(), stream_mode="updates"):
+                for node_name, node_update in chunk.items():
+                    updates[node_name] = node_update
+        return updates
+
+    @pytest.mark.asyncio
+    async def test_intake_stage_populates_required_fields(self):
+        """After intake node, state contains normalized_claim, domain, score, entities."""
+        updates = await self._stream_updates(_base_state("stage-1"))
+        intake = updates["intake"]
+        assert isinstance(intake["normalized_claim"], str)
+        assert len(intake["normalized_claim"]) > 0
+        assert isinstance(intake["claim_domain"], str)
+        assert isinstance(intake["check_worthy_score"], float)
+        assert intake["check_worthy_score"] > 0.5  # check-worthy path
+        assert isinstance(intake["entities"], dict)
+        assert intake["is_check_worthy"] is True
+
+    @pytest.mark.asyncio
+    async def test_evidence_stage_populates_required_fields(self):
+        """After evidence node, state contains claimreview_matches and evidence_confidence."""
+        updates = await self._stream_updates(_base_state("stage-2"))
+        assert "evidence" in updates
+        evidence = updates["evidence"]
+        assert "claimreview_matches" in evidence
+        assert isinstance(evidence["claimreview_matches"], list)
+        assert "evidence_confidence" in evidence
+
+    @pytest.mark.asyncio
+    async def test_coverage_stage_populates_required_fields(self):
+        """After coverage node, state contains per-spectrum results and framing analysis."""
+        updates = await self._stream_updates(_base_state("stage-3"))
+        assert "coverage" in updates
+        coverage = updates["coverage"]
+        assert "coverage_left" in coverage
+        assert "coverage_center" in coverage
+        assert "coverage_right" in coverage
+        assert isinstance(coverage["coverage_left"], list)
+        assert isinstance(coverage["coverage_center"], list)
+        assert isinstance(coverage["coverage_right"], list)
+        assert "framing_analysis" in coverage
+        assert isinstance(coverage["framing_analysis"], dict)
+
+    @pytest.mark.asyncio
+    async def test_validation_stage_populates_required_fields(self):
+        """After validation node, state contains URL validation, convergence, and blindspot data."""
+        updates = await self._stream_updates(_base_state("stage-4"))
+        assert "validation" in updates
+        validation = updates["validation"]
+        assert "validated_urls" in validation
+        assert isinstance(validation["validated_urls"], list)
+        assert "convergence_score" in validation
+        assert isinstance(validation["convergence_score"], float)
+        assert 0.0 <= validation["convergence_score"] <= 1.0
+        assert "citations" in validation
+        assert isinstance(validation["citations"], list)
+        assert "blindspot_score" in validation
+        assert isinstance(validation["blindspot_score"], float)
+        assert "blindspot_direction" in validation
+        assert isinstance(validation["blindspot_direction"], str)
+
+    @pytest.mark.asyncio
+    async def test_synthesizer_stage_populates_required_fields(self):
+        """After synthesizer node, state contains verdict, confidence, and narrative."""
+        updates = await self._stream_updates(_base_state("stage-5"))
+        assert "synthesizer" in updates
+        synth = updates["synthesizer"]
+        assert "verdict" in synth
+        assert isinstance(synth["verdict"], str)
+        assert len(synth["verdict"]) > 0
+        assert "confidence" in synth
+        assert "narrative" in synth
+        assert isinstance(synth["narrative"], str)
+        assert "verdict_observations" in synth
+        assert isinstance(synth["verdict_observations"], list)
+
+    @pytest.mark.asyncio
+    async def test_all_five_nodes_execute(self):
+        """Full check-worthy pipeline streams updates from all 5 nodes."""
+        updates = await self._stream_updates(_base_state("stage-all"))
+        expected_nodes = {"intake", "evidence", "coverage", "validation", "synthesizer"}
+        assert expected_nodes == set(updates.keys())
+
+    @pytest.mark.asyncio
+    async def test_not_check_worthy_skips_middle_nodes(self):
+        """Not-check-worthy path streams only intake and synthesizer updates."""
+        mocks = _not_check_worthy_intake_mocks()
+        updates: dict[str, dict] = {}
+        with ExitStack() as stack:
+            for cm in mocks:
+                stack.enter_context(cm)
+            async for chunk in pipeline_graph.astream(
+                _base_state("stage-ncw"), _make_config(), stream_mode="updates"
+            ):
+                for node_name, node_update in chunk.items():
+                    updates[node_name] = node_update
+
+        assert "intake" in updates
+        assert "synthesizer" in updates
+        assert "evidence" not in updates
+        assert "coverage" not in updates
+        assert "validation" not in updates
+
+
+# ---------------------------------------------------------------------------
+# Observation code publishing verification (M7.4)
+# ---------------------------------------------------------------------------
+
+
+class TestObservationCodesByNode:
+    """Verify that specific observation codes are published by each pipeline node."""
+
+    @pytest.mark.asyncio
+    async def test_intake_publishes_expected_codes(self):
+        """Intake node publishes CLAIM_TEXT, CLAIM_SOURCE_URL, CLAIM_DOMAIN,
+        CLAIM_NORMALIZED, CHECK_WORTHY_SCORE, and ENTITY_* codes."""
+        ctx = _make_mock_pipeline_context()
+        config = {"configurable": {"pipeline_context": ctx}}
+        state = _base_state("obs-intake")
+
+        mocks = _check_worthy_intake_mocks() + _downstream_mocks() + [_newsapi_env()]
+        with ExitStack() as stack:
+            for cm in mocks:
+                stack.enter_context(cm)
+            await pipeline_graph.ainvoke(state, config)
+
+        codes = _collect_observation_codes(ctx)
+        # Intake must publish these core observation codes
+        assert "CLAIM_TEXT" in codes
+        assert "CLAIM_DOMAIN" in codes
+        assert "CLAIM_NORMALIZED" in codes
+        assert "CHECK_WORTHY_SCORE" in codes
+
+    @pytest.mark.asyncio
+    async def test_intake_publishes_entity_codes(self):
+        """Intake node publishes entity observation codes for extracted entities."""
+        ctx = _make_mock_pipeline_context()
+        config = {"configurable": {"pipeline_context": ctx}}
+        state = _base_state("obs-entity")
+
+        mocks = _check_worthy_intake_mocks() + _downstream_mocks() + [_newsapi_env()]
+        with ExitStack() as stack:
+            for cm in mocks:
+                stack.enter_context(cm)
+            await pipeline_graph.ainvoke(state, config)
+
+        codes = _collect_observation_codes(ctx)
+        # Entity extraction publishes codes for each entity type
+        assert "ENTITY_PERSON" in codes
+        assert "ENTITY_ORG" in codes
+        assert "ENTITY_DATE" in codes
+        assert "ENTITY_LOCATION" in codes
+        assert "ENTITY_STATISTIC" in codes
+
+    @pytest.mark.asyncio
+    async def test_evidence_publishes_expected_codes(self):
+        """Evidence node publishes CLAIMREVIEW_MATCH and related codes."""
+        ctx = _make_mock_pipeline_context()
+        config = {"configurable": {"pipeline_context": ctx}}
+        state = _base_state("obs-ev")
+
+        mocks = _check_worthy_intake_mocks() + _downstream_mocks() + [_newsapi_env()]
+        with ExitStack() as stack:
+            for cm in mocks:
+                stack.enter_context(cm)
+            await pipeline_graph.ainvoke(state, config)
+
+        codes = _collect_observation_codes(ctx)
+        assert "CLAIMREVIEW_MATCH" in codes
+
+    @pytest.mark.asyncio
+    async def test_validation_publishes_expected_codes(self):
+        """Validation node publishes convergence, blindspot, and citation codes."""
+        ctx = _make_mock_pipeline_context()
+        config = {"configurable": {"pipeline_context": ctx}}
+        state = _base_state("obs-val")
+
+        mocks = _check_worthy_intake_mocks() + _downstream_mocks() + [_newsapi_env()]
+        with ExitStack() as stack:
+            for cm in mocks:
+                stack.enter_context(cm)
+            await pipeline_graph.ainvoke(state, config)
+
+        codes = _collect_observation_codes(ctx)
+        assert "SOURCE_CONVERGENCE_SCORE" in codes
+        assert "BLINDSPOT_SCORE" in codes
+        assert "BLINDSPOT_DIRECTION" in codes
+        assert "CROSS_SPECTRUM_CORROBORATION" in codes
+
+    @pytest.mark.asyncio
+    async def test_synthesizer_publishes_expected_codes(self):
+        """Synthesizer node publishes VERDICT, VERDICT_NARRATIVE, and SYNTHESIS_SIGNAL_COUNT.
+
+        CONFIDENCE_SCORE is only published when the scorer returns a non-None value,
+        so it is not asserted here (it depends on evidence quality).
+        """
+        ctx = _make_mock_pipeline_context()
+        config = {"configurable": {"pipeline_context": ctx}}
+        state = _base_state("obs-synth")
+
+        mocks = _check_worthy_intake_mocks() + _downstream_mocks() + [_newsapi_env()]
+        with ExitStack() as stack:
+            for cm in mocks:
+                stack.enter_context(cm)
+            await pipeline_graph.ainvoke(state, config)
+
+        codes = _collect_observation_codes(ctx)
+        assert "VERDICT" in codes
+        assert "VERDICT_NARRATIVE" in codes
+        assert "SYNTHESIS_SIGNAL_COUNT" in codes
+
+    @pytest.mark.asyncio
+    async def test_observation_count_full_pipeline(self):
+        """Full check-worthy pipeline publishes a substantial number of observations."""
+        ctx = _make_mock_pipeline_context()
+        config = {"configurable": {"pipeline_context": ctx}}
+        state = _base_state("obs-count")
+
+        mocks = _check_worthy_intake_mocks() + _downstream_mocks() + [_newsapi_env()]
+        with ExitStack() as stack:
+            for cm in mocks:
+                stack.enter_context(cm)
+            await pipeline_graph.ainvoke(state, config)
+
+        # Each node publishes multiple observations; full pipeline should have many
+        # Intake: ~10+, Evidence: ~2+, Coverage: ~6+, Validation: ~4+, Synthesizer: ~5+
+        assert ctx.publish_observation.call_count >= 15
+
+    @pytest.mark.asyncio
+    async def test_progress_events_from_multiple_agents(self):
+        """Progress events are published by agents across all pipeline nodes."""
+        ctx = _make_mock_pipeline_context()
+        config = {"configurable": {"pipeline_context": ctx}}
+        state = _base_state("obs-prog")
+
+        mocks = _check_worthy_intake_mocks() + _downstream_mocks() + [_newsapi_env()]
+        with ExitStack() as stack:
+            for cm in mocks:
+                stack.enter_context(cm)
+            await pipeline_graph.ainvoke(state, config)
+
+        # Collect unique agent names from publish_progress calls
+        agents = set()
+        for call in ctx.publish_progress.call_args_list:
+            agent = call.args[0] if call.args else call.kwargs.get("agent")
+            if agent:
+                agents.add(agent)
+
+        # At least intake, evidence, validation, and synthesizer publish progress
+        assert len(agents) >= 4
