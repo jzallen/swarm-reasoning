@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from swarm_reasoning.agents.claim_detector.normalizer import (
+from swarm_reasoning.pipeline.nodes.intake_normalizer import (
     MAX_NORMALIZED_LENGTH,
     NormalizeResult,
     normalize_claim_text,

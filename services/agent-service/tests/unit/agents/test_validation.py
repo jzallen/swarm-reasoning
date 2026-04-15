@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from swarm_reasoning.agents.ingestion_agent.validation import (
+from swarm_reasoning.pipeline.nodes.intake_validation import (
     ValidationError,
     check_duplicate,
     normalize_date,

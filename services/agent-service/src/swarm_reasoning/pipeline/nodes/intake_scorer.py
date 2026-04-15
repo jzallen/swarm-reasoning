@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 from anthropic import AsyncAnthropic
 
-from swarm_reasoning.agents.claim_detector.prompts import CONFIRM_PROMPT, SCORING_PROMPT
+from swarm_reasoning.pipeline.nodes.intake_prompts import CONFIRM_PROMPT, SCORING_PROMPT
 
 logger = logging.getLogger(__name__)
 
