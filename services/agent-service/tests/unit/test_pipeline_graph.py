@@ -201,10 +201,14 @@ class TestPipelineExecution:
     """End-to-end execution of the pipeline graph with wired nodes."""
 
     @pytest.mark.asyncio
-    @patch("swarm_reasoning.pipeline.nodes.evidence.resilient_get", new_callable=AsyncMock)
-    async def test_check_worthy_path(self, mock_get):
+    @patch("swarm_reasoning.pipeline.nodes.evidence.run_evidence_agent", new_callable=AsyncMock)
+    async def test_check_worthy_path(self, mock_evidence):
         """Intake accepts claim and routes through fan-out path."""
-        mock_get.side_effect = ConnectionError("no network in tests")
+        mock_evidence.return_value = {
+            "claimreview_matches": [],
+            "domain_sources": [],
+            "evidence_confidence": 0.0,
+        }
         state: PipelineState = {
             "claim_text": "The unemployment rate dropped to 3.5% in January 2024",
             "run_id": "run-1",
@@ -306,9 +310,13 @@ class TestValidationStateOutput:
                 ),
             ),
             patch(
-                "swarm_reasoning.pipeline.nodes.evidence.resilient_get",
+                "swarm_reasoning.pipeline.nodes.evidence.run_evidence_agent",
                 new_callable=AsyncMock,
-                side_effect=ConnectionError("no network in tests"),
+                return_value={
+                    "claimreview_matches": [],
+                    "domain_sources": [],
+                    "evidence_confidence": 0.0,
+                },
             ),
             patch.object(
                 NarrativeGenerator, "generate",
@@ -469,9 +477,13 @@ class TestSynthesizerStateOutput:
                 ),
             ),
             patch(
-                "swarm_reasoning.pipeline.nodes.evidence.resilient_get",
+                "swarm_reasoning.pipeline.nodes.evidence.run_evidence_agent",
                 new_callable=AsyncMock,
-                side_effect=ConnectionError("no network in tests"),
+                return_value={
+                    "claimreview_matches": [],
+                    "domain_sources": [],
+                    "evidence_confidence": 0.0,
+                },
             ),
             patch.object(
                 NarrativeGenerator, "generate",
