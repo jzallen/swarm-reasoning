@@ -67,7 +67,7 @@
 - [x] 6.2 Implement TemporalClientAdapter.startClaimVerificationWorkflow(runId, sessionId, claimText, sourceUrl, sourceDate)
 - [x] 6.3 Generate workflow ID from runId for idempotency
 - [x] 6.4 Implement TemporalClientAdapter.getWorkflowStatus(workflowId) for health check
-- [ ] 6.5 Implement completion signal handler in NestJS to trigger FinalizeSessionUseCase
+- [x] 6.5 Implement completion signal handler in NestJS to trigger FinalizeSessionUseCase
 
 ## 7. Tests
 

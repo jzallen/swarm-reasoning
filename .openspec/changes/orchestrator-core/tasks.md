@@ -62,7 +62,7 @@
 - [x] 6.3 Implement activity heartbeating every 10 seconds with stream-activity health check via `XREVRANGE`
 - [x] 6.4 Implement progress event publishing to `progress:{runId}` at agent start and completion
 - [x] 6.5 Implement error classification: LLM rate limits/timeouts retryable; auth/config errors non-retryable
-- [ ] 6.6 Write unit tests: heartbeat calls, error classification, result construction
+- [x] 6.6 Write unit tests: heartbeat calls, error classification, result construction
 
 ---
 
@@ -96,7 +96,7 @@
 - [x] 9.1 Implement heartbeat check within `run_agent_activity`: periodic `XREVRANGE` on agent stream
 - [x] 9.2 Configure heartbeat interval (10s) and warning threshold (30s) as constants
 - [x] 9.3 Integrate with `activity.heartbeat()`: pass latest stream timestamp as details
-- [ ] 9.4 Write unit tests: heartbeat timing, warning threshold detection
+- [x] 9.4 Write unit tests: heartbeat timing, warning threshold detection
 
 ---
 
@@ -120,7 +120,7 @@
 
 - [x] 12.1 Define progress event format: agent, phase, status, message, timestamp
 - [x] 12.2 Implement `publish_progress` helper: XADD to `progress:{runId}` at agent start/completion and phase transitions
-- [ ] 12.3 Write unit test: progress event format and content
+- [x] 12.3 Write unit test: progress event format and content
 
 ---
 

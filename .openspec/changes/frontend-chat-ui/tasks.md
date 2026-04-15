@@ -33,7 +33,7 @@
 
 - [x] 5.1 Create `src/App.tsx`: parse pathname for session ID, render landing/active/verdict/frozen view
 - [x] 5.2 After session creation: update URL via `window.history.pushState`
-- [ ] 5.3 Handle browser back/forward via `popstate` event listener
+- [x] 5.3 Handle browser back/forward via `popstate` event listener
 
 ## 6. Chat Interface Component
 

@@ -38,7 +38,7 @@
 - [x] 6.2 After persisting verdict: read all progress events from Redis via `XRANGE('0', '+')`
 - [x] 6.3 Call `render(verdict, progressEvents, session)` then `store(sessionId, html)`
 - [x] 6.4 Update session: set `snapshotUrl`, `frozenAt`, `expiresAt` (now + 3 days), status = `frozen`
-- [ ] 6.5 Publish `session-frozen` progress event to `progress:{runId}`
+- [x] 6.5 Publish `session-frozen` progress event to `progress:{runId}`
 - [x] 6.6 Log render + store duration for NFR-030 monitoring
 
 ## 7. CleanupExpiredSessionsUseCase
