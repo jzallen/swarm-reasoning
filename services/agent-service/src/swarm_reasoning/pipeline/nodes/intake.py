@@ -24,7 +24,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from langgraph.types import RunnableConfig
 
-from swarm_reasoning.agents.entity_extractor.extractor import (
+from swarm_reasoning.agents.entity_extraction import (
     EntityExtractionResult,
     extract_entities_llm,
 )
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 AGENT_NAME = "intake"
 
-# Deterministic entity publish order matching entity_extractor/publisher.py
+# Deterministic entity publish order (PERSON -> ORG -> DATE -> LOCATION -> STATISTIC)
 _ENTITY_ORDER: list[tuple[str, ObservationCode]] = [
     ("persons", ObservationCode.ENTITY_PERSON),
     ("organizations", ObservationCode.ENTITY_ORG),
@@ -311,7 +311,7 @@ async def _extract_entities(
 
     Returns the entities dict matching PipelineState.entities shape.
     """
-    from swarm_reasoning.agents.entity_extractor.publisher import (
+    from swarm_reasoning.agents._utils import (
         normalize_date as normalize_entity_date,
     )
 

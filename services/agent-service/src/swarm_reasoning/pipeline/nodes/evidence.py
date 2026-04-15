@@ -26,8 +26,7 @@ from urllib.parse import quote_plus
 import httpx
 from langgraph.types import RunnableConfig
 
-from swarm_reasoning.agents._utils import STOP_WORDS, resilient_get
-from swarm_reasoning.agents.claimreview_matcher.scorer import cosine_similarity
+from swarm_reasoning.agents._utils import STOP_WORDS, cosine_similarity, resilient_get
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
 from swarm_reasoning.pipeline.state import PipelineState

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from swarm_reasoning.agents.entity_extractor.extractor import (
+from swarm_reasoning.agents.entity_extraction import (
     EntityExtractionResult,
     LLMUnavailableError,
     extract_entities_llm,
