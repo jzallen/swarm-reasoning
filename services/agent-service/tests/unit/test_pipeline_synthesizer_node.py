@@ -18,9 +18,9 @@ import pytest
 
 from swarm_reasoning.agents.synthesizer.models import ResolvedObservation, ResolvedObservationSet
 from swarm_reasoning.agents.synthesizer.narrator import NarrativeGenerator
+from swarm_reasoning.agents.synthesizer.resolver import resolve_from_state
 from swarm_reasoning.pipeline.nodes.synthesizer import (
     AGENT_NAME,
-    resolve_from_state,
     synthesizer_node,
 )
 

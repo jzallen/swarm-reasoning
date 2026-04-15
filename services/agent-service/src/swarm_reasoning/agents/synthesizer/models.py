@@ -1,8 +1,52 @@
-"""Data models for synthesizer observation resolution."""
+"""Data models for synthesizer agent -- typed I/O and observation resolution."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TypedDict
+
+
+# ---------------------------------------------------------------------------
+# Typed I/O for the synthesizer agent graph
+# ---------------------------------------------------------------------------
+
+
+class SynthesizerInput(TypedDict):
+    """Input to the synthesizer agent from the pipeline.
+
+    The pipeline node translates PipelineState into this typed contract
+    before invoking the synthesizer StateGraph.
+    """
+
+    observations: list[dict]
+    """Raw upstream observations from all prior pipeline nodes."""
+
+
+class SynthesizerOutput(TypedDict):
+    """Output from the synthesizer agent returned to the pipeline.
+
+    The pipeline node maps these fields back to PipelineState updates.
+    """
+
+    verdict: str
+    """Verdict code (e.g. TRUE, FALSE, UNVERIFIABLE, NOT_CHECK_WORTHY)."""
+
+    confidence: float | None
+    """Calibrated confidence score in [0.0, 1.0], or None if unverifiable."""
+
+    narrative: str
+    """Human-readable verdict narrative with OBX citations."""
+
+    verdict_observations: list[dict]
+    """Summary of observations produced by the synthesizer."""
+
+    override_reason: str
+    """ClaimReview override reason, or empty string if no override."""
+
+
+# ---------------------------------------------------------------------------
+# Observation resolution data models
+# ---------------------------------------------------------------------------
 
 
 @dataclass

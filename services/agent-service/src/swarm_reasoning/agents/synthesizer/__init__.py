@@ -1,1 +1,25 @@
-"""Synthesizer agent -- Phase 3 verdict synthesis (ADR-016)."""
+"""Synthesizer agent -- Phase 3 verdict synthesis (ADR-016).
+
+Exposes the synthesizer StateGraph and typed I/O models for use by the
+pipeline node wrapper in ``swarm_reasoning.pipeline.nodes.synthesizer``.
+"""
+
+from swarm_reasoning.agents.synthesizer.agent import (
+    build_synthesizer_graph,
+    synthesizer_graph,
+)
+from swarm_reasoning.agents.synthesizer.models import (
+    ResolvedObservation,
+    ResolvedObservationSet,
+    SynthesizerInput,
+    SynthesizerOutput,
+)
+
+__all__ = [
+    "build_synthesizer_graph",
+    "synthesizer_graph",
+    "ResolvedObservation",
+    "ResolvedObservationSet",
+    "SynthesizerInput",
+    "SynthesizerOutput",
+]
