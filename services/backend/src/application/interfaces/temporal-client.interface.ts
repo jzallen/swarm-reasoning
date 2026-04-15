@@ -3,6 +3,8 @@ export interface TemporalClientPort {
     runId: string,
     sessionId: string,
     claimText: string,
+    claimUrl?: string,
+    submissionDate?: string,
   ): Promise<void>;
   getWorkflowStatus(runId: string): Promise<string>;
   cancelWorkflow(runId: string, reason?: string): Promise<void>;

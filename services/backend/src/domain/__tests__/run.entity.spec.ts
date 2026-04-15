@@ -52,6 +52,32 @@ describe('Run', () => {
     });
   });
 
+  describe('simplified workflow transitions', () => {
+    it('should allow pending -> completed (simplified pipeline)', () => {
+      const run = createRun();
+      run.transitionTo(RunStatus.Completed);
+      expect(run.status).toBe(RunStatus.Completed);
+      expect(run.completedAt).toBeDefined();
+    });
+
+    it('should allow ingesting -> completed (early completion)', () => {
+      const run = createRun();
+      run.transitionTo(RunStatus.Ingesting);
+      run.transitionTo(RunStatus.Completed);
+      expect(run.status).toBe(RunStatus.Completed);
+      expect(run.completedAt).toBeDefined();
+    });
+
+    it('should allow analyzing -> completed (partial pipeline)', () => {
+      const run = createRun();
+      run.transitionTo(RunStatus.Ingesting);
+      run.transitionTo(RunStatus.Analyzing);
+      run.transitionTo(RunStatus.Completed);
+      expect(run.status).toBe(RunStatus.Completed);
+      expect(run.completedAt).toBeDefined();
+    });
+  });
+
   describe('invalid transitions', () => {
     it('should reject completed -> any', () => {
       const run = createRun();

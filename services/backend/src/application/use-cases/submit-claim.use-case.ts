@@ -63,6 +63,8 @@ export class SubmitClaimUseCase {
         run.runId,
         session.sessionId,
         claim.claimText,
+        claim.sourceUrl,
+        claim.sourceDate,
       );
     } catch (error) {
       run.transitionTo(RunStatus.Failed);

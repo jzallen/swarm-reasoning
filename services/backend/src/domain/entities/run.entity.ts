@@ -1,10 +1,30 @@
 import { RunStatus } from '../enums';
 
 const VALID_TRANSITIONS: Record<RunStatus, RunStatus[]> = {
-  [RunStatus.Pending]: [RunStatus.Ingesting, RunStatus.Cancelled, RunStatus.Failed],
-  [RunStatus.Ingesting]: [RunStatus.Analyzing, RunStatus.Cancelled, RunStatus.Failed],
-  [RunStatus.Analyzing]: [RunStatus.Synthesizing, RunStatus.Cancelled, RunStatus.Failed],
-  [RunStatus.Synthesizing]: [RunStatus.Completed, RunStatus.Cancelled, RunStatus.Failed],
+  // Pending can go to Ingesting (phased) or directly to Completed (simplified pipeline)
+  [RunStatus.Pending]: [
+    RunStatus.Ingesting,
+    RunStatus.Completed,
+    RunStatus.Cancelled,
+    RunStatus.Failed,
+  ],
+  [RunStatus.Ingesting]: [
+    RunStatus.Analyzing,
+    RunStatus.Completed,
+    RunStatus.Cancelled,
+    RunStatus.Failed,
+  ],
+  [RunStatus.Analyzing]: [
+    RunStatus.Synthesizing,
+    RunStatus.Completed,
+    RunStatus.Cancelled,
+    RunStatus.Failed,
+  ],
+  [RunStatus.Synthesizing]: [
+    RunStatus.Completed,
+    RunStatus.Cancelled,
+    RunStatus.Failed,
+  ],
   [RunStatus.Completed]: [],
   [RunStatus.Cancelled]: [],
   [RunStatus.Failed]: [],
@@ -37,9 +57,7 @@ export class Run {
   transitionTo(newStatus: RunStatus): void {
     const allowed = VALID_TRANSITIONS[this.status];
     if (!allowed.includes(newStatus)) {
-      throw new Error(
-        `Invalid run transition: ${this.status} -> ${newStatus}`,
-      );
+      throw new Error(`Invalid run transition: ${this.status} -> ${newStatus}`);
     }
     this.status = newStatus;
     if (

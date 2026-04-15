@@ -30,11 +30,13 @@ TERMINAL_STATUSES = frozenset({
 
 # Valid state transitions matching services/backend/src/domain/entities/run.entity.ts
 _CANCEL_FAIL = frozenset({RunStatusEnum.CANCELLED, RunStatusEnum.FAILED})
+_COMPLETE = frozenset({RunStatusEnum.COMPLETED})
 VALID_TRANSITIONS: dict[RunStatusEnum, frozenset[RunStatusEnum]] = {
-    RunStatusEnum.PENDING: frozenset({RunStatusEnum.INGESTING}) | _CANCEL_FAIL,
-    RunStatusEnum.INGESTING: frozenset({RunStatusEnum.ANALYZING}) | _CANCEL_FAIL,
-    RunStatusEnum.ANALYZING: frozenset({RunStatusEnum.SYNTHESIZING}) | _CANCEL_FAIL,
-    RunStatusEnum.SYNTHESIZING: frozenset({RunStatusEnum.COMPLETED}) | _CANCEL_FAIL,
+    # Pending can go to Ingesting (phased) or directly to Completed (simplified pipeline)
+    RunStatusEnum.PENDING: frozenset({RunStatusEnum.INGESTING}) | _COMPLETE | _CANCEL_FAIL,
+    RunStatusEnum.INGESTING: frozenset({RunStatusEnum.ANALYZING}) | _COMPLETE | _CANCEL_FAIL,
+    RunStatusEnum.ANALYZING: frozenset({RunStatusEnum.SYNTHESIZING}) | _COMPLETE | _CANCEL_FAIL,
+    RunStatusEnum.SYNTHESIZING: _COMPLETE | _CANCEL_FAIL,
     RunStatusEnum.COMPLETED: frozenset(),
     RunStatusEnum.CANCELLED: frozenset(),
     RunStatusEnum.FAILED: frozenset(),

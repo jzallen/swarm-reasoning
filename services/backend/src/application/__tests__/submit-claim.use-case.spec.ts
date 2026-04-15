@@ -54,6 +54,31 @@ describe('SubmitClaimUseCase', () => {
     ).toHaveBeenCalledTimes(1);
   });
 
+  it('should pass sourceUrl and sourceDate to the workflow', async () => {
+    const mocks = createMocks();
+    const useCase = new SubmitClaimUseCase(
+      mocks.sessionRepo,
+      mocks.runRepo,
+      mocks.temporalClient,
+    );
+
+    await useCase.execute('test-id', {
+      claimText: 'Test claim',
+      sourceUrl: 'https://example.com/article',
+      sourceDate: '2026-04-10',
+    });
+
+    expect(
+      mocks.temporalClient.startClaimVerificationWorkflow,
+    ).toHaveBeenCalledWith(
+      expect.any(String),
+      'test-id',
+      'Test claim',
+      'https://example.com/article',
+      '2026-04-10',
+    );
+  });
+
   it('should throw NotFoundException for missing session', async () => {
     const mocks = createMocks(null);
     const useCase = new SubmitClaimUseCase(

@@ -48,11 +48,13 @@ export class TemporalClientAdapter
     runId: string,
     sessionId: string,
     claimText: string,
+    claimUrl?: string,
+    submissionDate?: string,
   ): Promise<void> {
     await this.client.start(WORKFLOW_TYPE, {
       workflowId: `claim-verification-${runId}`,
       taskQueue: TASK_QUEUE,
-      args: [{ runId, sessionId, claimText }],
+      args: [{ runId, sessionId, claimText, claimUrl, submissionDate }],
     });
     this.logger.log(
       `Started workflow claim-verification-${runId} for session ${sessionId}`,
