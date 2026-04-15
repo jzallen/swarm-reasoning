@@ -14,8 +14,6 @@ import signal
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from swarm_reasoning.activities.completion import rebuild_completion_register
-from swarm_reasoning.activities.run_agent import run_agent_activity
 from swarm_reasoning.activities.run_pipeline import run_langgraph_pipeline
 from swarm_reasoning.activities.run_status import (
     cancel_run,
@@ -43,13 +41,11 @@ async def run_worker() -> None:
         task_queue=TASK_QUEUE,
         workflows=[ClaimVerificationWorkflow],
         activities=[
-            run_agent_activity,
             run_langgraph_pipeline,
             update_run_status,
             cancel_run,
             fail_run,
             get_run_status,
-            rebuild_completion_register,
         ],
     )
 

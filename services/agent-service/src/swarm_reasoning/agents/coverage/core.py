@@ -1,7 +1,8 @@
-"""Shared logic for coverage-left, coverage-center, coverage-right agents.
+"""Shared utility functions for coverage analysis.
 
 Provides NewsAPI query building, headline sentiment analysis (simplified
 VADER-style lexicon scoring), and top-source selection by credibility rank.
+Used by the coverage pipeline node (pipeline/nodes/coverage.py).
 """
 
 from __future__ import annotations

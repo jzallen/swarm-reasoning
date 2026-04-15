@@ -13,7 +13,16 @@ from dataclasses import dataclass
 from temporalio import activity
 
 from swarm_reasoning.stream.key import stream_key
-from swarm_reasoning.workflows.dag import ALL_AGENTS
+
+# Pipeline node names that publish observations to Redis Streams.
+# Replaces the old DAG.ALL_AGENTS after M8.3 migration to monolithic pipeline.
+PIPELINE_NODES: tuple[str, ...] = (
+    "intake",
+    "evidence",
+    "coverage",
+    "validation",
+    "synthesizer",
+)
 
 
 @dataclass
@@ -46,7 +55,7 @@ async def rebuild_completion_register(input: RebuildInput) -> RebuildResult:
     Cost: one XRANGE per agent per recovery. At 11 agents and infrequent
     restarts, this is acceptable (NFR-007).
     """
-    agents = input.agents or list(ALL_AGENTS)
+    agents = input.agents or list(PIPELINE_NODES)
     completed: dict[str, str] = {}
 
     if _stream_client is None:
