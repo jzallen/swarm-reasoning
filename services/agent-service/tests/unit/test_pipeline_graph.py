@@ -19,6 +19,7 @@ from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.graph import (
     build_pipeline_graph,
     coverage_node,
+    has_newsapi_key,
     intake_node,
     pipeline_graph,
     route_after_intake,
@@ -126,6 +127,7 @@ class TestGraphStructure:
 class TestRouting:
     """Verify route_after_intake conditional logic."""
 
+    @patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"})
     def test_check_worthy_fans_out(self):
         state: PipelineState = {
             "claim_text": "x",
@@ -148,12 +150,51 @@ class TestRouting:
         assert len(sends) == 1
         assert sends[0].node == "synthesizer"
 
+    @patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"})
     def test_missing_is_check_worthy_defaults_to_check_worthy(self):
         """When intake hasn't set is_check_worthy, default to True (fan-out)."""
         state: PipelineState = {"claim_text": "x", "run_id": "r", "session_id": "s"}
         sends = route_after_intake(state)
         targets = sorted(s.node for s in sends)
         assert targets == ["coverage", "evidence"]
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_no_newsapi_key_skips_coverage(self):
+        """When NEWSAPI_KEY is missing, fan-out dispatches evidence only."""
+        state: PipelineState = {
+            "claim_text": "x",
+            "run_id": "r",
+            "session_id": "s",
+            "is_check_worthy": True,
+        }
+        sends = route_after_intake(state)
+        assert len(sends) == 1
+        assert sends[0].node == "evidence"
+
+    @patch.dict("os.environ", {"NEWSAPI_KEY": ""})
+    def test_empty_newsapi_key_skips_coverage(self):
+        """Empty NEWSAPI_KEY is treated same as missing -- evidence only."""
+        state: PipelineState = {
+            "claim_text": "x",
+            "run_id": "r",
+            "session_id": "s",
+            "is_check_worthy": True,
+        }
+        sends = route_after_intake(state)
+        assert len(sends) == 1
+        assert sends[0].node == "evidence"
+
+    @patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"})
+    def test_has_newsapi_key_true(self):
+        assert has_newsapi_key() is True
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_has_newsapi_key_false_when_missing(self):
+        assert has_newsapi_key() is False
+
+    @patch.dict("os.environ", {"NEWSAPI_KEY": ""})
+    def test_has_newsapi_key_false_when_empty(self):
+        assert has_newsapi_key() is False
 
 
 class TestPipelineExecution:

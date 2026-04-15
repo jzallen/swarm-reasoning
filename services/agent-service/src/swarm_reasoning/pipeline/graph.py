@@ -15,6 +15,7 @@ validation (M4.1), synthesizer (M5.1).
 from __future__ import annotations
 
 import logging
+import os
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import RunnableConfig, Send
@@ -47,18 +48,29 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def has_newsapi_key() -> bool:
+    """Check whether a NewsAPI key is configured in the environment."""
+    return bool(os.environ.get("NEWSAPI_KEY", ""))
+
+
 def route_after_intake(state: PipelineState) -> list[Send]:
     """Route after intake: fan-out to evidence+coverage, or shortcut to synthesizer.
 
     - Not check-worthy -> skip directly to synthesizer
-    - Check-worthy -> parallel dispatch to evidence and coverage via Send API
+    - Check-worthy + NewsAPI key -> parallel dispatch to evidence and coverage
+    - Check-worthy + no NewsAPI key -> evidence only (skip coverage)
     """
     if not state.get("is_check_worthy", True):
         logger.info("route_after_intake: not check-worthy, skipping to synthesizer")
         return [Send("synthesizer", state)]
 
-    logger.info("route_after_intake: fan-out to evidence + coverage")
-    return [Send("evidence", state), Send("coverage", state)]
+    sends = [Send("evidence", state)]
+    if has_newsapi_key():
+        sends.append(Send("coverage", state))
+        logger.info("route_after_intake: fan-out to evidence + coverage")
+    else:
+        logger.info("route_after_intake: fan-out to evidence only (no NewsAPI key)")
+    return sends
 
 
 # ---------------------------------------------------------------------------
