@@ -1,0 +1,130 @@
+---
+title: Pipeline Execution Order — swarm-reasoning
+---
+flowchart TD
+
+  %% ============================================================
+  %% Entry
+  %% ============================================================
+
+  START(["Claim submitted"])
+
+  %% ============================================================
+  %% Phase 1 — Intake (sequential)
+  %% ============================================================
+
+  subgraph INTAKE["Phase 1 — Intake Node (sequential)"]
+    direction TB
+    I1["Ingest claim\n─────────\nValidate text, URL, date\nOBX: CLAIM_TEXT, CLAIM_SOURCE_URL, CLAIM_SOURCE_DATE"]
+    I2["Classify domain\n─────────\nLLM domain classification\nOBX: CLAIM_DOMAIN"]
+    I3["Normalize claim\n─────────\nLowercase, resolve refs, remove hedging\nOBX: CLAIM_NORMALIZED"]
+    I4["Score check-worthiness\n─────────\nTwo-pass LLM scoring\nOBX: CHECK_WORTHY_SCORE"]
+    I5["Extract entities\n─────────\nLLM-powered NER\nOBX: ENTITY_PERSON, ENTITY_ORG,\nENTITY_DATE, ENTITY_LOCATION, ENTITY_STATISTIC"]
+    I1 --> I2 --> I3 --> I4 --> I5
+  end
+
+  START --> INTAKE
+
+  %% ============================================================
+  %% Route decision
+  %% ============================================================
+
+  ROUTE{"check_worthy_score\n≥ 0.4?"}
+  INTAKE --> ROUTE
+
+  %% ============================================================
+  %% Phase 2 — Parallel fan-out
+  %% ============================================================
+
+  subgraph EVIDENCE["Evidence Node (ReAct agent)"]
+    direction TB
+    E1["Search fact-checks\n─────────\nGoogle Fact Check Tools API\nOBX: CLAIMREVIEW_MATCH, CLAIMREVIEW_VERDICT,\nCLAIMREVIEW_SOURCE, CLAIMREVIEW_URL"]
+    E2["Lookup domain sources\n─────────\nRoute by domain → CDC, SEC, WHO, etc.\nOBX: DOMAIN_SOURCE_NAME, DOMAIN_SOURCE_URL"]
+    E3["Fetch source content\n─────────\nHTTP retrieval (up to 3 sources)"]
+    E4["Score evidence\n─────────\nAlignment + confidence scoring\nOBX: DOMAIN_EVIDENCE_ALIGNMENT, DOMAIN_CONFIDENCE"]
+    E1 --> E2 --> E3 --> E4
+  end
+
+  subgraph COVERAGE["Coverage Node (3× parallel spectrums)"]
+    direction TB
+
+    subgraph LEFT["coverage-left"]
+      CL1["Build query → Search → Detect framing → Top source"]
+    end
+    subgraph CENTER["coverage-center"]
+      CC1["Build query → Search → Detect framing → Top source"]
+    end
+    subgraph RIGHT["coverage-right"]
+      CR1["Build query → Search → Detect framing → Top source"]
+    end
+
+    COV_OUT["Per-spectrum output\n─────────\nOBX: COVERAGE_ARTICLE_COUNT, COVERAGE_FRAMING,\nCOVERAGE_TOP_SOURCE, COVERAGE_TOP_SOURCE_URL"]
+    LEFT --> COV_OUT
+    CENTER --> COV_OUT
+    RIGHT --> COV_OUT
+  end
+
+  ROUTE -->|"Yes"| EVIDENCE
+  ROUTE -->|"Yes"| COVERAGE
+
+  %% ============================================================
+  %% Phase 3 — Validation (sequential)
+  %% ============================================================
+
+  subgraph VALIDATION["Validation Node (sequential)"]
+    direction TB
+    V1["Extract source URLs\n─────────\nFrom all upstream agent data\nOBX: SOURCE_EXTRACTED_URL"]
+    V2["Validate URLs\n─────────\nHTTP HEAD + soft-404 detection\nOBX: SOURCE_VALIDATION_STATUS"]
+    V3["Compute convergence\n─────────\nCross-agent source overlap\nOBX: SOURCE_CONVERGENCE_SCORE"]
+    V4["Aggregate citations\n─────────\nCombine extraction + validation\nOBX: CITATION_LIST"]
+    V5["Analyze blindspots\n─────────\nCoverage gaps, cross-spectrum corroboration\nOBX: BLINDSPOT_SCORE, BLINDSPOT_DIRECTION,\nCROSS_SPECTRUM_CORROBORATION"]
+    V1 --> V2 --> V3 --> V4 --> V5
+  end
+
+  EVIDENCE --> VALIDATION
+  COVERAGE --> VALIDATION
+
+  %% ============================================================
+  %% Phase 4 — Synthesis (sequential StateGraph)
+  %% ============================================================
+
+  subgraph SYNTHESIZER["Synthesizer Node (StateGraph)"]
+    direction TB
+    S1["Resolve observations\n─────────\nEpistemic status precedence (F > C > P)\nOBX: SYNTHESIS_SIGNAL_COUNT"]
+    S2["Score confidence\n─────────\nCalibrated from all signals\nOBX: CONFIDENCE_SCORE"]
+    S3["Map verdict\n─────────\nConfidence → verdict, ClaimReview override logic\nOBX: VERDICT, SYNTHESIS_OVERRIDE_REASON"]
+    S4["Narrate\n─────────\nHuman-readable explanation\nOBX: VERDICT_NARRATIVE"]
+    S1 --> S2 --> S3 --> S4
+  end
+
+  VALIDATION --> SYNTHESIZER
+
+  %% ============================================================
+  %% Bypass path
+  %% ============================================================
+
+  BYPASS["Not-check-worthy bypass\n─────────\nVERDICT = NOT_CHECK_WORTHY\nCONFIDENCE = 1.0"]
+  ROUTE -->|"No\n(score < 0.4)"| BYPASS
+  BYPASS --> DONE
+
+  SYNTHESIZER --> DONE(["Verdict emitted"])
+
+  %% ============================================================
+  %% Styling
+  %% ============================================================
+
+  classDef phase1 fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+  classDef phase2 fill:#dcfce7,stroke:#22c55e,color:#14532d
+  classDef phase3 fill:#fef3c7,stroke:#f59e0b,color:#78350f
+  classDef phase4 fill:#fce7f3,stroke:#ec4899,color:#831843
+  classDef decision fill:#f3e8ff,stroke:#9333ea,color:#3b0764
+  classDef bypass fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+  classDef io fill:#f8fafc,stroke:#64748b,color:#0f172a
+
+  class I1,I2,I3,I4,I5 phase1
+  class E1,E2,E3,E4,CL1,CC1,CR1,COV_OUT phase2
+  class V1,V2,V3,V4,V5 phase3
+  class S1,S2,S3,S4 phase4
+  class ROUTE decision
+  class BYPASS bypass
+  class START,DONE io
