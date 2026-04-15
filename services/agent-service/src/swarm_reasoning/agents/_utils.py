@@ -1,8 +1,8 @@
 """Shared agent utilities.
 
-Consolidates common helpers that were duplicated across multiple agent
-modules: ISO timestamps, exception types, stop-word lists, an async HTTP
-retry helper, and a lightweight handler-singleton registry.
+Consolidates common helpers used across agent modules and pipeline nodes:
+ISO timestamps, exception types, stop-word lists, and an async HTTP retry
+helper.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, TypeVar
 
 import httpx
 
@@ -211,51 +210,3 @@ async def resilient_get(
             await asyncio.sleep(backoff)
             resp = await client.get(url, params=params)
         return resp
-
-
-# ---------------------------------------------------------------------------
-# Handler singleton registry
-# ---------------------------------------------------------------------------
-
-T = TypeVar("T")
-
-_REGISTRY: dict[str, Any] = {}
-
-
-def register_handler(name: str):
-    """Class decorator that registers a handler class under *name*.
-
-    The handler instance is lazily created on the first ``get_handler(name)``
-    call (matching the existing singleton pattern used across all agents).
-
-    Usage::
-
-        @register_handler("domain-evidence")
-        class DomainEvidenceHandler:
-            ...
-
-        handler = get_handler("domain-evidence")
-    """
-
-    def decorator(cls: type[T]) -> type[T]:
-        _REGISTRY[name] = {"cls": cls, "instance": None}
-        return cls
-
-    return decorator
-
-
-def get_handler(name: str) -> Any:
-    """Return the singleton instance for the handler registered under *name*.
-
-    Raises ``KeyError`` if *name* was never registered.
-    """
-    entry = _REGISTRY[name]
-    if entry["instance"] is None:
-        entry["instance"] = entry["cls"]()
-    return entry["instance"]
-
-
-def reset_handlers() -> None:
-    """Reset all cached handler instances (useful in tests)."""
-    for entry in _REGISTRY.values():
-        entry["instance"] = None

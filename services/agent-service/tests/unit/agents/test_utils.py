@@ -9,13 +9,9 @@ import httpx
 import pytest
 
 from swarm_reasoning.agents._utils import (
-    _REGISTRY,
     STOP_WORDS,
     StreamNotFoundError,
-    get_handler,
     now_iso,
-    register_handler,
-    reset_handlers,
     resilient_get,
 )
 
@@ -204,68 +200,3 @@ class TestResilientGet:
                 await resilient_get("https://example.com/api", backoff=2.0)
 
             mock_sleep.assert_called_once_with(2.0)
-
-
-# ---------------------------------------------------------------------------
-# register_handler / get_handler / reset_handlers
-# ---------------------------------------------------------------------------
-
-
-class TestHandlerRegistry:
-    def setup_method(self):
-        """Clear registry before each test."""
-        _REGISTRY.clear()
-
-    def test_register_and_get(self):
-        @register_handler("test-agent")
-        class TestHandler:
-            pass
-
-        handler = get_handler("test-agent")
-        assert isinstance(handler, TestHandler)
-
-    def test_singleton_behavior(self):
-        @register_handler("singleton-test")
-        class SingletonHandler:
-            pass
-
-        h1 = get_handler("singleton-test")
-        h2 = get_handler("singleton-test")
-        assert h1 is h2
-
-    def test_get_unregistered_raises_keyerror(self):
-        with pytest.raises(KeyError):
-            get_handler("nonexistent")
-
-    def test_reset_clears_instances(self):
-        @register_handler("reset-test")
-        class ResetHandler:
-            pass
-
-        h1 = get_handler("reset-test")
-        reset_handlers()
-        h2 = get_handler("reset-test")
-        assert h1 is not h2
-
-    def test_multiple_handlers(self):
-        @register_handler("handler-a")
-        class HandlerA:
-            pass
-
-        @register_handler("handler-b")
-        class HandlerB:
-            pass
-
-        a = get_handler("handler-a")
-        b = get_handler("handler-b")
-        assert isinstance(a, HandlerA)
-        assert isinstance(b, HandlerB)
-        assert a is not b
-
-    def test_decorator_returns_original_class(self):
-        @register_handler("preserve-test")
-        class OriginalClass:
-            x = 42
-
-        assert OriginalClass.x == 42
-        assert OriginalClass.__name__ == "OriginalClass"
