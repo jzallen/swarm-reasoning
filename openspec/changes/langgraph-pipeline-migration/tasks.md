@@ -41,7 +41,7 @@
 
 - [x] 7.1 Implement fan_out_router with Send API: dispatch evidence + coverage in parallel; conditional skip (no NewsAPI key -> skip coverage); not-check-worthy -> skip to synthesizer
 - [x] 7.2 Implement fan-in state merge after parallel evidence/coverage; handle partial failures (one node fails, other succeeds)
-- [ ] 7.3 Add cancellation support: Temporal signal handler propagates to LangGraph via asyncio.Event
+- [x] 7.3 Add cancellation support: Temporal signal handler propagates to LangGraph via asyncio.Event
 - [ ] 7.4 Integration test: full pipeline with all nodes, mock LLM and APIs; verify observation publishing to Redis; verify correct PipelineState at each stage
 
 ## 8. Temporal Workflow Simplification (M7)
