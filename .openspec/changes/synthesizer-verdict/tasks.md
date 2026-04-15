@@ -73,7 +73,7 @@
 
 - [x] 9.1 Verify orchestrator transitions run to completed on successful synthesizer completion
 - [x] 9.2 Verify orchestrator transitions run to FAILED on synthesizer failure
-- [ ] 9.3 Integration test: completed transition (verdict-synthesis.feature scenario)
+- [x] 9.3 Integration test: completed transition (verdict-synthesis.feature scenario)
 
 ## 10. Gherkin Step Definitions
 
@@ -84,7 +84,7 @@
 ## 11. Validation
 
 - [ ] 11.1 Run verdict-synthesis.feature -- all 13 scenarios pass
-- [ ] 11.2 Run all unit tests (resolver, scorer, mapper, narrator) -- all pass
-- [ ] 11.3 Verify SYNTHESIS_SIGNAL_COUNT accuracy for 3 test runs (NFR-021)
-- [ ] 11.4 Verify threshold mapping matches docs/domain/entities/verdict.md exactly
-- [ ] 11.5 Verify CITATION_LIST sources appear in VERDICT_NARRATIVE for test runs
+- [x] 11.2 Run all unit tests (resolver, scorer, mapper, narrator) -- all pass
+- [x] 11.3 Verify SYNTHESIS_SIGNAL_COUNT accuracy for 3 test runs (NFR-021)
+- [x] 11.4 Verify threshold mapping matches docs/domain/entities/verdict.md exactly
+- [x] 11.5 Verify CITATION_LIST sources appear in VERDICT_NARRATIVE for test runs

@@ -56,10 +56,10 @@
 
 ## 6. LangChain Agent Integration
 
-- [ ] 6.1 Implement LangChain agent wrapper in FanoutActivity for LLM-driven reasoning steps
-- [ ] 6.2 Define agent-specific LangChain tools for each of the 5 agents (search, score, publish)
-- [ ] 6.3 Configure LangChain agents with Anthropic Claude model
-- [ ] 6.4 Write unit tests: verify tool invocation order per agent type
+- [x] 6.1 Implement LangChain agent wrapper in FanoutActivity for LLM-driven reasoning steps
+- [x] 6.2 Define agent-specific LangChain tools for each of the 5 agents (search, score, publish)
+- [x] 6.3 Configure LangChain agents with Anthropic Claude model
+- [x] 6.4 Write unit tests: verify tool invocation order per agent type
 
 ## 7. Observation Schema Validation
 
