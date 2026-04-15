@@ -34,7 +34,7 @@
 - [x] 3.5 Implement Phase 2 execution: parallel fan-out of 6 activities using asyncio.gather
 - [x] 3.6 Implement Phase 3 execution: sequential blindspot-detector -> synthesizer
 - [x] 3.7 Implement run status updates: pending -> ingesting -> analyzing -> synthesizing -> completed
-- [ ] 3.8 Publish run status changes to progress:{runId} stream for SSE relay
+- [x] 3.8 Publish run status changes to progress:{runId} stream for SSE relay
 - [x] 3.9 Implement workflow_completed signal on successful completion
 - [x] 3.10 Implement workflow_failed signal on unrecoverable failure
 - [x] 3.11 Implement run cancellation flow (status -> cancelled) for check-worthiness gate
@@ -63,7 +63,7 @@
 
 ## 6. NestJS Temporal Client
 
-- [ ] 6.1 Install `@temporalio/client` in NestJS backend dependencies
+- [x] 6.1 Install `@temporalio/client` in NestJS backend dependencies
 - [x] 6.2 Implement TemporalClientAdapter.startClaimVerificationWorkflow(runId, sessionId, claimText, sourceUrl, sourceDate)
 - [x] 6.3 Generate workflow ID from runId for idempotency
 - [x] 6.4 Implement TemporalClientAdapter.getWorkflowStatus(workflowId) for health check
@@ -74,10 +74,10 @@
 - [x] 7.1 Unit test: ClaimVerificationWorkflow phase sequencing (Phase 1 before 2 before 3)
 - [x] 7.2 Unit test: Phase 2 parallel execution (all 6 activities dispatched concurrently)
 - [x] 7.3 Unit test: Check-worthiness gate cancels run when score < 0.4
-- [ ] 7.4 Unit test: Retry policy applied on transient failure
-- [ ] 7.5 Unit test: Non-retryable error fails immediately without retry
-- [ ] 7.6 Unit test: Activity timeout triggers failure after elapsed time
+- [x] 7.4 Unit test: Retry policy applied on transient failure
+- [x] 7.5 Unit test: Non-retryable error fails immediately without retry
+- [x] 7.6 Unit test: Activity timeout triggers failure after elapsed time
 - [x] 7.7 Unit test: Run status transitions at each phase boundary
 - [x] 7.8 Integration test: Workflow execution with mocked agent activities (Temporal test server)
 - [x] 7.9 Integration test: Worker registration and activity discovery
-- [ ] 7.10 Integration test: NestJS TemporalClientAdapter starts workflow and receives completion
+- [x] 7.10 Integration test: NestJS TemporalClientAdapter starts workflow and receives completion

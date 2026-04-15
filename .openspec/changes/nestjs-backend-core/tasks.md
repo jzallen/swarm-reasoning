@@ -1,9 +1,9 @@
 ## 1. Project Setup
 
 - [x] 1.1 Initialize NestJS project in `backend/` with `@nestjs/cli`
-- [ ] 1.2 Configure `tsconfig.json` with strict mode and path aliases for each layer
+- [x] 1.2 Configure `tsconfig.json` with strict mode and path aliases for each layer
 - [x] 1.3 Create directory structure: `src/domain/`, `src/application/`, `src/adapters/`, `src/infrastructure/`
-- [ ] 1.4 Install dependencies: @nestjs/typeorm, typeorm, pg, ioredis, @temporalio/client, @nestjs/schedule
+- [x] 1.4 Install dependencies: @nestjs/typeorm, typeorm, pg, ioredis, @temporalio/client, @nestjs/schedule
 - [x] 1.5 Configure ESLint and Prettier per project code style
 - [x] 1.6 Create `src/app.module.ts` with imports for SessionModule, VerdictModule, CitationModule, StreamModule
 - [x] 1.7 Add environment configuration module for DATABASE_URL, REDIS_URL, TEMPORAL_ADDRESS
@@ -103,13 +103,13 @@
 - [x] 9.3 Unit test: Claim value object validation (empty text, max length, valid URLs)
 - [x] 9.4 Unit test: SubmitClaimUseCase with mocked repositories and Temporal client
 - [x] 9.5 Unit test: GetSessionUseCase with mocked SessionRepository
-- [ ] 9.6 Unit test: FinalizeSessionUseCase with mocked repositories, renderer, snapshot store
+- [x] 9.6 Unit test: FinalizeSessionUseCase with mocked repositories, renderer, snapshot store
 - [x] 9.7 Unit test: CleanupExpiredSessionsUseCase with mocked repositories and snapshot store
 - [x] 9.8 Unit test: VerdictPresenter formatting matches OpenAPI schema
-- [ ] 9.9 Integration test: POST /sessions creates session and returns 201
-- [ ] 9.10 Integration test: POST /sessions/:id/claims returns 202 and starts workflow
-- [ ] 9.11 Integration test: GET /sessions/:id returns session with verdict when completed
-- [ ] 9.12 Integration test: GET /sessions/:id/verdict returns 404 when no verdict exists
-- [ ] 9.13 Integration test: GET /health returns service status
-- [ ] 9.14 Integration test: TypeORM repositories CRUD operations against test database
-- [ ] 9.15 E2E test: full claim submission through verdict retrieval with mocked Temporal
+- [x] 9.9 Integration test: POST /sessions creates session and returns 201
+- [x] 9.10 Integration test: POST /sessions/:id/claims returns 202 and starts workflow
+- [x] 9.11 Integration test: GET /sessions/:id returns session with verdict when completed
+- [x] 9.12 Integration test: GET /sessions/:id/verdict returns 404 when no verdict exists
+- [x] 9.13 Integration test: GET /health returns service status
+- [x] 9.14 Integration test: TypeORM repositories CRUD operations against test database
+- [x] 9.15 E2E test: full claim submission through verdict retrieval with mocked Temporal

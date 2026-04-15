@@ -58,16 +58,16 @@
 ## 7. Temporal Activity Registration
 
 - [x] 7.1 Register `run_synthesizer` activity with @activity.defn, start_to_close_timeout=60s, max_attempts=2
-- [ ] 7.2 Write unit test: activity is importable with correct decorator
+- [x] 7.2 Write unit test: activity is importable with correct decorator
 
 ## 8. Integration Tests
 
-- [ ] 8.1 Write full integration test: synthetic observations from 10 agents -> all 5 OBX published with F-status
-- [ ] 8.2 Assert STOP finalStatus="F", SYNTHESIS_SIGNAL_COUNT matches input
-- [ ] 8.3 Assert CITATION_LIST reflected in VERDICT_NARRATIVE and SOURCE_CONVERGENCE_SCORE influences CONFIDENCE_SCORE
-- [ ] 8.4 Integration test: UNVERIFIABLE path (< 5 signals)
-- [ ] 8.5 Integration test: ClaimReview override path
-- [ ] 8.6 Integration test: progress events published to progress:{runId}
+- [x] 8.1 Write full integration test: synthetic observations from 10 agents -> all 5 OBX published with F-status
+- [x] 8.2 Assert STOP finalStatus="F", SYNTHESIS_SIGNAL_COUNT matches input
+- [x] 8.3 Assert CITATION_LIST reflected in VERDICT_NARRATIVE and SOURCE_CONVERGENCE_SCORE influences CONFIDENCE_SCORE
+- [x] 8.4 Integration test: UNVERIFIABLE path (< 5 signals)
+- [x] 8.5 Integration test: ClaimReview override path
+- [x] 8.6 Integration test: progress events published to progress:{runId}
 
 ## 9. Run Lifecycle Integration
 
