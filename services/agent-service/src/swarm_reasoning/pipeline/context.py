@@ -6,8 +6,7 @@ coupling nodes to Temporal or Redis directly.  Nodes receive PipelineContext
 via ``RunnableConfig["configurable"]["pipeline_context"]`` and use its
 convenience methods to publish observations and progress events.
 
-Analogous to ``agents.tool_runtime.AgentContext`` for the per-agent LangChain
-tools, but scoped to the full pipeline run rather than a single agent.
+Scoped to the full pipeline run rather than a single agent.
 """
 
 from __future__ import annotations
