@@ -24,24 +24,23 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from langgraph.types import RunnableConfig
 
-from swarm_reasoning.agents.entity_extraction import (
-    EntityExtractionResult,
-    extract_entities_llm,
-)
-from swarm_reasoning.pipeline.nodes.intake_domain import (
-    DOMAIN_VOCABULARY,
-    build_prompt,
-    call_claude,
-)
-from swarm_reasoning.pipeline.nodes.intake_normalizer import normalize_claim_text
-from swarm_reasoning.pipeline.nodes.intake_scorer import score_claim_text
-from swarm_reasoning.pipeline.nodes.intake_validation import (
+from swarm_reasoning.agents.intake.tools.claim_intake import (
     ValidationError,
     check_duplicate,
     normalize_date,
     validate_claim_text,
     validate_source_url,
 )
+from swarm_reasoning.agents.intake.tools.domain_cls import (
+    DOMAIN_VOCABULARY,
+    build_prompt,
+    call_claude,
+)
+from swarm_reasoning.agents.intake.tools.entity_extractor import (
+    extract_entities_llm,
+)
+from swarm_reasoning.agents.intake.tools.normalizer import normalize_claim_text
+from swarm_reasoning.agents.intake.tools.scorer import score_claim_text
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
 from swarm_reasoning.pipeline.state import PipelineState
