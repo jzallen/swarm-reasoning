@@ -2,7 +2,7 @@
 
 - [x] Slice 1 (types/stream) is complete: `swarm_reasoning.models`, `swarm_reasoning.stream.redis` are importable
 - [x] Orchestrator core slice is complete: `run_agent_activity` Temporal activity is defined
-- [ ] `ANTHROPIC_API_KEY` env var is set in the dev environment
+- [x] `ANTHROPIC_API_KEY` env var is set in the dev environment
 
 ---
 

@@ -39,8 +39,8 @@
 
 - [x] 5.1 Register `run_blindspot_detector` Temporal activity in `src/swarm_reasoning/agents/activities.py`: instantiates BlindspotDetectorActivity, calls run(), returns FanoutActivityResult
 - [x] 5.2 Configure activity options: start_to_close_timeout=30s (Phase 3 budget), retry_policy with max_attempts=2
-- [ ] 5.3 Update orchestrator workflow to read COVERAGE_* and SOURCE_CONVERGENCE_SCORE observations from Redis Streams and pass as cross_agent_data when dispatching blindspot-detector
-- [ ] 5.4 Write unit test: verify run_blindspot_detector activity is importable with correct @activity.defn decorator
+- [x] 5.3 Update orchestrator workflow to read COVERAGE_* and SOURCE_CONVERGENCE_SCORE observations from Redis Streams and pass as cross_agent_data when dispatching blindspot-detector
+- [x] 5.4 Write unit test: verify run_blindspot_detector activity is importable with correct @activity.defn decorator
 
 ## 6. Integration Tests
 
@@ -55,8 +55,8 @@
 
 ## 7. Gherkin Scenario Validation
 
-- [ ] 7.1 Manually verify "Blindspot detector requests data via orchestrator" scenario from `docs/features/agent-coordination.feature` against Temporal activity input pattern (replaces MCP pull)
-- [ ] 7.2 Manually verify "Each subagent exposes get_observations tool" -- in Temporal model, observations are read from the agent's Redis Stream by the orchestrator, not via an MCP tool
-- [ ] 7.3 Manually verify "Each subagent exposes get_terminal_status tool" -- in Temporal model, terminal status is determined by the activity result, not via an MCP tool
-- [ ] 7.4 Confirm phase gate ("Blindspot detector is not dispatched until coverage agents are complete") is enforced by the orchestrator Temporal workflow, not by this agent
+- [x] 7.1 Manually verify "Blindspot detector requests data via orchestrator" scenario from `docs/features/agent-coordination.feature` against Temporal activity input pattern (replaces MCP pull)
+- [x] 7.2 Manually verify "Each subagent exposes get_observations tool" -- in Temporal model, observations are read from the agent's Redis Stream by the orchestrator, not via an MCP tool
+- [x] 7.3 Manually verify "Each subagent exposes get_terminal_status tool" -- in Temporal model, terminal status is determined by the activity result, not via an MCP tool
+- [x] 7.4 Confirm phase gate ("Blindspot detector is not dispatched until coverage agents are complete") is enforced by the orchestrator Temporal workflow, not by this agent
 - [ ] 7.5 Update Gherkin scenarios if needed to reflect Temporal activity model instead of MCP pull pattern

@@ -57,8 +57,8 @@
 
 - [x] 7.1 Register `run_source_validator` activity in activities.py with @activity.defn
 - [x] 7.2 Configure: start_to_close_timeout=45s, retry_policy max_attempts=3
-- [ ] 7.3 Update orchestrator to pass cross-agent URL data in FanoutActivityInput.cross_agent_data
-- [ ] 7.4 Write unit test: activity importable with correct decorator
+- [x] 7.3 Update orchestrator to pass cross-agent URL data in FanoutActivityInput.cross_agent_data
+- [x] 7.4 Write unit test: activity importable with correct decorator
 
 ## 8. Integration Tests
 

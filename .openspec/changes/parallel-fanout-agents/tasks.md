@@ -12,11 +12,11 @@
 
 ## 2. Temporal Activity Registration
 
-- [ ] 2.1 Create `src/swarm_reasoning/agents/activities.py` registering all Phase 2 activities with `@activity.defn`
-- [ ] 2.2 Register activities: run_claimreview_matcher, run_coverage_left, run_coverage_center, run_coverage_right, run_domain_evidence
-- [ ] 2.3 Register run_source_validator stub (implementation in source-validator slice)
-- [ ] 2.4 Configure activity options: start_to_close_timeout=45s, retry_policy with max_attempts=3, non_retryable for API key errors
-- [ ] 2.5 Write unit test: all five Phase 2a activity functions importable with correct decorators (source-validator stub registered for Phase 2b)
+- [x] 2.1 Create `src/swarm_reasoning/agents/activities.py` registering all Phase 2 activities with `@activity.defn`
+- [x] 2.2 Register activities: run_claimreview_matcher, run_coverage_left, run_coverage_center, run_coverage_right, run_domain_evidence
+- [x] 2.3 Register run_source_validator stub (implementation in source-validator slice)
+- [x] 2.4 Configure activity options: start_to_close_timeout=45s, retry_policy with max_attempts=3, non_retryable for API key errors
+- [x] 2.5 Write unit test: all five Phase 2a activity functions importable with correct decorators (source-validator stub registered for Phase 2b)
 
 ## 3. ClaimReview Matcher Agent
 
@@ -69,11 +69,11 @@
 
 ## 8. Integration Tests: Full Phase 2 Fan-Out
 
-- [ ] 8.1 Write `tests/integration/agents/test_fanout_phase.py`: mock all APIs -> dispatch five Phase 2a agents via Temporal -> assert all five streams have STOP messages -> then dispatch source-validator in Phase 2b
-- [ ] 8.2 Verify Phase 2a wall-clock <= 45s (NFR-002) against mocked APIs
-- [ ] 8.3 One agent fails (X-status) while four complete (F-status) -> partial results preserved, Phase 2b still runs
-- [ ] 8.4 Temporal activity retry: simulate transient failure, verify success on retry
-- [ ] 8.5 Progress events from all six agents (5 Phase 2a + 1 Phase 2b) appear in `progress:{runId}` stream
+- [x] 8.1 Write `tests/integration/agents/test_fanout_phase.py`: mock all APIs -> dispatch five Phase 2a agents via Temporal -> assert all five streams have STOP messages -> then dispatch source-validator in Phase 2b
+- [x] 8.2 Verify Phase 2a wall-clock <= 45s (NFR-002) against mocked APIs
+- [x] 8.3 One agent fails (X-status) while four complete (F-status) -> partial results preserved, Phase 2b still runs
+- [x] 8.4 Temporal activity retry: simulate transient failure, verify success on retry
+- [x] 8.5 Progress events from all six agents (5 Phase 2a + 1 Phase 2b) appear in `progress:{runId}` stream
 
 ## 9. Environment Configuration
 

@@ -9,7 +9,7 @@
 ## 1. Project Setup
 
 - [x] 1.1 Create directory structure: `services/agent-service/src/workflows/`, `services/agent-service/src/activities/`, `services/agent-service/src/completion/` with `__init__.py` files
-- [ ] 1.2 Add `temporalio>=1.4.0`, `asyncpg>=0.29`, `sqlalchemy[asyncio]>=2.0` to `pyproject.toml` dependencies
+- [x] 1.2 Add `temporalio>=1.4.0`, `asyncpg>=0.29`, `sqlalchemy[asyncio]>=2.0` to `pyproject.toml` dependencies
 - [x] 1.3 Create test directory structure: `services/agent-service/tests/unit/`, `services/agent-service/tests/integration/`
 - [x] 1.4 Add Temporal server service to `docs/infrastructure/docker-compose.yml` with health check
 - [x] 1.5 Add `TEMPORAL_HOST`, `TEMPORAL_NAMESPACE` environment variables to `.env.example`; define `agent-task-queue` constant
@@ -86,7 +86,7 @@
 - [x] 8.8 Implement Phase 3 completion: transition `synthesizing -> completed`
 - [x] 8.9 Implement error handling: catch `ActivityError`, call `fail_run`, return failed `WorkflowResult`
 - [x] 8.10 Implement completion register integration: merge activity results into register after each activity
-- [ ] 8.11 Implement recovery path: call `rebuild_completion_register` on workflow start to detect already-completed agents
+- [x] 8.11 Implement recovery path: call `rebuild_completion_register` on workflow start to detect already-completed agents
 - [x] 8.12 Write workflow sandbox unit tests: sequential ordering, parallel dispatch, check-worthiness gate
 
 ---
@@ -104,15 +104,15 @@
 
 - [x] 10.1 Implement `worker.py`: register workflow and all activities, listen on `agent-task-queue`
 - [x] 10.2 Implement graceful shutdown on SIGTERM: stop accepting new workflows, wait for in-progress activities
-- [ ] 10.3 Wire dependencies: Redis client, PostgreSQL connection, Anthropic client
+- [x] 10.3 Wire dependencies: Redis client, PostgreSQL connection, Anthropic client
 - [x] 10.4 Add worker startup to docker-compose agent-service entrypoint
 
 ---
 
 ## 11. Consumer Group Setup
 
-- [ ] 11.1 Implement `setup_consumer_groups` utility: idempotent `XGROUP CREATE` on each agent stream at worker startup
-- [ ] 11.2 Write unit test: consumer group creation handles BUSYGROUP error
+- [x] 11.1 Implement `setup_consumer_groups` utility: idempotent `XGROUP CREATE` on each agent stream at worker startup
+- [x] 11.2 Write unit test: consumer group creation handles BUSYGROUP error
 
 ---
 
@@ -132,9 +132,9 @@
 - [ ] 13.4 Worker restart: kill mid-Phase-2, restart, verify Temporal replays and completes
 - [x] 13.5 Phase 2 parallel: verify all 6 agents start within 2 seconds of each other
 - [ ] 13.6 Heartbeat timeout: stub agent never STOPs, verify activity cancelled by heartbeat_timeout
-- [ ] 13.7 Activity retry: transient error on first attempt, success on second
-- [ ] 13.8 Non-retryable error: auth error fails immediately, run transitions to `failed`
-- [ ] 13.9 Completion register rebuild: partially complete run, verify rebuild identifies completed agents
+- [x] 13.7 Activity retry: transient error on first attempt, success on second
+- [x] 13.8 Non-retryable error: auth error fails immediately, run transitions to `failed`
+- [x] 13.9 Completion register rebuild: partially complete run, verify rebuild identifies completed agents
 - [ ] 13.10 Progress events: verify `progress:{runId}` contains events for each agent and phase transition
 - [ ] 13.11 End-to-end latency: full run with stubs completes within 15 seconds
 - [x] 13.12 Run status transitions: verify PostgreSQL records correct status at each phase boundary
