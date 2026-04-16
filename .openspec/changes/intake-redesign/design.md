@@ -41,8 +41,6 @@ The intake agent runs in two phases within a single Temporal activity:
 
 The pipeline node handles the phase boundary. Phase A writes partial state (extracted claims) and signals the frontend. Phase B resumes when the user's selection arrives via the backend API.
 
-**Alternative considered:** Two separate Temporal activities. Rejected — splitting creates orchestration complexity for what is logically one intake step. The pipeline node can manage the pause internally.
-
 ### 2. LLM sub-call pattern: ChatAnthropic via closure
 
 All tools that make LLM sub-calls receive their `ChatAnthropic` model instance via closure from the agent builder function. Tools accept `config: RunnableConfig` as a parameter and forward it to `.ainvoke()`.
