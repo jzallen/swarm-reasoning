@@ -24,12 +24,6 @@ from langgraph.config import get_stream_writer
 from langgraph.prebuilt import create_agent
 
 from swarm_reasoning.agents.intake.models import IntakeOutput
-from swarm_reasoning.agents.intake.tools.claim_intake import (
-    ValidationError,
-    normalize_date,
-    validate_claim_text,
-    validate_source_url,
-)
 from swarm_reasoning.agents.intake.tools.decompose_claims import (
     decompose_and_parse,
 )
@@ -104,46 +98,7 @@ After completing all steps, report your findings."""
 
 
 @tool
-async def validate_claim(
-    claim_text: str,
-    source_url: str = "",
-    submission_date: str = "",
-) -> dict[str, Any]:
-    """Validate a claim submission for structural correctness.
-
-    Checks claim text length (5-2000 chars), URL format if provided,
-    and date parseability if provided.
-
-    Args:
-        claim_text: The raw claim text to validate.
-        source_url: Optional source URL for the claim. Pass empty string
-            if none.
-        submission_date: Optional submission date in any parseable format.
-            Pass empty string if none.
-    """
-    try:
-        validate_claim_text(claim_text)
-        if source_url:
-            validate_source_url(source_url)
-        normalized_date = None
-        if submission_date:
-            normalized_date = normalize_date(submission_date)
-        return {
-            "valid": True,
-            "claim_text": claim_text.strip(),
-            "source_url": source_url or None,
-            "normalized_date": normalized_date,
-        }
-    except ValidationError as ve:
-        return {"valid": False, "error": ve.reason}
-
-
-# classify_domain is defined inside build_intake_agent() as a closure
-# over the ChatAnthropic model instance (see below).
-
-
-@tool
-async def fetch_source_content(url: str) -> dict[str, Any]:
+async def fetch_content(url: str) -> dict[str, Any]:
     """Fetch and extract content from a source URL.
 
     Downloads the web page, extracts the main article text using trafilatura
@@ -175,10 +130,6 @@ async def fetch_source_content(url: str) -> dict[str, Any]:
     except FetchError as fe:
         writer({"type": "progress", "message": f"Fetch error: {fe.reason}"})
         return {"success": False, "url": url, "error": fe.reason}
-
-
-# extract_entities is defined inside build_intake_agent() as a closure
-# over the ChatAnthropic model instance (see below).
 
 
 # ---------------------------------------------------------------------------
@@ -358,8 +309,7 @@ def build_intake_agent(model=None):
         )
 
     tools = [
-        validate_claim,
-        fetch_source_content,
+        fetch_content,
         decompose_claims,
         classify_domain,
         extract_entities,
