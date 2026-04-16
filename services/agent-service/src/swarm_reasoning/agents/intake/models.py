@@ -1,8 +1,9 @@
 """Typed I/O models for the intake agent.
 
-IntakeInput carries the raw claim submission data pre-extracted from PipelineState.
-IntakeOutput carries the full intake result (validation, domain classification,
-normalization, check-worthiness scoring, entity extraction) for pipeline state updates.
+IntakeInput carries the URL submission pre-extracted from PipelineState.
+IntakeOutput carries the full intake result across both phases:
+  Phase A: article fetch + claim decomposition
+  Phase B: domain classification + entity extraction on selected claim
 """
 
 from __future__ import annotations
@@ -17,38 +18,63 @@ class IntakeInput(TypedDict):
     agent has no coupling to PipelineState directly.
     """
 
+    url: str
+    """Source URL submitted by the user."""
+
+
+class ExtractedClaimDict(TypedDict):
+    """A single factual claim extracted from article text (dict form)."""
+
+    index: int
+    """Claim index (1-5)."""
+
     claim_text: str
-    """Raw claim text submitted by the user."""
+    """Standalone verifiable sentence."""
 
-    claim_url: str | None
-    """Optional source URL for the claim."""
+    quote: str
+    """Single best sentence from the article making or supporting the claim."""
 
-    submission_date: str | None
-    """Optional submission date (ISO 8601 or free-form, normalized by the agent)."""
+    citation: dict[str, str | None]
+    """Attribution: author (str|None), publisher (str), date (str|None)."""
 
 
-class IntakeOutput(TypedDict):
+class IntakeOutput(TypedDict, total=False):
     """Output from the intake agent, translated to PipelineState updates.
 
-    All fields are always present. Fields that were not reached due to early
-    rejection use None or empty defaults.
+    Phase A fields (URL -> claims) are populated after fetch + decompose.
+    Phase B fields (selected claim -> analysis) are populated after user
+    selects a claim and the agent runs classify + extract.
+
+    On rejection (bad URL, no claims, fetch error), only ``error`` is set.
+    Uses ``total=False`` so phases can populate fields incrementally.
     """
 
-    is_check_worthy: bool
-    """Whether the claim passed the check-worthiness gate."""
+    # Phase A: article fetch + claim decomposition
+    article_text: str
+    """Extracted article body text from the source URL."""
 
-    normalized_claim: str | None
-    """Normalized claim text, or None if rejected before normalization."""
+    article_title: str
+    """Title of the source article."""
 
-    claim_domain: str | None
-    """Domain classification (e.g. HEALTHCARE, ECONOMICS), or None if rejected."""
+    article_date: str | None
+    """Publication date in YYYYMMDD format, if extractable."""
 
-    check_worthy_score: float | None
-    """Check-worthiness score in [0.0, 1.0], or None if rejected before scoring."""
+    extracted_claims: list[ExtractedClaimDict]
+    """Up to 5 factual claims extracted from the article."""
+
+    # Phase B: selected claim analysis
+    selected_claim: ExtractedClaimDict
+    """The claim chosen by the user for fact-checking."""
+
+    domain: str
+    """Domain classification (HEALTHCARE, ECONOMICS, POLICY, SCIENCE,
+    ELECTION, CRIME, OTHER)."""
 
     entities: dict[str, list[str]]
-    """Extracted entities keyed by type (persons, organizations, dates, locations,
-    statistics). Empty dict if not check-worthy or rejected."""
+    """Extracted entities keyed by type (persons, organizations, dates,
+    locations, statistics)."""
 
-    errors: list[str]
-    """Rejection or validation errors. Empty list on success."""
+    # Error (rejection path)
+    error: str
+    """Error code on rejection (e.g. URL_UNREACHABLE, NO_FACTUAL_CLAIMS).
+    Absent on success."""
