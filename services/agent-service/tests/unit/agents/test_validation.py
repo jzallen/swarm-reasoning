@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from swarm_reasoning.pipeline.nodes.intake import check_duplicate
 from swarm_reasoning.pipeline.nodes.intake_validation import (
     ValidationError,
-    check_duplicate,
     normalize_date,
     validate_claim_text,
     validate_source_url,

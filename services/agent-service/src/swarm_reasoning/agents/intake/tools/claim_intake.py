@@ -1,16 +1,13 @@
 """Structural validators for claim intake (ADR-004).
 
-Validates claim text length, URL format, date format, and run-scoped
-duplicate detection via Redis SETNX.
+Validates claim text length, URL format, and date format.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
 
 from dateutil import parser as dateutil_parser
-from redis.asyncio import Redis
 
 
 class ValidationError(Exception):
@@ -48,15 +45,3 @@ def normalize_date(date_str: str) -> str:
     except (ValueError, OverflowError):
         raise ValidationError("SOURCE_DATE_UNPARSEABLE")
     return dt.strftime("%Y%m%d")
-
-
-async def check_duplicate(redis_client: Redis, run_id: str, claim_text: str) -> bool:
-    """Return True if this claim text was already submitted for this run.
-
-    Uses SETNX with 24h TTL for dedup. Returns True = duplicate, False = new.
-    """
-    claim_hash = hashlib.sha256(claim_text.strip().encode()).hexdigest()
-    key = f"reasoning:dedup:{run_id}:{claim_hash}"
-    # SET ... NX EX — returns True if key was SET (new), None if already exists (dup)
-    was_set = await redis_client.set(key, "1", ex=86400, nx=True)
-    return was_set is None  # True means duplicate

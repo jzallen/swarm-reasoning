@@ -10,7 +10,6 @@ Each module exposes the core logic for one step of the intake pipeline:
 
 from swarm_reasoning.agents.intake.tools.claim_intake import (
     ValidationError,
-    check_duplicate,
     normalize_date,
     validate_claim_text,
     validate_source_url,
@@ -39,7 +38,6 @@ __all__ = [
     "LLMUnavailableError",
     "ValidationError",
     "build_prompt",
-    "check_duplicate",
     "extract_entities_llm",
     "fetch_content",
     "normalize_date",

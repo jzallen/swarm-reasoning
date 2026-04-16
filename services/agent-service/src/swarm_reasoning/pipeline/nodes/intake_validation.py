@@ -2,7 +2,6 @@
 
 from swarm_reasoning.agents.intake.tools.claim_intake import (
     ValidationError,
-    check_duplicate,
     normalize_date,
     validate_claim_text,
     validate_source_url,
@@ -10,7 +9,6 @@ from swarm_reasoning.agents.intake.tools.claim_intake import (
 
 __all__ = [
     "ValidationError",
-    "check_duplicate",
     "normalize_date",
     "validate_claim_text",
     "validate_source_url",

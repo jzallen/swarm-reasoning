@@ -15,6 +15,7 @@ State updates are returned as a dict for LangGraph to merge.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from typing import Any
@@ -24,7 +25,6 @@ from langgraph.types import RunnableConfig
 
 from swarm_reasoning.agents.intake.tools.claim_intake import (
     ValidationError,
-    check_duplicate,
     normalize_date,
     validate_claim_text,
     validate_source_url,
@@ -42,6 +42,19 @@ from swarm_reasoning.pipeline.state import PipelineState
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)
+
+
+async def check_duplicate(redis_client, run_id: str, claim_text: str) -> bool:
+    """Return True if this claim text was already submitted for this run.
+
+    Uses SETNX with 24h TTL for dedup. Returns True = duplicate, False = new.
+    """
+    claim_hash = hashlib.sha256(claim_text.strip().encode()).hexdigest()
+    key = f"reasoning:dedup:{run_id}:{claim_hash}"
+    # SET ... NX EX — returns True if key was SET (new), None if already exists (dup)
+    was_set = await redis_client.set(key, "1", ex=86400, nx=True)
+    return was_set is None  # True means duplicate
+
 
 AGENT_NAME = "intake"
 
