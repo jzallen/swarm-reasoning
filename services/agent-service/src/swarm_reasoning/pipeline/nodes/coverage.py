@@ -1,20 +1,21 @@
-"""Coverage pipeline node (M3.2) -- parameterized left/center/right news analysis.
+"""Coverage pipeline nodes -- thin wrappers delegating to agents/coverage.
 
-Runs three spectrum-specific coverage analyses concurrently using shared,
-parameterized tool functions.  Each spectrum loads its own source list,
-queries NewsAPI, computes headline sentiment framing, and selects the
-highest-credibility source.
+Provides three spectrum-specific pipeline node functions that each translate
+PipelineState -> CoverageInput, invoke the coverage ReAct agent for a single
+spectrum, and translate CoverageOutput -> PipelineState updates.  Contains no
+domain logic; all coverage analysis, observation publishing, and sentiment
+scoring lives in the agent module.
 
-Four parameterized tools (each takes ``spectrum`` / ``agent_name``):
+Pipeline nodes:
 
-1. :func:`build_search_query`       -- stop-word removal + truncation
-2. :func:`search_coverage`          -- NewsAPI query + COVERAGE_ARTICLE_COUNT obs
-3. :func:`detect_coverage_framing`  -- VADER-style sentiment → COVERAGE_FRAMING obs
-4. :func:`find_top_coverage_source` -- credibility ranking → COVERAGE_TOP_SOURCE obs
+- :func:`run_coverage_left`   -- left-spectrum coverage analysis
+- :func:`run_coverage_center` -- center-spectrum coverage analysis
+- :func:`run_coverage_right`  -- right-spectrum coverage analysis
+- :func:`coverage_node`       -- orchestrator that runs all three concurrently
 
-The node entry point :func:`coverage_node` fans out all three spectrums via
-``asyncio.gather`` and merges results into ``coverage_left``,
-``coverage_center``, ``coverage_right``, and ``framing_analysis``.
+The ``coverage_node`` function preserves backward compatibility with the
+existing graph topology (single "coverage" node).  The three individual
+functions are graph-registerable for future fan-out topologies.
 """
 
 from __future__ import annotations
@@ -23,15 +24,11 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from langgraph.types import RunnableConfig
 
-from swarm_reasoning.agents.coverage.tools import (
-    build_search_query,
-    detect_coverage_framing,
-    find_top_coverage_source,
-    search_coverage,
-)
+from swarm_reasoning.agents.coverage import CoverageInput, CoverageOutput, run_coverage_agent
 from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
 from swarm_reasoning.pipeline.state import PipelineState
 
@@ -69,126 +66,131 @@ def _load_sources(spectrum: str) -> list[dict]:
     return _sources_cache[spectrum]
 
 
-# ===================================================================
-# Per-spectrum runner
-# ===================================================================
+# ---------------------------------------------------------------------------
+# Input extraction / output translation
+# ---------------------------------------------------------------------------
 
 
-async def _run_spectrum(
-    spectrum: str,
-    normalized_claim: str,
-    ctx: PipelineContext,
-) -> tuple[str, list[dict], str, float]:
-    """Run the 4-tool coverage pipeline for a single spectrum.
-
-    Returns (state_key, articles_with_metadata, framing_cwe, compound).
-    """
-    agent_name = _SPECTRUMS[spectrum]
-    state_key = _STATE_KEYS[spectrum]
-    sources = _load_sources(spectrum)
-
-    await ctx.publish_progress(agent_name, f"Searching {spectrum}-spectrum sources...")
-
-    # Tool 1: Build query
-    query = build_search_query(normalized_claim)
-
-    # Tool 2: Search coverage
-    source_ids = ",".join(s["id"] for s in sources[:20])
-    articles = await search_coverage(query, source_ids, ctx, agent_name)
-    ctx.heartbeat(agent_name)
-
-    # Tool 3: Detect framing
-    framing, compound = await detect_coverage_framing(articles, ctx, agent_name)
-    ctx.heartbeat(agent_name)
-
-    # Tool 4: Find top source
-    top_source = await find_top_coverage_source(articles, sources, ctx, agent_name)
-    ctx.heartbeat(agent_name)
-
-    # Build article list for state
-    coverage_articles = []
-    for article in articles:
-        coverage_articles.append({
-            "title": article.get("title", ""),
-            "url": article.get("url", ""),
-            "source": article.get("source", {}).get("name", ""),
-            "framing": framing.split("^")[0],
-        })
-
-    if top_source:
-        match_desc = f"{len(articles)} article(s), top={top_source['name']}"
-    else:
-        match_desc = f"{len(articles)} article(s)"
-    await ctx.publish_progress(
-        agent_name,
-        f"Coverage complete: {match_desc}, framing={framing.split('^')[0]}",
+def _extract_input(state: PipelineState) -> CoverageInput:
+    """Extract CoverageInput from PipelineState."""
+    return CoverageInput(
+        normalized_claim=state.get("normalized_claim") or state.get("claim_text", ""),
     )
 
-    return state_key, coverage_articles, framing, compound
+
+def _apply_output(spectrum: str, output: CoverageOutput) -> dict[str, Any]:
+    """Translate CoverageOutput for a single spectrum to PipelineState updates."""
+    state_key = _STATE_KEYS[spectrum]
+    framing_entry = {
+        "framing": output["framing"],
+        "compound": output["compound_score"],
+        "article_count": len(output["articles"]),
+    }
+
+    return {
+        state_key: output["articles"],
+        "framing_analysis": {spectrum: framing_entry},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Per-spectrum runner (shared logic)
+# ---------------------------------------------------------------------------
+
+
+async def _run_spectrum_node(
+    spectrum: str,
+    state: PipelineState,
+    ctx: PipelineContext,
+) -> dict[str, Any]:
+    """Run a single coverage spectrum and return state updates."""
+    agent_name = _SPECTRUMS[spectrum]
+    ctx.heartbeat(agent_name)
+
+    coverage_input = _extract_input(state)
+    sources = _load_sources(spectrum)
+    coverage_output = await run_coverage_agent(spectrum, sources, coverage_input, ctx)
+
+    return _apply_output(spectrum, coverage_output)
 
 
 # ===================================================================
-# Node function
+# Pipeline node functions (graph-registerable)
 # ===================================================================
 
 
-async def coverage_node(state: PipelineState, config: RunnableConfig) -> dict:
-    """Coverage pipeline node: parameterized left/center/right news analysis.
+async def run_coverage_left(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
+    """Left-spectrum coverage pipeline node: delegates to the coverage ReAct agent.
 
-    Runs three spectrum-specific analyses concurrently via asyncio.gather.
-    Each spectrum executes the same 4-tool pipeline with spectrum-specific
-    sources. Publishes COVERAGE_* observations per spectrum via PipelineContext.
+    1. Extracts CoverageInput from PipelineState
+    2. Loads left-spectrum source list
+    3. Invokes run_coverage_agent (LLM-driven ReAct loop)
+    4. Returns CoverageOutput fields as PipelineState updates
+    """
+    ctx = get_pipeline_context(config)
+    return await _run_spectrum_node("left", state, ctx)
 
-    Returns:
-        State updates for ``coverage_left``, ``coverage_center``,
-        ``coverage_right``, ``framing_analysis``, and ``observations``.
+
+async def run_coverage_center(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
+    """Center-spectrum coverage pipeline node: delegates to the coverage ReAct agent.
+
+    1. Extracts CoverageInput from PipelineState
+    2. Loads center-spectrum source list
+    3. Invokes run_coverage_agent (LLM-driven ReAct loop)
+    4. Returns CoverageOutput fields as PipelineState updates
+    """
+    ctx = get_pipeline_context(config)
+    return await _run_spectrum_node("center", state, ctx)
+
+
+async def run_coverage_right(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
+    """Right-spectrum coverage pipeline node: delegates to the coverage ReAct agent.
+
+    1. Extracts CoverageInput from PipelineState
+    2. Loads right-spectrum source list
+    3. Invokes run_coverage_agent (LLM-driven ReAct loop)
+    4. Returns CoverageOutput fields as PipelineState updates
+    """
+    ctx = get_pipeline_context(config)
+    return await _run_spectrum_node("right", state, ctx)
+
+
+# ===================================================================
+# Composite node (backward-compatible single-node orchestrator)
+# ===================================================================
+
+
+async def coverage_node(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
+    """Coverage pipeline node: runs all three spectrums concurrently.
+
+    Delegates to run_coverage_left, run_coverage_center, and run_coverage_right
+    via asyncio.gather, then merges their state updates.  This preserves
+    backward compatibility with the existing graph topology that registers
+    a single ``"coverage"`` node.
     """
     ctx = get_pipeline_context(config)
     ctx.heartbeat("coverage")
 
-    normalized_claim = state.get("normalized_claim") or state.get("claim_text", "")
-
     await ctx.publish_progress("coverage", "Starting coverage analysis (left/center/right)...")
 
-    # Run all three spectrums concurrently
     results = await asyncio.gather(
-        _run_spectrum("left", normalized_claim, ctx),
-        _run_spectrum("center", normalized_claim, ctx),
-        _run_spectrum("right", normalized_claim, ctx),
+        _run_spectrum_node("left", state, ctx),
+        _run_spectrum_node("center", state, ctx),
+        _run_spectrum_node("right", state, ctx),
     )
 
-    # Unpack results
-    state_updates: dict = {}
+    # Merge state updates from all three spectrums
+    merged: dict[str, Any] = {}
     framing_analysis: dict[str, dict] = {}
-    all_observations: list[dict] = []
 
-    for state_key, articles, framing, compound in results:
-        spectrum = state_key.replace("coverage_", "")
-        agent_name = _SPECTRUMS[spectrum]
+    for result in results:
+        for key, value in result.items():
+            if key == "framing_analysis":
+                framing_analysis.update(value)
+            else:
+                merged[key] = value
 
-        state_updates[state_key] = articles
-
-        framing_analysis[spectrum] = {
-            "framing": framing.split("^")[0],
-            "compound": compound,
-            "article_count": len(articles),
-        }
-
-        all_observations.extend([
-            {
-                "agent": agent_name,
-                "code": "COVERAGE_ARTICLE_COUNT",
-                "value": str(len(articles)),
-            },
-            {
-                "agent": agent_name,
-                "code": "COVERAGE_FRAMING",
-                "value": framing,
-            },
-        ])
-
-    state_updates["framing_analysis"] = framing_analysis
-    state_updates["observations"] = all_observations
+    merged["framing_analysis"] = framing_analysis
 
     total = sum(fa["article_count"] for fa in framing_analysis.values())
     await ctx.publish_progress(
@@ -196,4 +198,4 @@ async def coverage_node(state: PipelineState, config: RunnableConfig) -> dict:
         f"Coverage complete: {total} total articles across 3 spectrums",
     )
 
-    return state_updates
+    return merged
