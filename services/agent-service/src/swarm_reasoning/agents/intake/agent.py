@@ -34,6 +34,8 @@ from swarm_reasoning.agents.intake.tools.domain_cls import (
 from swarm_reasoning.agents.intake.tools.entity_extractor import extract_entities_llm
 from swarm_reasoning.agents.intake.tools.fetch_content import (
     FetchError,
+)
+from swarm_reasoning.agents.intake.tools.fetch_content import (
     fetch_content as _fetch_content,
 )
 from swarm_reasoning.temporal.errors import MissingApiKeyError

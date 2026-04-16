@@ -25,6 +25,7 @@ from swarm_reasoning.agents.intake.agent import (
     TOOLS,
     classify_domain,
     extract_entities,
+    fetch_source_content,
     validate_claim,
 )
 from swarm_reasoning.agents.intake.models import (
@@ -144,12 +145,13 @@ class TestConstants:
         assert AGENT_NAME == "intake"
 
     def test_tools_count(self):
-        assert len(TOOLS) == 3
+        assert len(TOOLS) == 4
 
     def test_tool_names(self):
         tool_names = {t.name for t in TOOLS}
         expected = {
             "validate_claim",
+            "fetch_source_content",
             "classify_domain",
             "extract_entities",
         }
@@ -157,11 +159,13 @@ class TestConstants:
 
     def test_system_prompt_mentions_all_steps(self):
         assert "Validate the claim" in SYSTEM_PROMPT
+        assert "Fetch source content" in SYSTEM_PROMPT
         assert "Classify the domain" in SYSTEM_PROMPT
         assert "Extract entities" in SYSTEM_PROMPT
 
     def test_system_prompt_mentions_tool_names(self):
         assert "validate_claim" in SYSTEM_PROMPT
+        assert "fetch_source_content" in SYSTEM_PROMPT
         assert "classify_domain" in SYSTEM_PROMPT
         assert "extract_entities" in SYSTEM_PROMPT
 
@@ -351,6 +355,52 @@ class TestClassifyDomainTool:
                 {"claim_text": "GDP grew 3%"},
             )
         assert result["domain"] == "ECONOMICS"
+
+
+# ---------------------------------------------------------------------------
+# Tool: fetch_source_content
+# ---------------------------------------------------------------------------
+
+
+class TestFetchSourceContentTool:
+    """Tests for the fetch_source_content LangChain tool."""
+
+    @pytest.mark.asyncio
+    async def test_success(self):
+        from swarm_reasoning.agents.intake.tools.fetch_content import FetchResult
+
+        mock_result = FetchResult(
+            url="https://example.com/article",
+            title="Test Article",
+            date="2024-01-15",
+            text="Article body text",
+            word_count=3,
+            extraction_method="trafilatura",
+        )
+        with patch(
+            "swarm_reasoning.agents.intake.agent._fetch_content",
+            return_value=mock_result,
+        ):
+            result = await fetch_source_content.ainvoke(
+                {"url": "https://example.com/article"},
+            )
+        assert result["success"] is True
+        assert result["title"] == "Test Article"
+        assert result["word_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_fetch_error(self):
+        from swarm_reasoning.agents.intake.tools.fetch_content import FetchError
+
+        with patch(
+            "swarm_reasoning.agents.intake.agent._fetch_content",
+            side_effect=FetchError("FETCH_TIMEOUT"),
+        ):
+            result = await fetch_source_content.ainvoke(
+                {"url": "https://example.com/slow"},
+            )
+        assert result["success"] is False
+        assert result["error"] == "FETCH_TIMEOUT"
 
 
 # ---------------------------------------------------------------------------
