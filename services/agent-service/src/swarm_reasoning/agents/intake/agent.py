@@ -32,6 +32,10 @@ from swarm_reasoning.agents.intake.tools.domain_cls import (
     build_prompt,
 )
 from swarm_reasoning.agents.intake.tools.entity_extractor import extract_entities_llm
+from swarm_reasoning.agents.intake.tools.fetch_content import (
+    FetchError,
+    fetch_content as _fetch_content,
+)
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)
@@ -52,10 +56,14 @@ Follow this workflow IN ORDER:
 and optionally the source URL and submission date if provided. If validation \
 fails, stop immediately -- the claim is rejected.
 
-2. **Classify the domain** using the classify_domain tool. This determines \
+2. **Fetch source content** using the fetch_source_content tool if a source URL \
+was provided. Pass the URL to retrieve the article text, title, and publication \
+date. If fetching fails, note the error but continue -- source content is optional.
+
+3. **Classify the domain** using the classify_domain tool. This determines \
 which domain the claim falls under (HEALTHCARE, ECONOMICS, POLICY, etc.).
 
-3. **Extract entities** using the extract_entities tool. Pass the claim text.
+4. **Extract entities** using the extract_entities tool. Pass the claim text.
 
 After completing all steps, report your findings."""
 
@@ -155,6 +163,32 @@ async def classify_domain(claim_text: str) -> dict[str, str]:
 
 
 @tool
+async def fetch_source_content(url: str) -> dict[str, Any]:
+    """Fetch and extract content from a source URL.
+
+    Downloads the web page, extracts the main article text using trafilatura
+    (with BeautifulSoup fallback), and returns the title, publication date,
+    extracted text, and word count.
+
+    Args:
+        url: The source URL to fetch content from.
+    """
+    try:
+        result = await _fetch_content(url)
+        return {
+            "success": True,
+            "url": result.url,
+            "title": result.title,
+            "date": result.date,
+            "text": result.text,
+            "word_count": result.word_count,
+            "extraction_method": result.extraction_method,
+        }
+    except FetchError as fe:
+        return {"success": False, "url": url, "error": fe.reason}
+
+
+@tool
 async def extract_entities(claim_text: str) -> dict[str, list[str]]:
     """Extract named entities from claim text using LLM-powered NER.
 
@@ -181,6 +215,7 @@ async def extract_entities(claim_text: str) -> dict[str, list[str]]:
 
 TOOLS = [
     validate_claim,
+    fetch_source_content,
     classify_domain,
     extract_entities,
 ]
