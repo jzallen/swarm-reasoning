@@ -209,6 +209,12 @@ def build_intake_agent(model=None):
         The result dict contains ``structured_response`` (an IntakeOutput)
         and ``messages`` (the full conversation trace).
     """
+    decompose_model = ChatAnthropic(
+        model=DECOMPOSE_MODEL,
+        max_tokens=2048,
+        temperature=0,
+    )
+
     classify_model = ChatAnthropic(
         model=CLASSIFY_MODEL,
         max_tokens=10,
@@ -226,6 +232,40 @@ def build_intake_agent(model=None):
         max_tokens=4096,
         temperature=0,
     )
+
+    @tool
+    async def decompose_claims(
+        article_text: str, article_title: str, config: RunnableConfig
+    ) -> dict[str, Any]:
+        """Extract up to 5 factual claims from article text.
+
+        Analyzes the article content using LLM-powered claim extraction.
+        Returns structured claims with supporting quotes and citations.
+
+        Args:
+            article_text: The extracted article body text.
+            article_title: The article title for context.
+        """
+        writer = get_stream_writer()
+        claims = await decompose_and_parse(
+            article_text=article_text,
+            article_title=article_title,
+            model=decompose_model,
+            config=config,
+            writer=writer,
+        )
+
+        result: dict[str, Any] = {
+            "claims": [claim.model_dump() for claim in claims],
+            "article_title": article_title,
+            "article_date": None,
+            "claim_count": len(claims),
+        }
+
+        if not claims:
+            result["error"] = "NO_FACTUAL_CLAIMS"
+
+        return result
 
     @tool
     async def classify_domain(claim_text: str, config: RunnableConfig) -> dict[str, str]:
