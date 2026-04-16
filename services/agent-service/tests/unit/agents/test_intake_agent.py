@@ -173,7 +173,7 @@ class TestBuildIntakeAgent:
     def test_builds_with_provided_model(self):
         mock_model = MagicMock()
         with patch(
-            "swarm_reasoning.agents.intake.agent.create_react_agent",
+            "swarm_reasoning.agents.intake.agent.create_agent",
         ) as mock_create:
             mock_create.return_value = MagicMock()
             build_intake_agent(model=mock_model)
@@ -195,7 +195,7 @@ class TestBuildIntakeAgent:
         with (
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
             patch(
-                "swarm_reasoning.agents.intake.agent.create_react_agent",
+                "swarm_reasoning.agents.intake.agent.create_agent",
             ) as mock_create,
             patch(
                 "swarm_reasoning.agents.intake.agent.ChatAnthropic",
@@ -227,7 +227,7 @@ class TestBuildIntakeAgent:
     def test_response_format_is_intake_output(self):
         mock_model = MagicMock()
         with patch(
-            "swarm_reasoning.agents.intake.agent.create_react_agent",
+            "swarm_reasoning.agents.intake.agent.create_agent",
         ) as mock_create:
             mock_create.return_value = MagicMock()
             build_intake_agent(model=mock_model)
@@ -326,7 +326,7 @@ class TestClassifyDomainTool:
                 return_value=mock_classify_model,
             ),
             patch(
-                "swarm_reasoning.agents.intake.agent.create_react_agent",
+                "swarm_reasoning.agents.intake.agent.create_agent",
             ) as mock_create,
         ):
             mock_create.return_value = MagicMock()
@@ -517,7 +517,7 @@ class TestExtractEntitiesTool:
                 side_effect=[mock_classify_model, mock_entity_model],
             ),
             patch(
-                "swarm_reasoning.agents.intake.agent.create_react_agent",
+                "swarm_reasoning.agents.intake.agent.create_agent",
             ) as mock_create,
         ):
             mock_create.return_value = MagicMock()

@@ -1,7 +1,7 @@
 """Intake agent -- ReAct agent for claim validation, domain classification,
 and entity extraction.
 
-Uses LangGraph's create_react_agent with LLM-driven tool selection.
+Uses LangGraph's create_agent with LLM-driven tool selection.
 The agent orchestrates three tools guided by a system prompt that encodes
 the intake workflow.
 
@@ -21,7 +21,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
-from langgraph.prebuilt import create_react_agent
+from langgraph.prebuilt import create_agent
 
 from swarm_reasoning.agents.intake.models import IntakeOutput
 from swarm_reasoning.agents.intake.tools.claim_intake import (
@@ -319,7 +319,7 @@ def build_intake_agent(model=None):
 
     tools = [validate_claim, fetch_source_content, classify_domain, extract_entities]
 
-    return create_react_agent(
+    return create_agent(
         model=model,
         tools=tools,
         prompt=SYSTEM_PROMPT,
