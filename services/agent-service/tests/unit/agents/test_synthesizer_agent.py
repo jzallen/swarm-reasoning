@@ -3,6 +3,7 @@
 Verifies:
 - Graph topology (4 nodes in fixed sequence)
 - Agent graph invocation with and without PipelineContext
+- run_synthesizer() entry point (typed I/O, heartbeats, progress events)
 - SynthesizerInput/Output typed contracts
 - Observation publishing via PipelineContext through graph nodes
 - Module re-exports from agents.synthesizer package
@@ -20,8 +21,8 @@ from swarm_reasoning.agents.synthesizer.agent import (
     SynthesizerGraphState,
     build_synthesizer_graph,
     map_node,
-    narrate_node,
     resolve_node,
+    run_synthesizer,
     score_node,
     synthesizer_graph,
 )
@@ -30,7 +31,6 @@ from swarm_reasoning.agents.synthesizer.models import (
     SynthesizerOutput,
 )
 from swarm_reasoning.agents.synthesizer.narrator import NarrativeGenerator
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -84,7 +84,9 @@ def _make_obs(agent, code, value, value_type="ST", seq=1, status="F", **kwargs):
 def _build_rich_observations() -> list[dict]:
     """Build a realistic set of upstream observations for synthesis testing."""
     return [
-        _make_obs("evidence", "DOMAIN_EVIDENCE_ALIGNMENT", "CONTRADICTS^Contradicts^FCK", "CWE", seq=1),
+        _make_obs(
+            "evidence", "DOMAIN_EVIDENCE_ALIGNMENT", "CONTRADICTS^Contradicts^FCK", "CWE", seq=1
+        ),
         _make_obs("evidence", "DOMAIN_CONFIDENCE", "0.95", "NM", seq=2),
         _make_obs("evidence", "CLAIMREVIEW_MATCH", "TRUE^True^FCK", "CWE", seq=3),
         _make_obs("evidence", "CLAIMREVIEW_VERDICT", "FALSE^False^POLITIFACT", "CWE", seq=4),
@@ -212,12 +214,15 @@ class TestMapNode:
         from swarm_reasoning.agents.synthesizer.resolver import resolve_from_state
 
         # Use observations without ClaimReview to avoid override
+        supportive = "SUPPORTIVE^Supportive^FCK"
         obs_no_cr = [
-            _make_obs("evidence", "DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK", "CWE", seq=1),
+            _make_obs(
+                "evidence", "DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK", "CWE", seq=1
+            ),
             _make_obs("evidence", "DOMAIN_CONFIDENCE", "0.95", "NM", seq=2),
-            _make_obs("coverage-left", "COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK", "CWE", seq=1),
-            _make_obs("coverage-center", "COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK", "CWE", seq=1),
-            _make_obs("coverage-right", "COVERAGE_FRAMING", "SUPPORTIVE^Supportive^FCK", "CWE", seq=1),
+            _make_obs("coverage-left", "COVERAGE_FRAMING", supportive, "CWE", seq=1),
+            _make_obs("coverage-center", "COVERAGE_FRAMING", supportive, "CWE", seq=1),
+            _make_obs("coverage-right", "COVERAGE_FRAMING", supportive, "CWE", seq=1),
             _make_obs("validation", "SOURCE_CONVERGENCE_SCORE", "0.90", "NM", seq=1),
         ]
         resolved = resolve_from_state(obs_no_cr)
@@ -399,3 +404,224 @@ class TestPackageReexports:
         from swarm_reasoning.agents.synthesizer import ResolvedObservation, ResolvedObservationSet
         assert ResolvedObservation is not None
         assert ResolvedObservationSet is not None
+
+    def test_import_run_synthesizer_from_package(self):
+        from swarm_reasoning.agents.synthesizer import run_synthesizer as rs
+        assert callable(rs)
+
+
+# ---------------------------------------------------------------------------
+# run_synthesizer() entry point tests
+# ---------------------------------------------------------------------------
+
+
+class TestRunSynthesizer:
+    """Test the run_synthesizer() entry point function.
+
+    run_synthesizer() is the public API that the pipeline node wrapper calls.
+    It wraps synthesizer_graph.ainvoke() with PipelineContext wiring,
+    heartbeat signaling, and progress event publishing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_synthesizer_output_with_rich_observations(self):
+        """Rich observations produce a typed SynthesizerOutput with all fields."""
+        ctx = FakePipelineContext()
+        synth_input: SynthesizerInput = {
+            "observations": _build_rich_observations(),
+        }
+        with patch.object(
+            NarrativeGenerator,
+            "generate",
+            new_callable=AsyncMock,
+            return_value="X" * 250,
+        ):
+            result = await run_synthesizer(synth_input, ctx)
+
+        assert result["verdict"] is not None
+        assert result["verdict"] != "UNVERIFIABLE"
+        assert isinstance(result["confidence"], float)
+        assert 0.0 <= result["confidence"] <= 1.0
+        assert result["narrative"] == "X" * 250
+        assert isinstance(result["verdict_observations"], list)
+        assert len(result["verdict_observations"]) > 0
+        assert isinstance(result["override_reason"], str)
+
+    @pytest.mark.asyncio
+    async def test_returns_unverifiable_with_empty_observations(self):
+        """Empty observations produce UNVERIFIABLE verdict with None confidence."""
+        ctx = FakePipelineContext()
+        synth_input: SynthesizerInput = {"observations": []}
+        with patch.object(
+            NarrativeGenerator,
+            "generate",
+            new_callable=AsyncMock,
+            return_value="X" * 250,
+        ):
+            result = await run_synthesizer(synth_input, ctx)
+
+        assert result["verdict"] == "UNVERIFIABLE"
+        assert result["confidence"] is None
+
+    @pytest.mark.asyncio
+    async def test_calls_heartbeat(self):
+        """run_synthesizer() sends a heartbeat at start."""
+        ctx = FakePipelineContext()
+        ctx.heartbeat_calls = []
+        original_heartbeat = ctx.heartbeat
+
+        def tracking_heartbeat(name):
+            ctx.heartbeat_calls.append(name)
+            original_heartbeat(name)
+
+        ctx.heartbeat = tracking_heartbeat
+        synth_input: SynthesizerInput = {"observations": []}
+        with patch.object(
+            NarrativeGenerator,
+            "generate",
+            new_callable=AsyncMock,
+            return_value="X" * 250,
+        ):
+            await run_synthesizer(synth_input, ctx)
+
+        assert "synthesizer" in ctx.heartbeat_calls
+
+    @pytest.mark.asyncio
+    async def test_publishes_progress_events(self):
+        """run_synthesizer() publishes beginning and verdict progress events."""
+        ctx = FakePipelineContext()
+        synth_input: SynthesizerInput = {
+            "observations": _build_rich_observations(),
+        }
+        with patch.object(
+            NarrativeGenerator,
+            "generate",
+            new_callable=AsyncMock,
+            return_value="X" * 250,
+        ):
+            await run_synthesizer(synth_input, ctx)
+
+        messages = [p["message"] for p in ctx.published_progress]
+        # run_synthesizer publishes "Beginning verdict synthesis" and "Verdict: ..."
+        assert any("Beginning" in m for m in messages)
+        assert any("Verdict" in m for m in messages)
+
+    @pytest.mark.asyncio
+    async def test_progress_includes_confidence_when_verifiable(self):
+        """Final progress message includes numeric confidence for verifiable claims."""
+        ctx = FakePipelineContext()
+        synth_input: SynthesizerInput = {
+            "observations": _build_rich_observations(),
+        }
+        with patch.object(
+            NarrativeGenerator,
+            "generate",
+            new_callable=AsyncMock,
+            return_value="X" * 250,
+        ):
+            await run_synthesizer(synth_input, ctx)
+
+        verdict_msg = [p["message"] for p in ctx.published_progress if "Verdict" in p["message"]]
+        assert len(verdict_msg) >= 1
+        # Should contain formatted confidence like "0.1234", not "unverifiable"
+        assert "unverifiable" not in verdict_msg[-1]
+
+    @pytest.mark.asyncio
+    async def test_progress_shows_unverifiable_when_no_confidence(self):
+        """Final progress message shows 'unverifiable' when confidence is None."""
+        ctx = FakePipelineContext()
+        synth_input: SynthesizerInput = {"observations": []}
+        with patch.object(
+            NarrativeGenerator,
+            "generate",
+            new_callable=AsyncMock,
+            return_value="X" * 250,
+        ):
+            await run_synthesizer(synth_input, ctx)
+
+        verdict_msg = [p["message"] for p in ctx.published_progress if "Verdict" in p["message"]]
+        assert len(verdict_msg) >= 1
+        assert "unverifiable" in verdict_msg[-1]
+
+    @pytest.mark.asyncio
+    async def test_publishes_observations_via_pipeline_context(self):
+        """run_synthesizer() publishes observations through graph nodes."""
+        ctx = FakePipelineContext()
+        synth_input: SynthesizerInput = {
+            "observations": _build_rich_observations(),
+        }
+        with patch.object(
+            NarrativeGenerator,
+            "generate",
+            new_callable=AsyncMock,
+            return_value="X" * 250,
+        ):
+            await run_synthesizer(synth_input, ctx)
+
+        codes = [str(o["code"]) for o in ctx.published_observations]
+        assert any("SYNTHESIS_SIGNAL_COUNT" in c for c in codes)
+        assert any("VERDICT" in c and "NARRATIVE" not in c for c in codes)
+        assert any("VERDICT_NARRATIVE" in c for c in codes)
+
+    @pytest.mark.asyncio
+    async def test_verdict_observations_structure(self):
+        """verdict_observations list contains well-formed observation dicts."""
+        ctx = FakePipelineContext()
+        synth_input: SynthesizerInput = {
+            "observations": _build_rich_observations(),
+        }
+        with patch.object(
+            NarrativeGenerator,
+            "generate",
+            new_callable=AsyncMock,
+            return_value="X" * 250,
+        ):
+            result = await run_synthesizer(synth_input, ctx)
+
+        for obs in result["verdict_observations"]:
+            assert "agent" in obs
+            assert obs["agent"] == "synthesizer"
+            assert "code" in obs
+            assert "value" in obs
+            assert "value_type" in obs
+
+    @pytest.mark.asyncio
+    async def test_override_reason_populated_on_claimreview_override(self):
+        """override_reason is non-empty when ClaimReview override fires."""
+        ctx = FakePipelineContext()
+        # Build observations where ClaimReview (TRUE) disagrees with swarm evidence
+        supportive = "SUPPORTIVE^Supportive^FCK"
+        obs = [
+            _make_obs(
+                "evidence", "DOMAIN_EVIDENCE_ALIGNMENT", "SUPPORTS^Supports^FCK", "CWE", seq=1
+            ),
+            _make_obs("evidence", "DOMAIN_CONFIDENCE", "0.95", "NM", seq=2),
+            _make_obs("evidence", "CLAIMREVIEW_MATCH", "TRUE^True^FCK", "CWE", seq=3),
+            _make_obs(
+                "evidence", "CLAIMREVIEW_VERDICT", "FALSE^False^POLITIFACT", "CWE", seq=4
+            ),
+            _make_obs("evidence", "CLAIMREVIEW_SOURCE", "PolitiFact", "ST", seq=5),
+            _make_obs("evidence", "CLAIMREVIEW_MATCH_SCORE", "0.95", "NM", seq=6),
+            _make_obs("coverage-left", "COVERAGE_FRAMING", supportive, "CWE", seq=1),
+            _make_obs("coverage-center", "COVERAGE_FRAMING", supportive, "CWE", seq=1),
+            _make_obs("coverage-right", "COVERAGE_FRAMING", supportive, "CWE", seq=1),
+            _make_obs("validation", "SOURCE_CONVERGENCE_SCORE", "0.90", "NM", seq=1),
+            _make_obs("validation", "BLINDSPOT_SCORE", "0.00", "NM", seq=2),
+            _make_obs(
+                "validation", "CROSS_SPECTRUM_CORROBORATION", "TRUE^True^FCK", "CWE", seq=3
+            ),
+        ]
+        synth_input: SynthesizerInput = {"observations": obs}
+        with patch.object(
+            NarrativeGenerator,
+            "generate",
+            new_callable=AsyncMock,
+            return_value="X" * 250,
+        ):
+            result = await run_synthesizer(synth_input, ctx)
+
+        # Swarm evidence all supports → high confidence → TRUE verdict
+        # But ClaimReview says FALSE with high match score → override fires
+        assert result["verdict"] == "FALSE"
+        assert "ClaimReview override" in result["override_reason"]
+        assert "PolitiFact" in result["override_reason"]
