@@ -54,7 +54,6 @@ from swarm_reasoning.temporal.errors import MissingApiKeyError
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "intake"
-CLASSIFY_MODEL = "claude-sonnet-4-6"
 
 _CLASSIFY_SYSTEM_PROMPT = (
     "You are a domain classifier for a fact-checking system. "
@@ -389,7 +388,7 @@ def build_intake_agent(model=None):
         if not api_key:
             raise MissingApiKeyError("ANTHROPIC_API_KEY is required for intake agent")
         model = ChatAnthropic(
-            model="claude-sonnet-4-6",
+            model=AGENT_MODEL,
             max_tokens=1024,
             temperature=0,
             api_key=api_key,
