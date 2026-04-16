@@ -10,7 +10,7 @@ Tests cover:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -297,16 +297,21 @@ class TestValidateClaimTool:
 class TestClassifyDomainTool:
     """Tests for the classify_domain LangChain tool."""
 
+    @staticmethod
+    def _make_mock_client(text: str) -> AsyncMock:
+        """Create a mock Anthropic client that returns the given text."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=text)]
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        return mock_client
+
     @pytest.mark.asyncio
     async def test_known_domain(self):
-        with (
-            patch(
-                "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            ),
-            patch(
-                "swarm_reasoning.agents.intake.agent.call_claude",
-                return_value="HEALTHCARE",
-            ),
+        mock_client = self._make_mock_client("HEALTHCARE")
+        with patch(
+            "swarm_reasoning.agents.intake.agent._get_anthropic_client",
+            return_value=mock_client,
         ):
             result = await classify_domain.ainvoke(
                 {"claim_text": "Vaccines prevent disease"},
@@ -315,14 +320,10 @@ class TestClassifyDomainTool:
 
     @pytest.mark.asyncio
     async def test_falls_back_to_other(self):
-        with (
-            patch(
-                "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            ),
-            patch(
-                "swarm_reasoning.agents.intake.agent.call_claude",
-                return_value="UNKNOWN_DOMAIN",
-            ),
+        mock_client = self._make_mock_client("UNKNOWN_DOMAIN")
+        with patch(
+            "swarm_reasoning.agents.intake.agent._get_anthropic_client",
+            return_value=mock_client,
         ):
             result = await classify_domain.ainvoke(
                 {"claim_text": "Something vague"},
@@ -333,17 +334,18 @@ class TestClassifyDomainTool:
     async def test_retries_on_api_error(self):
         import anthropic as anthropic_lib
 
-        with (
-            patch(
-                "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            ),
-            patch(
-                "swarm_reasoning.agents.intake.agent.call_claude",
-                side_effect=[
-                    anthropic_lib.APIConnectionError(request=MagicMock()),
-                    "ECONOMICS",
-                ],
-            ),
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="ECONOMICS")]
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(
+            side_effect=[
+                anthropic_lib.APIConnectionError(request=MagicMock()),
+                mock_response,
+            ],
+        )
+        with patch(
+            "swarm_reasoning.agents.intake.agent._get_anthropic_client",
+            return_value=mock_client,
         ):
             result = await classify_domain.ainvoke(
                 {"claim_text": "GDP grew 3%"},

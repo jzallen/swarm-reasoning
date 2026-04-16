@@ -30,9 +30,9 @@ from swarm_reasoning.agents.intake.tools.claim_intake import (
     validate_source_url,
 )
 from swarm_reasoning.agents.intake.tools.domain_cls import (
+    _SYSTEM_PROMPT,
     DOMAIN_VOCABULARY,
     build_prompt,
-    call_claude,
 )
 from swarm_reasoning.agents.intake.tools.entity_extractor import (
     extract_entities_llm,
@@ -154,7 +154,14 @@ async def _classify_domain(
     for attempt in range(2):
         try:
             prompt = build_prompt(claim_text, retry=(attempt > 0))
-            result = await call_claude(client, prompt)
+            response = await client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=10,
+                temperature=0,
+                system=_SYSTEM_PROMPT,
+                messages=prompt,
+            )
+            result = response.content[0].text.strip().upper()
         except (anthropic_lib.AuthenticationError, anthropic_lib.APIConnectionError, anthropic_lib.RateLimitError) as exc:
             logger.warning("Domain classification API error (attempt %d): %s", attempt + 1, exc)
             continue

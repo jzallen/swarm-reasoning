@@ -17,14 +17,12 @@ import pytest
 
 from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.nodes.intake import (
-    AGENT_NAME,
     _classify_domain,
     _extract_entities,
     _ingest_claim,
     intake_node,
 )
 from swarm_reasoning.pipeline.state import PipelineState
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -142,26 +140,27 @@ class TestIngestClaim:
 class TestClassifyDomain:
     """Tests for the domain classification tool."""
 
+    @staticmethod
+    def _make_mock_client(text: str) -> AsyncMock:
+        """Create a mock Anthropic client that returns the given text."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=text)]
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        return mock_client
+
     @pytest.mark.asyncio
     async def test_classifies_known_domain(self, mock_ctx):
-        mock_client = AsyncMock()
-        with patch(
-            "swarm_reasoning.pipeline.nodes.intake.call_claude",
-            return_value="HEALTHCARE",
-        ):
-            domain = await _classify_domain(mock_ctx, "Vaccines prevent disease", mock_client)
+        mock_client = self._make_mock_client("HEALTHCARE")
+        domain = await _classify_domain(mock_ctx, "Vaccines prevent disease", mock_client)
         assert domain == "HEALTHCARE"
         # Should publish P then F observation
         assert mock_ctx.publish_observation.call_count == 2
 
     @pytest.mark.asyncio
     async def test_falls_back_to_other(self, mock_ctx):
-        mock_client = AsyncMock()
-        with patch(
-            "swarm_reasoning.pipeline.nodes.intake.call_claude",
-            return_value="INVALID_DOMAIN",
-        ):
-            domain = await _classify_domain(mock_ctx, "Some claim", mock_client)
+        mock_client = self._make_mock_client("INVALID_DOMAIN")
+        domain = await _classify_domain(mock_ctx, "Some claim", mock_client)
         assert domain == "OTHER"
         # Should publish 1 observation with fallback note
         assert mock_ctx.publish_observation.call_count == 1
@@ -224,21 +223,26 @@ class TestExtractEntities:
 class TestIntakeNode:
     """Integration tests for the full intake_node function."""
 
+    @staticmethod
+    def _make_mock_client(text: str) -> AsyncMock:
+        """Create a mock Anthropic client that returns the given text."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=text)]
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        return mock_client
+
     @pytest.mark.asyncio
     async def test_happy_path(self, mock_config, mock_ctx, base_state):
         """Full successful path: validate → classify → extract."""
         with (
             patch(
                 "swarm_reasoning.pipeline.nodes.intake._get_anthropic_client",
-                return_value=AsyncMock(),
+                return_value=self._make_mock_client("ECONOMICS"),
             ),
             patch(
                 "swarm_reasoning.pipeline.nodes.intake.check_duplicate",
                 return_value=False,
-            ),
-            patch(
-                "swarm_reasoning.pipeline.nodes.intake.call_claude",
-                return_value="ECONOMICS",
             ),
             patch(
                 "swarm_reasoning.pipeline.nodes.intake.extract_entities_llm",

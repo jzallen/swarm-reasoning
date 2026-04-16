@@ -6,8 +6,6 @@ for classifying a claim into one of seven domain categories.
 
 from __future__ import annotations
 
-from anthropic import AsyncAnthropic
-
 DOMAIN_VOCABULARY: frozenset[str] = frozenset(
     {"HEALTHCARE", "ECONOMICS", "POLICY", "SCIENCE", "ELECTION", "CRIME", "OTHER"}
 )
@@ -33,15 +31,3 @@ def build_prompt(claim_text: str, retry: bool = False) -> list[dict]:
     if retry:
         user_content += _RETRY_SUFFIX
     return [{"role": "user", "content": user_content}]
-
-
-async def call_claude(client: AsyncAnthropic, prompt: list[dict]) -> str:
-    """Call Claude for domain classification. Returns stripped uppercase text."""
-    response = await client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=10,
-        temperature=0,
-        system=_SYSTEM_PROMPT,
-        messages=prompt,
-    )
-    return response.content[0].text.strip().upper()

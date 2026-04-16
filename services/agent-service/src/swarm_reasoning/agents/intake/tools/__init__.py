@@ -17,7 +17,6 @@ from swarm_reasoning.agents.intake.tools.claim_intake import (
 from swarm_reasoning.agents.intake.tools.domain_cls import (
     DOMAIN_VOCABULARY,
     build_prompt,
-    call_claude,
 )
 from swarm_reasoning.agents.intake.tools.entity_extractor import (
     EntityExtractionResult,
@@ -31,7 +30,6 @@ __all__ = [
     "LLMUnavailableError",
     "ValidationError",
     "build_prompt",
-    "call_claude",
     "check_duplicate",
     "extract_entities_llm",
     "normalize_date",
