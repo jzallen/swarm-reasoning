@@ -1,23 +1,24 @@
-"""Tests for coverage pipeline node (M3.2).
+"""Tests for coverage pipeline node (M3.2 / sr-l0y.5.6).
 
 Tests cover:
 - Tool 1: build_search_query (stop-word removal, truncation, word boundary)
 - Tool 2: search_coverage (API success, missing key, API error, rate-limit retry)
 - Tool 3: detect_coverage_framing (with articles, empty articles)
 - Tool 4: find_top_coverage_source (best credibility, no articles)
-- Per-spectrum runner: _run_spectrum orchestration
+- Per-spectrum runner: _run_spectrum_node orchestration
+- Individual pipeline nodes: run_coverage_left/center/right
 - Full node: happy path across 3 spectrums, degradation (no API key),
   heartbeats, observations, state output structure, framing_analysis
 """
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
+from swarm_reasoning.agents.coverage.models import CoverageOutput
 from swarm_reasoning.agents.coverage.tools import (
     build_search_query,
     detect_coverage_framing,
@@ -27,13 +28,29 @@ from swarm_reasoning.agents.coverage.tools import (
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.nodes.coverage import (
-    _run_spectrum,
-    _SPECTRUMS,
-    _STATE_KEYS,
+    _run_spectrum_node,
     coverage_node,
+    run_coverage_center,
+    run_coverage_left,
+    run_coverage_right,
 )
 from swarm_reasoning.pipeline.state import PipelineState
 
+# Common patch targets
+_HTTPX = (
+    "swarm_reasoning.agents.coverage.tools.search_coverage"
+    ".httpx.AsyncClient"
+)
+_SLEEP = (
+    "swarm_reasoning.agents.coverage.tools.search_coverage"
+    ".asyncio.sleep"
+)
+_LOAD_SOURCES = (
+    "swarm_reasoning.pipeline.nodes.coverage._load_sources"
+)
+_RUN_AGENT = (
+    "swarm_reasoning.pipeline.nodes.coverage.run_coverage_agent"
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -169,7 +186,7 @@ class TestSearchCoverage:
 
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_HTTPX) as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -214,7 +231,7 @@ class TestSearchCoverage:
         """Network exception → returns empty list with X-status observations."""
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_HTTPX) as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
@@ -237,7 +254,7 @@ class TestSearchCoverage:
 
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_HTTPX) as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -263,8 +280,8 @@ class TestSearchCoverage:
 
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.asyncio.sleep", new_callable=AsyncMock),
+            patch(_HTTPX) as mock_client_cls,
+            patch(_SLEEP, new_callable=AsyncMock),
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(side_effect=[mock_resp_429, mock_resp_200])
@@ -285,7 +302,7 @@ class TestSearchCoverage:
 
         with (
             patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_HTTPX) as mock_client_cls,
         ):
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_resp)
@@ -461,133 +478,182 @@ class TestFindTopCoverageSource:
 # ---------------------------------------------------------------------------
 
 
-class TestRunSpectrum:
-    """Tests for the per-spectrum orchestration runner."""
+class TestRunSpectrumNode:
+    """Tests for the per-spectrum pipeline node runner (_run_spectrum_node).
+
+    _run_spectrum_node delegates to run_coverage_agent (LangGraph ReAct agent).
+    We mock run_coverage_agent to isolate the pipeline node logic.
+    """
+
+    def _make_output(self, articles=None, framing="ABSENT", compound=0.0, top_source=None):
+        """Build a CoverageOutput for mocking run_coverage_agent."""
+        return CoverageOutput(
+            articles=articles or [],
+            framing=framing,
+            compound_score=compound,
+            top_source=top_source,
+        )
 
     @pytest.mark.asyncio
-    async def test_returns_correct_state_key(self, mock_ctx):
+    async def test_returns_correct_state_key(self, mock_ctx, base_state):
         """Each spectrum returns its corresponding state key."""
-        mock_sources = [{"id": "src1", "name": "Src1", "credibility_rank": 50}]
+        output = self._make_output(
+            articles=[{"title": "Art", "url": "u", "source": "S", "framing": "NEUTRAL"}],
+            framing="NEUTRAL",
+        )
+
+        with (
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=output),
+        ):
+            result = await _run_spectrum_node("left", base_state, mock_ctx)
+
+        assert "coverage_left" in result
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_called(self, mock_ctx, base_state):
+        """_run_spectrum_node sends a heartbeat at the start."""
+        output = self._make_output()
+
+        with (
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=output),
+        ):
+            await _run_spectrum_node("center", base_state, mock_ctx)
+
+        mock_ctx.heartbeat.assert_called_with("coverage-center")
+
+    @pytest.mark.asyncio
+    async def test_passes_extracted_input_to_agent(self, mock_ctx, base_state):
+        """run_coverage_agent receives CoverageInput extracted from PipelineState."""
+        output = self._make_output()
+
+        with (
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=output) as mock_agent,
+        ):
+            await _run_spectrum_node("right", base_state, mock_ctx)
+
+        call_args = mock_agent.call_args
+        assert call_args.args[0] == "right"  # spectrum
+        # Third arg is CoverageInput
+        coverage_input = call_args.args[2]
+        assert coverage_input["normalized_claim"] == base_state["normalized_claim"]
+
+    @pytest.mark.asyncio
+    async def test_output_includes_framing_analysis(self, mock_ctx, base_state):
+        """Result includes framing_analysis entry for the spectrum."""
+        output = self._make_output(
+            articles=[{"title": "A", "url": "u", "source": "S", "framing": "SUPPORTIVE"}],
+            framing="SUPPORTIVE",
+            compound=0.3,
+        )
+
+        with (
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=output),
+        ):
+            result = await _run_spectrum_node("left", base_state, mock_ctx)
+
+        assert "framing_analysis" in result
+        fa = result["framing_analysis"]["left"]
+        assert fa["framing"] == "SUPPORTIVE"
+        assert fa["compound"] == 0.3
+        assert fa["article_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_articles_stored_under_state_key(self, mock_ctx, base_state):
+        """Returned articles list is stored under the spectrum's state key."""
         articles = [
-            {
-                "title": "Test Article",
-                "url": "https://example.com/test",
-                "source": {"id": "src1", "name": "Src1"},
-            }
+            {"title": "Art", "url": "u", "source": "S", "framing": "NEUTRAL"},
         ]
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"articles": articles}
+        output = self._make_output(articles=articles, framing="NEUTRAL")
 
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=mock_sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=output),
         ):
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            result = await _run_spectrum_node("right", base_state, mock_ctx)
 
-            state_key, _, _, _ = await _run_spectrum("left", "test claim", mock_ctx)
-
-        assert state_key == "coverage_left"
-
-    @pytest.mark.asyncio
-    async def test_heartbeats_called(self, mock_ctx):
-        """Each spectrum run sends heartbeats at each tool stage."""
-        mock_sources = [{"id": "src1", "name": "Src1", "credibility_rank": 50}]
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"articles": []}
-
-        with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=mock_sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
-        ):
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            await _run_spectrum("center", "test claim", mock_ctx)
-
-        # 3 heartbeats: after search, after framing, after top source
-        assert mock_ctx.heartbeat.call_count == 3
-        for call in mock_ctx.heartbeat.call_args_list:
-            assert call.args[0] == "coverage-center"
-
-    @pytest.mark.asyncio
-    async def test_progress_messages(self, mock_ctx):
-        """Each spectrum run publishes searching and completion progress."""
-        mock_sources = [{"id": "src1", "name": "Src1", "credibility_rank": 50}]
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"articles": []}
-
-        with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=mock_sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
-        ):
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            await _run_spectrum("right", "test claim", mock_ctx)
-
-        assert mock_ctx.publish_progress.call_count == 2
-        messages = [call.args[1] for call in mock_ctx.publish_progress.call_args_list]
-        assert "right-spectrum" in messages[0].lower() or "right" in messages[0].lower()
-        assert "complete" in messages[1].lower()
-
-    @pytest.mark.asyncio
-    async def test_articles_formatted_for_state(self, mock_ctx):
-        """Returned articles list has correct structure for state storage."""
-        mock_sources = [{"id": "src-a", "name": "Source A", "credibility_rank": 80}]
-        articles = [
-            {
-                "title": "Test Title",
-                "url": "https://example.com/art",
-                "source": {"id": "src-a", "name": "Source A"},
-            }
-        ]
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"articles": articles}
-
-        with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=mock_sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
-        ):
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            _, coverage_articles, _, _ = await _run_spectrum("left", "test claim", mock_ctx)
-
-        assert len(coverage_articles) == 1
-        art = coverage_articles[0]
+        assert len(result["coverage_right"]) == 1
+        art = result["coverage_right"][0]
         assert "title" in art
-        assert "url" in art
-        assert "source" in art
         assert "framing" in art
+
+
+# ---------------------------------------------------------------------------
+# Individual pipeline node functions: run_coverage_left/center/right
+# ---------------------------------------------------------------------------
+
+
+class TestRunCoverageLeftCenterRight:
+    """Tests for the graph-registerable individual pipeline node functions."""
+
+    def _make_output(self, framing="ABSENT"):
+        return CoverageOutput(
+            articles=[],
+            framing=framing,
+            compound_score=0.0,
+            top_source=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_coverage_left(self, mock_config, mock_ctx, base_state):
+        output = self._make_output()
+
+        with (
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=output),
+        ):
+            result = await run_coverage_left(base_state, mock_config)
+
+        assert "coverage_left" in result
+        assert "framing_analysis" in result
+        assert "left" in result["framing_analysis"]
+
+    @pytest.mark.asyncio
+    async def test_run_coverage_center(self, mock_config, mock_ctx, base_state):
+        output = self._make_output()
+
+        with (
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=output),
+        ):
+            result = await run_coverage_center(base_state, mock_config)
+
+        assert "coverage_center" in result
+        assert "center" in result["framing_analysis"]
+
+    @pytest.mark.asyncio
+    async def test_run_coverage_right(self, mock_config, mock_ctx, base_state):
+        output = self._make_output()
+
+        with (
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=output),
+        ):
+            result = await run_coverage_right(base_state, mock_config)
+
+        assert "coverage_right" in result
+        assert "right" in result["framing_analysis"]
+
+    @pytest.mark.asyncio
+    async def test_each_node_heartbeats_correct_agent(self, mock_config, mock_ctx, base_state):
+        output = self._make_output()
+
+        for node_fn, expected_agent in [
+            (run_coverage_left, "coverage-left"),
+            (run_coverage_center, "coverage-center"),
+            (run_coverage_right, "coverage-right"),
+        ]:
+            mock_ctx.heartbeat.reset_mock()
+            with (
+                patch(_LOAD_SOURCES, return_value=[]),
+                patch(_RUN_AGENT, new_callable=AsyncMock, return_value=output),
+            ):
+                await node_fn(base_state, mock_config)
+
+            mock_ctx.heartbeat.assert_called_with(expected_agent)
 
 
 # ---------------------------------------------------------------------------
@@ -596,84 +662,84 @@ class TestRunSpectrum:
 
 
 class TestCoverageNode:
-    """Integration tests for the full coverage_node function."""
+    """Tests for the full coverage_node function.
 
-    def _setup_mocks(self, mock_client_cls, articles_per_spectrum=None):
-        """Helper to configure httpx mock for all 3 spectrums."""
-        if articles_per_spectrum is None:
-            articles_per_spectrum = [
-                [{"title": f"Left Art {i}", "url": f"https://left.com/{i}",
-                  "source": {"id": "huffington-post", "name": "HuffPost"}}
-                 for i in range(2)],
-                [{"title": f"Center Art {i}", "url": f"https://center.com/{i}",
-                  "source": {"id": "reuters", "name": "Reuters"}}
-                 for i in range(3)],
-                [{"title": f"Right Art {i}", "url": f"https://right.com/{i}",
-                  "source": {"id": "fox-news", "name": "Fox News"}}
-                 for i in range(1)],
-            ]
+    coverage_node runs all three spectrums concurrently via _run_spectrum_node,
+    which delegates to run_coverage_agent. We mock run_coverage_agent to isolate
+    the pipeline node orchestration and merging logic.
+    """
 
-        call_idx = 0
+    def _make_output(self, articles=None, framing="ABSENT", compound=0.0, top_source=None):
+        return CoverageOutput(
+            articles=articles or [],
+            framing=framing,
+            compound_score=compound,
+            top_source=top_source,
+        )
 
-        async def mock_get(*args, **kwargs):
-            nonlocal call_idx
-            resp = MagicMock()
-            resp.status_code = 200
-            idx = min(call_idx, len(articles_per_spectrum) - 1)
-            resp.json.return_value = {"articles": articles_per_spectrum[idx]}
-            call_idx += 1
-            return resp
+    def _patch_agent(self, outputs=None):
+        """Patch run_coverage_agent to return CoverageOutput per spectrum.
 
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=mock_get)
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        If outputs is a dict mapping spectrum -> CoverageOutput, return the
+        matching output. Otherwise return the same output for all spectrums.
+        """
+        if outputs is None:
+            outputs = self._make_output()
+
+        if isinstance(outputs, dict):
+            async def side_effect(spectrum, *args, **kwargs):
+                return outputs.get(spectrum, self._make_output())
+        else:
+            async def side_effect(*args, **kwargs):
+                return outputs
+
+        return patch(
+            "swarm_reasoning.pipeline.nodes.coverage.run_coverage_agent",
+            new_callable=AsyncMock,
+            side_effect=side_effect,
+        )
 
     @pytest.mark.asyncio
     async def test_happy_path(self, mock_config, mock_ctx, base_state):
         """Full coverage node with 3 spectrums returning articles."""
-        left_sources = [{"id": "huffington-post", "name": "HuffPost", "credibility_rank": 65}]
-        center_sources = [{"id": "reuters", "name": "Reuters", "credibility_rank": 90}]
-        right_sources = [{"id": "fox-news", "name": "Fox News", "credibility_rank": 55}]
-
-        source_map = {"left": left_sources, "center": center_sources, "right": right_sources}
+        outputs = {
+            "left": self._make_output(
+                articles=[{"title": "Left Art", "url": "u", "source": "S", "framing": "N"}],
+                framing="NEUTRAL",
+            ),
+            "center": self._make_output(
+                articles=[
+                    {"title": "Center Art 1", "url": "u", "source": "S", "framing": "S"},
+                    {"title": "Center Art 2", "url": "u", "source": "S", "framing": "S"},
+                ],
+                framing="SUPPORTIVE",
+                compound=0.3,
+            ),
+            "right": self._make_output(framing="ABSENT"),
+        }
 
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                side_effect=lambda s: source_map[s],
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_LOAD_SOURCES, return_value=[]),
+            self._patch_agent(outputs),
         ):
-            self._setup_mocks(mock_client_cls)
             result = await coverage_node(base_state, mock_config)
 
         assert "coverage_left" in result
         assert "coverage_center" in result
         assert "coverage_right" in result
         assert "framing_analysis" in result
-        assert "observations" in result
 
-        assert isinstance(result["coverage_left"], list)
-        assert isinstance(result["coverage_center"], list)
-        assert isinstance(result["coverage_right"], list)
-        assert isinstance(result["framing_analysis"], dict)
+        assert len(result["coverage_left"]) == 1
+        assert len(result["coverage_center"]) == 2
+        assert result["coverage_right"] == []
 
     @pytest.mark.asyncio
     async def test_state_output_keys(self, mock_config, mock_ctx, base_state):
         """Returned dict has exactly the expected keys."""
-        sources = [{"id": "src1", "name": "S1", "credibility_rank": 50}]
-
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_LOAD_SOURCES, return_value=[]),
+            self._patch_agent(),
         ):
-            self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             result = await coverage_node(base_state, mock_config)
 
         assert set(result.keys()) == {
@@ -681,23 +747,21 @@ class TestCoverageNode:
             "coverage_center",
             "coverage_right",
             "framing_analysis",
-            "observations",
         }
 
     @pytest.mark.asyncio
     async def test_framing_analysis_structure(self, mock_config, mock_ctx, base_state):
         """framing_analysis has entries for all 3 spectrums with correct fields."""
-        sources = [{"id": "src1", "name": "S1", "credibility_rank": 50}]
+        outputs = {
+            "left": self._make_output(framing="SUPPORTIVE", compound=0.2),
+            "center": self._make_output(framing="NEUTRAL", compound=0.01),
+            "right": self._make_output(framing="CRITICAL", compound=-0.3),
+        }
 
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_LOAD_SOURCES, return_value=[]),
+            self._patch_agent(outputs),
         ):
-            self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             result = await coverage_node(base_state, mock_config)
 
         fa = result["framing_analysis"]
@@ -710,97 +774,50 @@ class TestCoverageNode:
             assert isinstance(entry["compound"], float)
             assert isinstance(entry["article_count"], int)
 
-    @pytest.mark.asyncio
-    async def test_degradation_no_api_key(self, mock_config, mock_ctx, base_state):
-        """No NEWSAPI_KEY → all spectrums return empty articles with X observations."""
-        sources = [{"id": "src1", "name": "S1", "credibility_rank": 50}]
+        assert fa["left"]["framing"] == "SUPPORTIVE"
+        assert fa["right"]["framing"] == "CRITICAL"
 
+    @pytest.mark.asyncio
+    async def test_all_empty_produces_absent_framing(self, mock_config, mock_ctx, base_state):
+        """All spectrums returning empty → ABSENT framing everywhere."""
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=sources,
-            ),
-            patch.dict("os.environ", {}, clear=True),
+            patch(_LOAD_SOURCES, return_value=[]),
+            self._patch_agent(),
         ):
-            import os
-            os.environ.pop("NEWSAPI_KEY", None)
             result = await coverage_node(base_state, mock_config)
 
-        assert result["coverage_left"] == []
-        assert result["coverage_center"] == []
-        assert result["coverage_right"] == []
-        # All framing should be ABSENT
         for spectrum in ("left", "center", "right"):
+            assert result[f"coverage_{spectrum}"] == []
             assert result["framing_analysis"][spectrum]["framing"] == "ABSENT"
             assert result["framing_analysis"][spectrum]["article_count"] == 0
 
     @pytest.mark.asyncio
-    async def test_heartbeats_across_spectrums(self, mock_config, mock_ctx, base_state):
-        """Coverage node sends heartbeats across all spectrums."""
-        sources = [{"id": "src1", "name": "S1", "credibility_rank": 50}]
-
+    async def test_heartbeats(self, mock_config, mock_ctx, base_state):
+        """Coverage node sends initial heartbeat as 'coverage'."""
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_LOAD_SOURCES, return_value=[]),
+            self._patch_agent(),
         ):
-            self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             await coverage_node(base_state, mock_config)
 
-        # 1 initial heartbeat + 3 per spectrum × 3 spectrums = 10
-        assert mock_ctx.heartbeat.call_count >= 10
-        agents = {call.args[0] for call in mock_ctx.heartbeat.call_args_list}
-        assert "coverage" in agents  # initial heartbeat
-        assert "coverage-left" in agents
-        assert "coverage-center" in agents
-        assert "coverage-right" in agents
-
-    @pytest.mark.asyncio
-    async def test_observations_output(self, mock_config, mock_ctx, base_state):
-        """Observations list contains COVERAGE_ARTICLE_COUNT and COVERAGE_FRAMING per spectrum."""
-        sources = [{"id": "src1", "name": "S1", "credibility_rank": 50}]
-
-        with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
-        ):
-            self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
-            result = await coverage_node(base_state, mock_config)
-
-        obs = result["observations"]
-        # 2 per spectrum (ARTICLE_COUNT + FRAMING) × 3 spectrums = 6
-        assert len(obs) == 6
-        codes = {o["code"] for o in obs}
-        assert "COVERAGE_ARTICLE_COUNT" in codes
-        assert "COVERAGE_FRAMING" in codes
-        agents = {o["agent"] for o in obs}
-        assert agents == {"coverage-left", "coverage-center", "coverage-right"}
+        agents = [call.args[0] for call in mock_ctx.heartbeat.call_args_list]
+        assert "coverage" in agents  # initial heartbeat from coverage_node
 
     @pytest.mark.asyncio
     async def test_progress_messages(self, mock_config, mock_ctx, base_state):
-        """Coverage node publishes start and completion progress messages."""
-        sources = [{"id": "src1", "name": "S1", "credibility_rank": 50}]
-
+        """Coverage node publishes start and completion progress."""
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_LOAD_SOURCES, return_value=[]),
+            self._patch_agent(),
         ):
-            self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             await coverage_node(base_state, mock_config)
 
-        # At least: 1 start + 2 per spectrum × 3 + 1 completion = 8
-        assert mock_ctx.publish_progress.call_count >= 8
+        # coverage_node itself publishes at least 2: start + completion
+        coverage_msgs = [
+            call for call in mock_ctx.publish_progress.call_args_list
+            if call.args[0] == "coverage"
+        ]
+        assert len(coverage_msgs) >= 2
 
     @pytest.mark.asyncio
     async def test_uses_normalized_claim_over_claim_text(self, mock_config, mock_ctx):
@@ -813,26 +830,18 @@ class TestCoverageNode:
             "observations": [],
             "errors": [],
         }
-        sources = [{"id": "src1", "name": "S1", "credibility_rank": 50}]
 
+        empty = self._make_output()
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage.build_search_query",
-                wraps=build_search_query,
-            ) as mock_bsq,
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=empty) as mock_agent,
         ):
-            self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             await coverage_node(state, mock_config)
 
-        # build_search_query should have been called with the normalized claim
-        for call in mock_bsq.call_args_list:
-            assert call.args[0] == "normalized claim text"
+        # run_coverage_agent should receive normalized_claim in the CoverageInput
+        for call in mock_agent.call_args_list:
+            coverage_input = call.args[2]  # third positional arg
+            assert coverage_input["normalized_claim"] == "normalized claim text"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_claim_text(self, mock_config, mock_ctx):
@@ -844,46 +853,39 @@ class TestCoverageNode:
             "observations": [],
             "errors": [],
         }
-        sources = [{"id": "src1", "name": "S1", "credibility_rank": 50}]
 
+        empty = self._make_output()
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage.build_search_query",
-                wraps=build_search_query,
-            ) as mock_bsq,
+            patch(_LOAD_SOURCES, return_value=[]),
+            patch(_RUN_AGENT, new_callable=AsyncMock, return_value=empty) as mock_agent,
         ):
-            self._setup_mocks(mock_client_cls, articles_per_spectrum=[[], [], []])
             await coverage_node(state, mock_config)
 
-        for call in mock_bsq.call_args_list:
-            assert call.args[0] == "original claim text"
+        for call in mock_agent.call_args_list:
+            coverage_input = call.args[2]
+            assert coverage_input["normalized_claim"] == "original claim text"
 
     @pytest.mark.asyncio
     async def test_total_articles_in_completion_progress(self, mock_config, mock_ctx, base_state):
         """Completion progress message includes total article count."""
-        sources = [{"id": "src1", "name": "S1", "credibility_rank": 50}]
-        articles = [
-            {"title": "Art", "url": "https://x.com/1", "source": {"id": "src1", "name": "S1"}}
-        ]
+        outputs = {
+            "left": self._make_output(
+                articles=[{"title": "A", "url": "u", "source": "S", "framing": "N"}],
+            ),
+            "center": self._make_output(
+                articles=[{"title": "B", "url": "u", "source": "S", "framing": "N"}],
+            ),
+            "right": self._make_output(
+                articles=[{"title": "C", "url": "u", "source": "S", "framing": "N"}],
+            ),
+        }
 
         with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.coverage._load_sources",
-                return_value=sources,
-            ),
-            patch.dict("os.environ", {"NEWSAPI_KEY": "test-key"}),
-            patch("swarm_reasoning.agents.coverage.tools.search_coverage.httpx.AsyncClient") as mock_client_cls,
+            patch(_LOAD_SOURCES, return_value=[]),
+            self._patch_agent(outputs),
         ):
-            self._setup_mocks(mock_client_cls, articles_per_spectrum=[articles, articles, articles])
             await coverage_node(base_state, mock_config)
 
-        # Last progress call from coverage_node should mention total count
         coverage_progress_calls = [
             call for call in mock_ctx.publish_progress.call_args_list
             if call.args[0] == "coverage"
