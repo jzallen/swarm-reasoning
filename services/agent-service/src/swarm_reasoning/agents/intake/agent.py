@@ -11,6 +11,7 @@ is handled by the pipeline node wrapper in ``pipeline/nodes/``, not here.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -33,7 +34,10 @@ from swarm_reasoning.agents.intake.tools.domain_classification import (
     DOMAIN_VOCABULARY,
     build_prompt,
 )
-from swarm_reasoning.agents.intake.tools.entity_extractor import extract_entities_llm
+from swarm_reasoning.agents.intake.tools.entity_extractor import (
+    EntityExtractionResult,
+    _SYSTEM_PROMPT as _ENTITY_SYSTEM_PROMPT,
+)
 from swarm_reasoning.agents.intake.tools.fetch_content import (
     FetchError,
 )
@@ -160,30 +164,8 @@ async def fetch_source_content(url: str) -> dict[str, Any]:
         return {"success": False, "url": url, "error": fe.reason}
 
 
-@tool
-async def extract_entities(claim_text: str) -> dict[str, list[str]]:
-    """Extract named entities from claim text using LLM-powered NER.
-
-    Extracts persons, organizations, dates, locations, and statistics.
-    Only call this tool if the claim passed the check-worthiness gate.
-
-    Args:
-        claim_text: The normalized claim text to extract entities from.
-    """
-    from anthropic import AsyncAnthropic
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise MissingApiKeyError("ANTHROPIC_API_KEY is required for intake agent")
-    client = AsyncAnthropic(api_key=api_key)
-    result = await extract_entities_llm(claim_text, client)
-    return {
-        "persons": result.persons,
-        "organizations": result.organizations,
-        "dates": result.dates,
-        "locations": result.locations,
-        "statistics": result.statistics,
-    }
+# extract_entities is defined inside build_intake_agent() as a closure
+# over the ChatAnthropic model instance (see below).
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +176,9 @@ async def extract_entities(claim_text: str) -> dict[str, list[str]]:
 def build_intake_agent(model=None):
     """Build the intake ReAct agent graph.
 
-    Tools that require LLM sub-calls (``classify_domain``) receive their
-    ``ChatAnthropic`` instance via closure and accept ``RunnableConfig``
-    for tracing propagation.
+    Tools that require LLM sub-calls (``classify_domain``, ``extract_entities``)
+    receive their ``ChatAnthropic`` instance via closure and accept
+    ``RunnableConfig`` for tracing propagation.
 
     Args:
         model: Optional ChatAnthropic instance for the orchestrator. If None,
@@ -216,6 +198,12 @@ def build_intake_agent(model=None):
     classify_model = ChatAnthropic(
         model=CLASSIFY_MODEL,
         max_tokens=10,
+        temperature=0,
+    )
+
+    entity_model = ChatAnthropic(
+        model=ENTITY_MODEL,
+        max_tokens=512,
         temperature=0,
     )
 
@@ -257,6 +245,57 @@ def build_intake_agent(model=None):
         writer({"type": "progress", "message": f"Domain classified: {domain}"})
 
         return {"domain": domain}
+
+    @tool
+    async def extract_entities(claim_text: str, config: RunnableConfig) -> dict[str, list[str]]:
+        """Extract named entities from claim text using LLM-powered NER.
+
+        Extracts persons, organizations, dates, locations, and statistics.
+        Only call this tool if the claim passed the check-worthiness gate.
+
+        Args:
+            claim_text: The normalized claim text to extract entities from.
+        """
+        empty = EntityExtractionResult(
+            persons=[], organizations=[], dates=[], locations=[], statistics=[]
+        )
+
+        messages = [
+            SystemMessage(content=_ENTITY_SYSTEM_PROMPT),
+            HumanMessage(content=f"Claim: {claim_text}"),
+        ]
+        try:
+            response = await entity_model.ainvoke(messages, config=config)
+            raw_text = response.content.strip()
+        except Exception:
+            logger.warning("Entity extraction LLM error", exc_info=True)
+            raw_text = None
+
+        result = empty
+        if raw_text:
+            try:
+                data = json.loads(raw_text)
+                result = EntityExtractionResult.model_validate(data)
+            except (json.JSONDecodeError, Exception):
+                logger.warning(
+                    "Entity extraction response parse error: %s", raw_text[:200]
+                )
+
+        entities = {
+            "persons": result.persons,
+            "organizations": result.organizations,
+            "dates": result.dates,
+            "locations": result.locations,
+            "statistics": result.statistics,
+        }
+
+        writer = get_stream_writer()
+        entity_count = sum(len(v) for v in entities.values())
+        writer(
+            {"type": "progress", "message": f"Entities extracted: {entity_count} found"}
+        )
+
+        return entities
 
     if model is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")

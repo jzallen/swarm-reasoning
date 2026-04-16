@@ -22,8 +22,8 @@ from swarm_reasoning.agents.intake import (
 from swarm_reasoning.agents.intake.agent import (
     AGENT_NAME,
     CLASSIFY_MODEL,
+    ENTITY_MODEL,
     SYSTEM_PROMPT,
-    extract_entities,
     fetch_source_content,
     validate_claim,
 )
@@ -146,6 +146,9 @@ class TestConstants:
     def test_classify_model_constant(self):
         assert CLASSIFY_MODEL == "claude-sonnet-4-6"
 
+    def test_entity_model_constant(self):
+        assert ENTITY_MODEL == "claude-haiku-4-5"
+
     def test_system_prompt_mentions_all_steps(self):
         assert "Validate the claim" in SYSTEM_PROMPT
         assert "Fetch source content" in SYSTEM_PROMPT
@@ -202,10 +205,10 @@ class TestBuildIntakeAgent:
             mock_create.return_value = MagicMock()
             build_intake_agent()
 
-        # ChatAnthropic is called twice: once for classify_model, once for orchestrator
-        assert mock_chat.call_count == 2
+        # ChatAnthropic called 3 times: classify_model, entity_model, orchestrator
+        assert mock_chat.call_count == 3
         # Verify orchestrator model call
-        orchestrator_call = mock_chat.call_args_list[1]
+        orchestrator_call = mock_chat.call_args_list[2]
         assert orchestrator_call.kwargs == {
             "model": "claude-sonnet-4-6",
             "max_tokens": 1024,
@@ -460,25 +463,62 @@ class TestFetchSourceContentTool:
 
 
 class TestExtractEntitiesTool:
-    """Tests for the extract_entities LangChain tool."""
+    """Tests for the extract_entities LangChain tool (closure-based).
+
+    extract_entities is defined inside build_intake_agent() and closes over
+    a ChatAnthropic model instance. Tests build the agent, extract the tool,
+    and invoke it with mocked model and stream writer.
+    """
+
+    @staticmethod
+    def _make_mock_model(text: str) -> AsyncMock:
+        """Create a mock ChatAnthropic that returns an AIMessage with the given text."""
+        mock_response = MagicMock()
+        mock_response.content = text
+        mock_model = AsyncMock()
+        mock_model.ainvoke = AsyncMock(return_value=mock_response)
+        return mock_model
+
+    @staticmethod
+    def _get_entity_tool(mock_entity_model):
+        """Build the agent with a mocked entity model and extract extract_entities."""
+        mock_classify_model = MagicMock()
+        with (
+            patch(
+                "swarm_reasoning.agents.intake.agent.ChatAnthropic",
+                side_effect=[mock_classify_model, mock_entity_model],
+            ),
+            patch(
+                "swarm_reasoning.agents.intake.agent.create_react_agent",
+            ) as mock_create,
+        ):
+            mock_create.return_value = MagicMock()
+            build_intake_agent(model=MagicMock())
+            tools = mock_create.call_args.kwargs["tools"]
+            return next(t for t in tools if t.name == "extract_entities")
 
     @pytest.mark.asyncio
     async def test_extracts_entities(self):
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch("anthropic.AsyncAnthropic"),
-            patch(
-                "swarm_reasoning.agents.intake.agent.extract_entities_llm",
-            ) as mock_extract,
+        import json
+
+        entities_json = json.dumps(
+            {
+                "persons": ["Joe Biden"],
+                "organizations": ["CDC"],
+                "dates": ["20240115"],
+                "locations": ["Washington"],
+                "statistics": ["3.5%"],
+            }
+        )
+        mock_model = self._make_mock_model(entities_json)
+        entity_tool = self._get_entity_tool(mock_model)
+
+        mock_writer = MagicMock()
+        with patch(
+            "swarm_reasoning.agents.intake.agent.get_stream_writer",
+            return_value=mock_writer,
         ):
-            mock_extract.return_value = MagicMock(
-                persons=["Joe Biden"],
-                organizations=["CDC"],
-                dates=["20240115"],
-                locations=["Washington"],
-                statistics=["3.5%"],
-            )
-            result = await extract_entities.ainvoke(
+            result = await entity_tool.ainvoke(
                 {"claim_text": "biden announced at the cdc"},
             )
         assert result["persons"] == ["Joe Biden"]
@@ -486,24 +526,97 @@ class TestExtractEntitiesTool:
         assert result["dates"] == ["20240115"]
         assert result["locations"] == ["Washington"]
         assert result["statistics"] == ["3.5%"]
+        mock_writer.assert_called_once_with(
+            {"type": "progress", "message": "Entities extracted: 5 found"},
+        )
 
     @pytest.mark.asyncio
     async def test_empty_entities(self):
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch("anthropic.AsyncAnthropic"),
-            patch(
-                "swarm_reasoning.agents.intake.agent.extract_entities_llm",
-            ) as mock_extract,
+        import json
+
+        entities_json = json.dumps(
+            {
+                "persons": [],
+                "organizations": [],
+                "dates": [],
+                "locations": [],
+                "statistics": [],
+            }
+        )
+        mock_model = self._make_mock_model(entities_json)
+        entity_tool = self._get_entity_tool(mock_model)
+
+        mock_writer = MagicMock()
+        with patch(
+            "swarm_reasoning.agents.intake.agent.get_stream_writer",
+            return_value=mock_writer,
         ):
-            mock_extract.return_value = MagicMock(
-                persons=[],
-                organizations=[],
-                dates=[],
-                locations=[],
-                statistics=[],
-            )
-            result = await extract_entities.ainvoke(
+            result = await entity_tool.ainvoke(
                 {"claim_text": "nothing here"},
             )
         assert all(v == [] for v in result.values())
+        mock_writer.assert_called_once_with(
+            {"type": "progress", "message": "Entities extracted: 0 found"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_falls_back_on_invalid_json(self):
+        mock_model = self._make_mock_model("not valid json at all")
+        entity_tool = self._get_entity_tool(mock_model)
+
+        mock_writer = MagicMock()
+        with patch(
+            "swarm_reasoning.agents.intake.agent.get_stream_writer",
+            return_value=mock_writer,
+        ):
+            result = await entity_tool.ainvoke(
+                {"claim_text": "some claim"},
+            )
+        assert all(v == [] for v in result.values())
+
+    @pytest.mark.asyncio
+    async def test_falls_back_on_llm_error(self):
+        mock_model = AsyncMock()
+        mock_model.ainvoke = AsyncMock(side_effect=Exception("API error"))
+        entity_tool = self._get_entity_tool(mock_model)
+
+        mock_writer = MagicMock()
+        with patch(
+            "swarm_reasoning.agents.intake.agent.get_stream_writer",
+            return_value=mock_writer,
+        ):
+            result = await entity_tool.ainvoke(
+                {"claim_text": "some claim"},
+            )
+        assert all(v == [] for v in result.values())
+
+    @pytest.mark.asyncio
+    async def test_forwards_config_to_model(self):
+        import json
+
+        entities_json = json.dumps(
+            {
+                "persons": ["Obama"],
+                "organizations": [],
+                "dates": [],
+                "locations": [],
+                "statistics": [],
+            }
+        )
+        mock_model = self._make_mock_model(entities_json)
+        entity_tool = self._get_entity_tool(mock_model)
+
+        mock_writer = MagicMock()
+        config = {"callbacks": [MagicMock()]}
+        with patch(
+            "swarm_reasoning.agents.intake.agent.get_stream_writer",
+            return_value=mock_writer,
+        ):
+            result = await entity_tool.ainvoke(
+                {"claim_text": "Obama signed the bill"},
+                config=config,
+            )
+        assert result["persons"] == ["Obama"]
+        # Verify config was forwarded to the model
+        call_kwargs = mock_model.ainvoke.call_args.kwargs
+        assert "config" in call_kwargs
