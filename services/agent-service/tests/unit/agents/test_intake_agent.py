@@ -431,9 +431,16 @@ class TestFetchSourceContentTool:
             word_count=3,
             extraction_method="trafilatura",
         )
-        with patch(
-            "swarm_reasoning.agents.intake.agent._fetch_content",
-            return_value=mock_result,
+        mock_writer = MagicMock()
+        with (
+            patch(
+                "swarm_reasoning.agents.intake.agent._fetch_content",
+                return_value=mock_result,
+            ),
+            patch(
+                "swarm_reasoning.agents.intake.agent.get_stream_writer",
+                return_value=mock_writer,
+            ),
         ):
             result = await fetch_source_content.ainvoke(
                 {"url": "https://example.com/article"},
@@ -441,20 +448,41 @@ class TestFetchSourceContentTool:
         assert result["success"] is True
         assert result["title"] == "Test Article"
         assert result["word_count"] == 3
+        assert mock_writer.call_count == 2
+        mock_writer.assert_any_call(
+            {"type": "progress", "message": "Fetching article content..."},
+        )
+        mock_writer.assert_any_call(
+            {"type": "progress", "message": "Content extracted: 3 words"},
+        )
 
     @pytest.mark.asyncio
     async def test_fetch_error(self):
         from swarm_reasoning.agents.intake.tools.fetch_content import FetchError
 
-        with patch(
-            "swarm_reasoning.agents.intake.agent._fetch_content",
-            side_effect=FetchError("FETCH_TIMEOUT"),
+        mock_writer = MagicMock()
+        with (
+            patch(
+                "swarm_reasoning.agents.intake.agent._fetch_content",
+                side_effect=FetchError("FETCH_TIMEOUT"),
+            ),
+            patch(
+                "swarm_reasoning.agents.intake.agent.get_stream_writer",
+                return_value=mock_writer,
+            ),
         ):
             result = await fetch_source_content.ainvoke(
                 {"url": "https://example.com/slow"},
             )
         assert result["success"] is False
         assert result["error"] == "FETCH_TIMEOUT"
+        assert mock_writer.call_count == 2
+        mock_writer.assert_any_call(
+            {"type": "progress", "message": "Fetching article content..."},
+        )
+        mock_writer.assert_any_call(
+            {"type": "progress", "message": "Fetch error: FETCH_TIMEOUT"},
+        )
 
 
 # ---------------------------------------------------------------------------

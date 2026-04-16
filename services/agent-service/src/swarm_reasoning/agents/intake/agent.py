@@ -149,8 +149,16 @@ async def fetch_source_content(url: str) -> dict[str, Any]:
     Args:
         url: The source URL to fetch content from.
     """
+    writer = get_stream_writer()
+    writer({"type": "progress", "message": "Fetching article content..."})
     try:
         result = await _fetch_content(url)
+        writer(
+            {
+                "type": "progress",
+                "message": f"Content extracted: {result.word_count} words",
+            }
+        )
         return {
             "success": True,
             "url": result.url,
@@ -161,6 +169,7 @@ async def fetch_source_content(url: str) -> dict[str, Any]:
             "extraction_method": result.extraction_method,
         }
     except FetchError as fe:
+        writer({"type": "progress", "message": f"Fetch error: {fe.reason}"})
         return {"success": False, "url": url, "error": fe.reason}
 
 
