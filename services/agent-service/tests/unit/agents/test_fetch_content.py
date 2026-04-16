@@ -24,6 +24,7 @@ from swarm_reasoning.agents.intake.tools.fetch_content import (
     FetchError,
     FetchResult,
     _count_words,
+    extract_title_tag,
     extract_with_beautifulsoup,
     extract_with_trafilatura,
     fetch_content,
@@ -247,6 +248,32 @@ class TestExtractWithBeautifulsoup:
 
 
 # ---------------------------------------------------------------------------
+# extract_title_tag
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTitleTag:
+    def test_extracts_title(self):
+        html = "<html><head><title>My Page Title</title></head><body></body></html>"
+        assert extract_title_tag(html) == "My Page Title"
+
+    def test_strips_whitespace(self):
+        html = "<html><head><title>  Spaced Title  </title></head></html>"
+        assert extract_title_tag(html) == "Spaced Title"
+
+    def test_returns_none_when_missing(self):
+        html = "<html><head></head><body>No title here</body></html>"
+        assert extract_title_tag(html) is None
+
+    def test_returns_none_when_empty(self):
+        html = "<html><head><title>  </title></head></html>"
+        assert extract_title_tag(html) is None
+
+    def test_returns_none_for_empty_html(self):
+        assert extract_title_tag("") is None
+
+
+# ---------------------------------------------------------------------------
 # _count_words
 # ---------------------------------------------------------------------------
 
@@ -411,6 +438,66 @@ class TestFetchContent:
         ):
             with pytest.raises(FetchError, match="FETCH_TIMEOUT"):
                 await fetch_content("https://example.com/slow")
+
+    @pytest.mark.asyncio
+    async def test_title_fallback_to_title_tag(self):
+        """When trafilatura extracts text but metadata has no title,
+        the <title> tag should be used as a fallback."""
+        body_text = " ".join(["word"] * MIN_WORD_COUNT)
+        html = (
+            f"<html><head><title>HTML Title</title></head>"
+            f"<body><p>{body_text}</p></body></html>"
+        )
+
+        with (
+            patch(f"{_P}.fetch_html", return_value=html),
+            patch(
+                f"{_P}.trafilatura.extract",
+                return_value=body_text,
+            ),
+            patch(
+                f"{_P}.trafilatura.extract_metadata",
+                return_value=None,
+            ),
+        ):
+            result = await fetch_content(
+                "https://example.com/article"
+            )
+
+        assert result.extraction_method == "trafilatura"
+        assert result.title == "HTML Title"
+
+    @pytest.mark.asyncio
+    async def test_trafilatura_title_not_overridden_by_title_tag(self):
+        """When trafilatura has a title, it should NOT be overridden by
+        the <title> tag."""
+        body_text = " ".join(["word"] * MIN_WORD_COUNT)
+        html = (
+            f"<html><head><title>HTML Title</title></head>"
+            f"<body><p>{body_text}</p></body></html>"
+        )
+
+        mock_metadata = MagicMock()
+        mock_metadata.title = "Trafilatura Title"
+        mock_metadata.date = None
+
+        with (
+            patch(f"{_P}.fetch_html", return_value=html),
+            patch(
+                f"{_P}.trafilatura.extract",
+                return_value=body_text,
+            ),
+            patch(
+                f"{_P}.trafilatura.extract_metadata",
+                return_value=mock_metadata,
+            ),
+        ):
+            result = await fetch_content(
+                "https://example.com/article"
+            )
+
+        assert result.extraction_method == "trafilatura"
+        assert result.title == "Trafilatura Title"
 
     @pytest.mark.asyncio
     async def test_trafilatura_title_preserved_on_fallback(self):

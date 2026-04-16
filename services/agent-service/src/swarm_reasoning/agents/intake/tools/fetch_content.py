@@ -100,6 +100,18 @@ def extract_with_trafilatura(
     return text, title, date
 
 
+def extract_title_tag(html: str) -> str | None:
+    """Extract page title from the HTML ``<title>`` element.
+
+    Returns the stripped text content, or ``None`` if the tag is missing or empty.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    tag = soup.find("title")
+    if tag:
+        return tag.get_text(strip=True) or None
+    return None
+
+
 def extract_with_beautifulsoup(
     html: str,
 ) -> tuple[str | None, str | None, str | None]:
@@ -160,6 +172,10 @@ async def fetch_content(url: str) -> FetchResult:
     # Primary extraction: trafilatura
     text, title, date = extract_with_trafilatura(html, url)
     extraction_method = "trafilatura"
+
+    # Title fallback: if trafilatura extracted text but not title, try <title> tag
+    if text and not title:
+        title = extract_title_tag(html)
 
     # Fallback: BeautifulSoup
     if not text:
