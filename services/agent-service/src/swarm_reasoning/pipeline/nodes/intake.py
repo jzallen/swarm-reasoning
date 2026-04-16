@@ -1,321 +1,136 @@
-"""Intake pipeline node (M1.1): claim validation, domain classification,
-and entity extraction.
+"""Intake pipeline node: two-phase URL-based claim extraction and analysis.
 
-Consolidates logic from three legacy agent handlers (ingestion_agent,
-claim_detector, entity_extractor) into a single LangGraph node with
-fixed execution order:
+Implements the intake agent's two-phase interaction within the pipeline:
 
-    1. ingest_claim  — structural validation, CLAIM_TEXT/URL/DATE observations
-    2. classify_domain — LLM domain classification, CLAIM_DOMAIN observation
-    3. extract_entities — LLM NER, ENTITY_* observations
+  Phase A (URL → claims):
+    User submits URL → fetch_content → decompose_claims → return extracted
+    claims to the user for selection.
 
-All observations are published as side-effects via PipelineContext.
-State updates are returned as a dict for LangGraph to merge.
+  Phase B (selection → analysis):
+    User selects a claim → classify_domain → extract_entities → publish
+    final observations.
+
+The pipeline graph routes between phases based on PipelineState: if
+``extracted_claims`` is empty, run Phase A; if ``selected_claim`` is
+present, run Phase B.
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import os
 from typing import Any
 
-from anthropic import AsyncAnthropic
 from langgraph.types import RunnableConfig
 
-from swarm_reasoning.agents.intake.tools.claim_intake import (
-    ValidationError,
-    normalize_date,
-    validate_claim_text,
-    validate_source_url,
-)
-from swarm_reasoning.agents.intake.tools.domain_classification import (
-    DOMAIN_VOCABULARY,
-    build_prompt,
-)
-from swarm_reasoning.agents.intake.tools.entity_extractor import (
-    extract_entities_llm,
-)
-from swarm_reasoning.models.observation import ObservationCode, ValueType
-from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
+from swarm_reasoning.agents.intake import build_intake_agent
+from swarm_reasoning.pipeline.context import get_pipeline_context
 from swarm_reasoning.pipeline.state import PipelineState
-from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)
 
-
-async def check_duplicate(redis_client, run_id: str, claim_text: str) -> bool:
-    """Return True if this claim text was already submitted for this run.
-
-    Uses SETNX with 24h TTL for dedup. Returns True = duplicate, False = new.
-    """
-    claim_hash = hashlib.sha256(claim_text.strip().encode()).hexdigest()
-    key = f"reasoning:dedup:{run_id}:{claim_hash}"
-    # SET ... NX EX — returns True if key was SET (new), None if already exists (dup)
-    was_set = await redis_client.set(key, "1", ex=86400, nx=True)
-    return was_set is None  # True means duplicate
-
-
 AGENT_NAME = "intake"
 
-_CLASSIFY_SYSTEM_PROMPT = (
-    "You are a domain classifier for a fact-checking system. "
-    "Your task is to categorize the given claim into exactly one of the following domains:\n\n"
-    "HEALTHCARE, ECONOMICS, POLICY, SCIENCE, ELECTION, CRIME, OTHER\n\n"
-    "Respond with exactly one word -- the domain code. "
-    "Do not include punctuation, explanation, or any other text."
-)
 
-# Deterministic entity publish order (PERSON -> ORG -> DATE -> LOCATION -> STATISTIC)
-_ENTITY_ORDER: list[tuple[str, ObservationCode]] = [
-    ("persons", ObservationCode.ENTITY_PERSON),
-    ("organizations", ObservationCode.ENTITY_ORG),
-    ("dates", ObservationCode.ENTITY_DATE),
-    ("locations", ObservationCode.ENTITY_LOCATION),
-    ("statistics", ObservationCode.ENTITY_STATISTIC),
-]
+async def intake_phase_a(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
+    """Phase A: URL submission → extracted claims.
 
+    Invokes the intake agent with the source URL. The agent runs
+    fetch_content and decompose_claims, returning up to 5 factual claims
+    for user selection.
 
-def _get_anthropic_client() -> AsyncAnthropic:
-    """Create an AsyncAnthropic client from the environment."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise MissingApiKeyError("ANTHROPIC_API_KEY is required for intake node")
-    return AsyncAnthropic(api_key=api_key)
-
-
-# ---------------------------------------------------------------------------
-# Tool 1: ingest_claim — validate claim and publish CLAIM_TEXT/URL/DATE
-# ---------------------------------------------------------------------------
-
-
-async def _ingest_claim(
-    ctx: PipelineContext,
-    claim_text: str,
-    claim_url: str | None,
-    submission_date: str | None,
-) -> tuple[bool, str | None, str | None]:
-    """Validate the claim and publish CLAIM_TEXT/URL/DATE observations.
-
-    Returns (accepted, rejection_reason, normalized_date).
+    Returns state updates with ``extracted_claims`` and ``article_text``.
+    On failure (bad URL, no claims), returns ``error``.
     """
-    await ctx.publish_progress(AGENT_NAME, "Validating claim submission...")
+    ctx = get_pipeline_context(config)
+    ctx.heartbeat(AGENT_NAME)
 
-    normalized_date: str | None = None
-    try:
-        validate_claim_text(claim_text)
-        if claim_url is not None:
-            validate_source_url(claim_url)
-        if submission_date is not None:
-            normalized_date = normalize_date(submission_date)
-        is_dup = await check_duplicate(ctx.redis_client, ctx.run_id, claim_text)
-        if is_dup:
-            raise ValidationError("DUPLICATE_CLAIM_IN_RUN")
-    except ValidationError as ve:
-        await ctx.publish_observation(
-            agent=AGENT_NAME,
-            code=ObservationCode.CLAIM_TEXT,
-            value=claim_text.strip(),
-            value_type=ValueType.ST,
-            status="X",
-            method="ingest_claim",
-            note=ve.reason,
-        )
-        await ctx.publish_progress(AGENT_NAME, f"Claim rejected: {ve.reason}")
-        return False, ve.reason, None
+    url = state.get("claim_url") or state.get("claim_text", "")
 
-    # Publish accepted observations
-    stripped = claim_text.strip()
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.CLAIM_TEXT,
-        value=stripped,
-        value_type=ValueType.ST,
-        method="ingest_claim",
-    )
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.CLAIM_SOURCE_URL,
-        value=claim_url or "",
-        value_type=ValueType.ST,
-        method="ingest_claim",
-    )
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.CLAIM_SOURCE_DATE,
-        value=normalized_date or "",
-        value_type=ValueType.ST,
-        method="ingest_claim",
+    await ctx.publish_progress(AGENT_NAME, "Starting intake: fetching article...")
+
+    agent = build_intake_agent()
+    result = await agent.ainvoke(
+        {"messages": [("user", f"Process this URL: {url}")]},
+        config=config,
     )
 
-    await ctx.publish_progress(AGENT_NAME, "Claim accepted, classifying domain...")
-    return True, None, normalized_date
+    ctx.heartbeat(AGENT_NAME)
 
+    structured = result.get("structured_response", {})
 
-# ---------------------------------------------------------------------------
-# Tool 2: classify_domain — LLM-powered domain classification
-# ---------------------------------------------------------------------------
+    if structured.get("error"):
+        await ctx.publish_progress(AGENT_NAME, f"Intake rejected: {structured['error']}")
+        return {
+            "errors": [structured["error"]],
+        }
 
+    claims = structured.get("extracted_claims", [])
+    if not claims:
+        await ctx.publish_progress(AGENT_NAME, "No factual claims found in article")
+        return {
+            "errors": ["NO_FACTUAL_CLAIMS"],
+        }
 
-async def _classify_domain(
-    ctx: PipelineContext,
-    claim_text: str,
-    client: AsyncAnthropic,
-) -> str:
-    """Classify the claim's domain using Claude and publish CLAIM_DOMAIN.
-
-    Returns the domain string (e.g. "HEALTHCARE", "ECONOMICS").
-    Falls back to "OTHER" if LLM returns unrecognized values.
-    """
-    import anthropic as anthropic_lib
-
-    domain: str | None = None
-
-    for attempt in range(2):
-        try:
-            prompt = build_prompt(claim_text, retry=(attempt > 0))
-            response = await client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=10,
-                temperature=0,
-                system=_CLASSIFY_SYSTEM_PROMPT,
-                messages=prompt,
-            )
-            result = response.content[0].text.strip().upper()
-        except (anthropic_lib.AuthenticationError, anthropic_lib.APIConnectionError, anthropic_lib.RateLimitError) as exc:
-            logger.warning("Domain classification API error (attempt %d): %s", attempt + 1, exc)
-            continue
-
-        if result in DOMAIN_VOCABULARY:
-            domain = result
-            break
-
-    if domain is not None:
-        # Publish preliminary then final
-        await ctx.publish_observation(
-            agent=AGENT_NAME,
-            code=ObservationCode.CLAIM_DOMAIN,
-            value=domain,
-            value_type=ValueType.ST,
-            status="P",
-            method="classify_domain",
-        )
-        await ctx.publish_observation(
-            agent=AGENT_NAME,
-            code=ObservationCode.CLAIM_DOMAIN,
-            value=domain,
-            value_type=ValueType.ST,
-            method="classify_domain",
-        )
-    else:
-        domain = "OTHER"
-        await ctx.publish_observation(
-            agent=AGENT_NAME,
-            code=ObservationCode.CLAIM_DOMAIN,
-            value="OTHER",
-            value_type=ValueType.ST,
-            method="classify_domain",
-            note="LLM returned unrecognized value after 2 attempts; fallback applied",
-        )
-
-    await ctx.publish_progress(AGENT_NAME, f"Domain classified: {domain}")
-    return domain
-
-
-# ---------------------------------------------------------------------------
-# Tool 3: extract_entities — LLM-powered named entity recognition
-# ---------------------------------------------------------------------------
-
-
-async def _extract_entities(
-    ctx: PipelineContext,
-    normalized_claim: str,
-    client: AsyncAnthropic,
-) -> dict[str, list[str]]:
-    """Extract entities via LLM and publish ENTITY_* observations.
-
-    Returns the entities dict matching PipelineState.entities shape.
-    """
-    from swarm_reasoning.agents._utils import (
-        normalize_date as normalize_entity_date,
-    )
-
-    result = await extract_entities_llm(normalized_claim, client)
-
-    # Publish entity observations in deterministic order
-    for field_name, obs_code in _ENTITY_ORDER:
-        entities: list[str] = getattr(result, field_name)
-        for entity_value in entities:
-            value = entity_value
-            note: str | None = None
-
-            if obs_code == ObservationCode.ENTITY_DATE:
-                value, note = normalize_entity_date(entity_value)
-
-            await ctx.publish_observation(
-                agent=AGENT_NAME,
-                code=obs_code,
-                value=value,
-                value_type=ValueType.ST,
-                method="extract_entities",
-                note=note,
-            )
-
-    entity_count = sum(
-        len(getattr(result, field_name)) for field_name, _ in _ENTITY_ORDER
-    )
-    await ctx.publish_progress(AGENT_NAME, f"Extracted {entity_count} entities")
+    await ctx.publish_progress(AGENT_NAME, f"Found {len(claims)} claims for review")
 
     return {
-        "persons": result.persons,
-        "organizations": result.organizations,
-        "dates": result.dates,
-        "locations": result.locations,
-        "statistics": result.statistics,
+        "extracted_claims": claims,
+        "article_text": structured.get("article_text", ""),
+        "article_title": structured.get("article_title", ""),
     }
 
 
-# ---------------------------------------------------------------------------
-# Main node function
-# ---------------------------------------------------------------------------
+async def intake_phase_b(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
+    """Phase B: selected claim → domain classification + entity extraction.
 
+    Invokes the intake agent with the user's selected claim. The agent
+    runs classify_domain and extract_entities on that claim.
 
-async def intake_node(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
-    """Intake pipeline node: validate, classify, extract.
-
-    Executes 3 tools in fixed order. Returns state updates for LangGraph
-    to merge into PipelineState.
+    Returns state updates with ``claim_domain``, ``entities``, and
+    ``selected_claim``.
     """
     ctx = get_pipeline_context(config)
-    ctx.heartbeat("intake")
+    ctx.heartbeat(AGENT_NAME)
 
-    claim_text = state["claim_text"]
-    claim_url = state.get("claim_url")
-    submission_date = state.get("submission_date")
+    selected = state.get("selected_claim", {})
+    claim_text = selected.get("claim_text", "")
 
-    # Tool 1: Validate claim
-    accepted, rejection_reason, _ = await _ingest_claim(
-        ctx, claim_text, claim_url, submission_date,
+    await ctx.publish_progress(AGENT_NAME, "Analyzing selected claim...")
+
+    agent = build_intake_agent()
+    result = await agent.ainvoke(
+        {"messages": [("user", f"Classify and extract entities for this claim: {claim_text}")]},
+        config=config,
     )
-    if not accepted:
-        return {
-            "is_check_worthy": False,
-            "errors": [f"Claim rejected: {rejection_reason}"],
-        }
 
-    ctx.heartbeat("intake")
+    ctx.heartbeat(AGENT_NAME)
 
-    # Tool 2: Classify domain
-    client = _get_anthropic_client()
-    domain = await _classify_domain(ctx, claim_text, client)
+    structured = result.get("structured_response", {})
 
-    ctx.heartbeat("intake")
+    domain = structured.get("domain", "OTHER")
+    entities = structured.get("entities", {})
 
-    # Tool 3: Extract entities
-    entities = await _extract_entities(ctx, claim_text, client)
+    await ctx.publish_progress(AGENT_NAME, f"Analysis complete: domain={domain}")
 
     return {
         "claim_domain": domain,
         "entities": entities,
+        "claim_text": claim_text,
         "is_check_worthy": True,
     }
+
+
+def should_run_phase_b(state: PipelineState) -> bool:
+    """Routing condition: True if Phase A is done and user selected a claim."""
+    return bool(state.get("selected_claim"))
+
+
+async def intake_node(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
+    """Unified intake node: routes to Phase A or Phase B based on state.
+
+    - If ``selected_claim`` is present → Phase B (classify + extract)
+    - Otherwise → Phase A (fetch + decompose)
+    """
+    if should_run_phase_b(state):
+        return await intake_phase_b(state, config)
+    return await intake_phase_a(state, config)
