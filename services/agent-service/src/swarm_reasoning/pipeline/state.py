@@ -27,10 +27,16 @@ class PipelineState(TypedDict, total=False):
     run_id: str
     session_id: str
 
-    # --- Intake output ---
-    normalized_claim: str
+    # --- Intake Phase A output (URL → claims) ---
+    article_text: str
+    article_title: str
+    extracted_claims: list[dict]  # up to 5 ExtractedClaimDict items
+
+    # --- Intake Phase B input (user selection) ---
+    selected_claim: dict  # ExtractedClaimDict chosen by the user
+
+    # --- Intake Phase B output (claim analysis) ---
     claim_domain: str
-    check_worthy_score: float
     entities: dict[str, list[str]]  # {persons: [...], orgs: [...], ...}
     is_check_worthy: bool
 
