@@ -14,6 +14,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+_MODEL_ID = "claude-haiku-4-5"
+
 _SYSTEM_PROMPT = (
     "You are a named entity recognition (NER) system for a fact-checking pipeline. "
     "Extract entities from the given claim text and return a JSON object with these fields:\n\n"
@@ -50,7 +52,6 @@ class LLMUnavailableError(Exception):
 async def extract_entities_llm(
     claim: str,
     client: AsyncAnthropic,
-    model_id: str = "claude-haiku-4-5",
     max_tokens: int = 512,
 ) -> EntityExtractionResult:
     """Extract named entities from a claim using Claude LLM.
@@ -62,7 +63,7 @@ async def extract_entities_llm(
 
     try:
         response = await client.messages.create(
-            model=model_id,
+            model=_MODEL_ID,
             max_tokens=max_tokens,
             temperature=0,
             system=_SYSTEM_PROMPT,
