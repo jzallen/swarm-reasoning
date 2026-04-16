@@ -6,6 +6,7 @@ deterministic, offline testing without real LLM API calls.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langgraph.prebuilt import create_react_agent
@@ -200,3 +201,154 @@ def intake_agent():
     directly with custom response lists for each model.
     """
     return build_fake_intake_agent()
+
+
+# ---------------------------------------------------------------------------
+# Canned HTML responses for httpx mock transport
+# ---------------------------------------------------------------------------
+
+NEWS_ARTICLE_HTML = """\
+<!DOCTYPE html>
+<html>
+<head><title>Breaking News: Economy Grows 3.2%</title>
+<meta property="article:published_time" content="2025-01-15" />
+</head>
+<body>
+<article>
+<h1>Economy Grows 3.2% in Q4, Exceeding Expectations</h1>
+<p>The U.S. economy grew at an annualized rate of 3.2 percent in the fourth
+quarter of 2024, the Bureau of Economic Analysis reported on Wednesday.
+The growth rate exceeded economists' expectations of 2.8 percent.</p>
+<p>Consumer spending, which accounts for roughly two-thirds of economic
+activity, increased 3.7 percent. Business investment rose 5.1 percent,
+driven by equipment spending and intellectual property products.</p>
+<p>Federal Reserve Chair Jerome Powell said the data supports a cautious
+approach to interest rate adjustments. The unemployment rate held steady
+at 4.1 percent in December.</p>
+<p>"The economy continues to show remarkable resilience," said Treasury
+Secretary Janet Yellen in a statement. "These numbers reflect the strength
+of American workers and businesses."</p>
+<p>Inflation, as measured by the PCE price index, rose 2.4 percent in the
+quarter, down from 2.7 percent in Q3. Core PCE, which excludes food and
+energy, increased 2.5 percent.</p>
+</article>
+</body>
+</html>
+"""
+
+OPINION_ARTICLE_HTML = """\
+<!DOCTYPE html>
+<html>
+<head><title>Opinion: Why We Should Rethink Our Priorities</title></head>
+<body>
+<article>
+<h1>Opinion: Why We Should Rethink Our Priorities</h1>
+<p>I believe that our society has lost its way. We spend too much time
+focused on material wealth and not enough on what truly matters.</p>
+<p>In my view, the future will be shaped by those who dare to dream
+differently. We should embrace change and welcome new perspectives.</p>
+<p>Perhaps it is time we asked ourselves what kind of world we want to
+leave for our children. The answer, I think, lies in compassion and
+understanding rather than competition and greed.</p>
+</article>
+</body>
+</html>
+"""
+
+NON_HTML_CONTENT = b"%PDF-1.4 fake pdf content bytes that are not HTML"
+
+SHORT_CONTENT_HTML = """\
+<!DOCTYPE html>
+<html>
+<head><title>Brief Note</title></head>
+<body><p>This page has very few words.</p></body>
+</html>
+"""
+
+
+def _build_mock_handler(
+    custom_routes: dict[str, tuple[int, dict[str, str], bytes | str]] | None = None,
+):
+    """Build an httpx mock transport handler with canned URL routes.
+
+    Default routes:
+      - ``*/news-article`` → 200, NEWS_ARTICLE_HTML
+      - ``*/opinion-article`` → 200, OPINION_ARTICLE_HTML
+      - ``*/not-found`` → 404
+      - ``*/non-html`` → 200, application/pdf content
+      - ``*/short-content`` → 200, SHORT_CONTENT_HTML
+      - ``*/timeout`` → raises TimeoutError (simulates FETCH_TIMEOUT)
+
+    Args:
+        custom_routes: Optional dict of path-suffix → (status, headers, body)
+            to override or extend default routes.
+    """
+    routes: dict[str, tuple[int, dict[str, str], bytes]] = {
+        "news-article": (
+            200,
+            {"content-type": "text/html; charset=utf-8"},
+            NEWS_ARTICLE_HTML.encode(),
+        ),
+        "opinion-article": (
+            200,
+            {"content-type": "text/html; charset=utf-8"},
+            OPINION_ARTICLE_HTML.encode(),
+        ),
+        "not-found": (
+            404,
+            {"content-type": "text/html"},
+            b"<html><body>Not Found</body></html>",
+        ),
+        "non-html": (
+            200,
+            {"content-type": "application/pdf"},
+            NON_HTML_CONTENT,
+        ),
+        "short-content": (
+            200,
+            {"content-type": "text/html; charset=utf-8"},
+            SHORT_CONTENT_HTML.encode(),
+        ),
+    }
+
+    if custom_routes:
+        for suffix, (status, headers, body) in custom_routes.items():
+            body_bytes = body.encode() if isinstance(body, str) else body
+            routes[suffix] = (status, headers, body_bytes)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+
+        if url_str.endswith("timeout"):
+            raise httpx.TimeoutException("mock timeout", request=request)
+
+        for suffix, (status, headers, body) in routes.items():
+            if url_str.endswith(suffix):
+                return httpx.Response(status_code=status, headers=headers, content=body)
+
+        # Default: 200 with news article
+        return httpx.Response(
+            status_code=200,
+            headers={"content-type": "text/html; charset=utf-8"},
+            content=NEWS_ARTICLE_HTML.encode(),
+        )
+
+    return handler
+
+
+@pytest.fixture
+def mock_httpx_transport():
+    """httpx MockTransport with canned HTML responses for common URL patterns.
+
+    Usage in tests::
+
+        async with httpx.AsyncClient(transport=mock_httpx_transport) as client:
+            response = await client.get("https://example.com/news-article")
+    """
+    return httpx.MockTransport(_build_mock_handler())
+
+
+@pytest.fixture
+def mock_httpx_client(mock_httpx_transport):
+    """Pre-configured httpx.AsyncClient using the mock transport."""
+    return httpx.AsyncClient(transport=mock_httpx_transport)
