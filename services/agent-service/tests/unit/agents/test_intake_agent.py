@@ -313,9 +313,12 @@ class TestClassifyDomainTool:
     @pytest.mark.asyncio
     async def test_known_domain(self):
         mock_client = self._make_mock_client("HEALTHCARE")
-        with patch(
-            "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            return_value=mock_client,
+        with (
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
+            patch(
+                "anthropic.AsyncAnthropic",
+                return_value=mock_client,
+            ),
         ):
             result = await classify_domain.ainvoke(
                 {"claim_text": "Vaccines prevent disease"},
@@ -325,9 +328,12 @@ class TestClassifyDomainTool:
     @pytest.mark.asyncio
     async def test_falls_back_to_other(self):
         mock_client = self._make_mock_client("UNKNOWN_DOMAIN")
-        with patch(
-            "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            return_value=mock_client,
+        with (
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
+            patch(
+                "anthropic.AsyncAnthropic",
+                return_value=mock_client,
+            ),
         ):
             result = await classify_domain.ainvoke(
                 {"claim_text": "Something vague"},
@@ -347,9 +353,12 @@ class TestClassifyDomainTool:
                 mock_response,
             ],
         )
-        with patch(
-            "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            return_value=mock_client,
+        with (
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
+            patch(
+                "anthropic.AsyncAnthropic",
+                return_value=mock_client,
+            ),
         ):
             result = await classify_domain.ainvoke(
                 {"claim_text": "GDP grew 3%"},
@@ -414,9 +423,8 @@ class TestExtractEntitiesTool:
     @pytest.mark.asyncio
     async def test_extracts_entities(self):
         with (
-            patch(
-                "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            ),
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
+            patch("anthropic.AsyncAnthropic"),
             patch(
                 "swarm_reasoning.agents.intake.agent.extract_entities_llm",
             ) as mock_extract,
@@ -440,9 +448,8 @@ class TestExtractEntitiesTool:
     @pytest.mark.asyncio
     async def test_empty_entities(self):
         with (
-            patch(
-                "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            ),
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
+            patch("anthropic.AsyncAnthropic"),
             patch(
                 "swarm_reasoning.agents.intake.agent.extract_entities_llm",
             ) as mock_extract,

@@ -87,21 +87,6 @@ After completing all steps, report your findings."""
 
 
 # ---------------------------------------------------------------------------
-# Anthropic client factory (shared by LLM-powered tools)
-# ---------------------------------------------------------------------------
-
-
-def _get_anthropic_client():
-    """Create an AsyncAnthropic client from the environment."""
-    from anthropic import AsyncAnthropic
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise MissingApiKeyError("ANTHROPIC_API_KEY is required for intake agent")
-    return AsyncAnthropic(api_key=api_key)
-
-
-# ---------------------------------------------------------------------------
 # Tool definitions
 # ---------------------------------------------------------------------------
 
@@ -152,7 +137,10 @@ async def classify_domain(claim_text: str) -> dict[str, str]:
     """
     import anthropic as anthropic_lib
 
-    client = _get_anthropic_client()
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise MissingApiKeyError("ANTHROPIC_API_KEY is required for intake agent")
+    client = anthropic_lib.AsyncAnthropic(api_key=api_key)
     domain: str | None = None
 
     for attempt in range(2):
@@ -216,7 +204,12 @@ async def extract_entities(claim_text: str) -> dict[str, list[str]]:
     Args:
         claim_text: The normalized claim text to extract entities from.
     """
-    client = _get_anthropic_client()
+    from anthropic import AsyncAnthropic
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise MissingApiKeyError("ANTHROPIC_API_KEY is required for intake agent")
+    client = AsyncAnthropic(api_key=api_key)
     result = await extract_entities_llm(claim_text, client)
     return {
         "persons": result.persons,
