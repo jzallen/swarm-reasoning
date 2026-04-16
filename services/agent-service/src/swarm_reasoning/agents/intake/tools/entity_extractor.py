@@ -28,7 +28,7 @@ _SYSTEM_PROMPT = (
     '- "statistics": list of numeric claims or quantities '
     '(e.g. "87% of adults", "$1.2 trillion")\n\n'
     "Rules:\n"
-    "- Only extract entities explicitly stated in the claim text. Do not infer or hallucinate.\n"
+    "- Only extract entities explicitly stated in the claim text.\n"
     "- Return empty lists for entity types not present in the claim.\n"
     "- Each entity should appear exactly once in its respective list.\n"
     "- Respond with only the JSON object, no other text.\n"
