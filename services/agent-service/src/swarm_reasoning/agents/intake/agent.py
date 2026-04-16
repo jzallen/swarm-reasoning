@@ -226,12 +226,6 @@ def build_intake_agent(model=None):
         temperature=0,
     )
 
-    decompose_model = ChatAnthropic(
-        model=DECOMPOSE_MODEL,
-        max_tokens=4096,
-        temperature=0,
-    )
-
     @tool
     async def decompose_claims(
         article_text: str, article_title: str, config: RunnableConfig
@@ -352,37 +346,6 @@ def build_intake_agent(model=None):
 
         return entities
 
-    @tool
-    async def decompose_claims_tool(
-        article_text: str,
-        article_title: str,
-        config: RunnableConfig,
-    ) -> dict[str, Any]:
-        """Decompose article text into up to 5 verifiable factual claims.
-
-        Each claim includes a standalone claim sentence, a supporting quote
-        from the article, and a citation with author, publisher, and date.
-
-        Call this after fetching source content. Pass the article text and
-        title from the fetch_source_content result.
-
-        Args:
-            article_text: The full extracted article text.
-            article_title: The article title.
-        """
-        writer = get_stream_writer()
-        claims = await decompose_and_parse(
-            article_text=article_text,
-            article_title=article_title,
-            model=decompose_model,
-            config=config,
-            writer=writer,
-        )
-        return {
-            "claims": [claim.model_dump() for claim in claims],
-            "count": len(claims),
-        }
-
     if model is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
@@ -397,7 +360,7 @@ def build_intake_agent(model=None):
     tools = [
         validate_claim,
         fetch_source_content,
-        decompose_claims_tool,
+        decompose_claims,
         classify_domain,
         extract_entities,
     ]
