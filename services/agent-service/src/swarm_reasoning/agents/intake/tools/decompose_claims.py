@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any, Callable
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -229,3 +230,51 @@ async def decompose_claims(
                 )
                 return []
     return []  # unreachable, satisfies type checker
+
+
+async def decompose_and_parse(
+    article_text: str,
+    article_title: str,
+    model: ChatAnthropic,
+    config: RunnableConfig,
+    writer: Callable[[dict[str, Any]], None],
+) -> list[ExtractedClaim]:
+    """Orchestrate claim decomposition: LLM call, parse, retry, progress.
+
+    Emits progress events via *writer* (typically ``get_stream_writer()``):
+      - ``"Analyzing article for factual claims..."`` before the LLM call
+      - ``"Found {n} claims for review"`` after successful extraction
+
+    On JSON parse failure, retries the LLM call once. If both attempts fail,
+    returns an empty list.
+    """
+    writer({"type": "progress", "message": "Analyzing article for factual claims..."})
+
+    for attempt in range(2):
+        try:
+            raw_text = await decompose_claims_llm(
+                article_text, article_title, model, config
+            )
+            claims = parse_decompose_response(raw_text)
+            writer(
+                {
+                    "type": "progress",
+                    "message": f"Found {len(claims)} claims for review",
+                }
+            )
+            return claims
+        except (json.JSONDecodeError, ValueError):
+            if attempt == 0:
+                logger.warning(
+                    "Decompose parse failed (attempt 1), retrying", exc_info=True
+                )
+                continue
+            logger.warning(
+                "Decompose parse failed (attempt 2), returning empty", exc_info=True
+            )
+        except Exception:
+            logger.warning("Decompose LLM error", exc_info=True)
+            break
+
+    writer({"type": "progress", "message": "Found 0 claims for review"})
+    return []
