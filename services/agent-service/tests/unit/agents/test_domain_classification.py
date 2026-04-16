@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from swarm_reasoning.agents.intake.tools.domain_cls import (
+from swarm_reasoning.agents.intake.tools.domain_classification import (
     DOMAIN_VOCABULARY,
     build_prompt,
 )
@@ -25,7 +25,7 @@ class TestBuildPrompt:
         assert "previous response was not recognized" in msgs[0]["content"]
 
     def test_all_codes_in_system_prompt(self):
-        from swarm_reasoning.agents.intake.tools.domain_cls import _SYSTEM_PROMPT
+        from swarm_reasoning.agents.intake.tools.domain_classification import _SYSTEM_PROMPT
 
         for code in DOMAIN_VOCABULARY:
             assert code in _SYSTEM_PROMPT

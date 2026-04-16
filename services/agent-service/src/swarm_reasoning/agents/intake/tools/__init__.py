@@ -3,7 +3,7 @@
 Each module exposes the core logic for one step of the intake pipeline:
 
 - ``claim_intake`` -- structural validation (text, URL, date, dedup)
-- ``domain_cls`` -- LLM-powered domain classification via Claude
+- ``domain_classification`` -- LLM-powered domain classification via Claude
 - ``entity_extractor`` -- LLM-powered named entity recognition
 - ``fetch_content`` -- URL content fetching with trafilatura/BS4 extraction
 """
@@ -15,7 +15,7 @@ from swarm_reasoning.agents.intake.tools.claim_intake import (
     validate_claim_text,
     validate_source_url,
 )
-from swarm_reasoning.agents.intake.tools.domain_cls import (
+from swarm_reasoning.agents.intake.tools.domain_classification import (
     DOMAIN_VOCABULARY,
     build_prompt,
 )

@@ -29,8 +29,7 @@ from swarm_reasoning.agents.intake.tools.claim_intake import (
     validate_claim_text,
     validate_source_url,
 )
-from swarm_reasoning.agents.intake.tools.domain_cls import (
-    _SYSTEM_PROMPT,
+from swarm_reasoning.agents.intake.tools.domain_classification import (
     DOMAIN_VOCABULARY,
     build_prompt,
 )
