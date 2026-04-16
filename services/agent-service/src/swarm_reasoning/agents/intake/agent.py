@@ -1,9 +1,9 @@
-"""Intake agent -- ReAct agent for claim validation, domain classification,
-and entity extraction.
+"""Intake agent -- URL-based content extraction, claim decomposition,
+domain classification, and entity extraction.
 
-Uses LangGraph's create_agent with LLM-driven tool selection.
-The agent orchestrates three tools guided by a system prompt that encodes
-the intake workflow.
+Uses LangGraph's create_react_agent with LLM-driven tool selection.
+The agent orchestrates four tools guided by a system prompt that encodes
+the two-phase intake workflow.
 
 Pipeline integration (PipelineState translation, observation publishing)
 is handled by the pipeline node wrapper in ``pipeline/nodes/``, not here.
@@ -21,7 +21,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
-from langgraph.prebuilt import create_agent
+from langgraph.prebuilt import create_react_agent
 
 from swarm_reasoning.agents.intake.models import IntakeOutput
 from swarm_reasoning.agents.intake.tools.decompose_claims import (
@@ -326,7 +326,7 @@ def build_intake_agent(model=None):
         extract_entities,
     ]
 
-    return create_agent(
+    return create_react_agent(
         model=model,
         tools=tools,
         prompt=SYSTEM_PROMPT,
