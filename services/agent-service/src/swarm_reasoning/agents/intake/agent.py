@@ -43,6 +43,14 @@ logger = logging.getLogger(__name__)
 
 AGENT_NAME = "intake"
 
+_CLASSIFY_SYSTEM_PROMPT = (
+    "You are a domain classifier for a fact-checking system. "
+    "Your task is to categorize the given claim into exactly one of the following domains:\n\n"
+    "HEALTHCARE, ECONOMICS, POLICY, SCIENCE, ELECTION, CRIME, OTHER\n\n"
+    "Respond with exactly one word -- the domain code. "
+    "Do not include punctuation, explanation, or any other text."
+)
+
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
@@ -145,7 +153,7 @@ async def classify_domain(claim_text: str) -> dict[str, str]:
                 model="claude-sonnet-4-6",
                 max_tokens=10,
                 temperature=0,
-                system=_SYSTEM_PROMPT,
+                system=_CLASSIFY_SYSTEM_PROMPT,
                 messages=prompt,
             )
             result = response.content[0].text.strip().upper()
