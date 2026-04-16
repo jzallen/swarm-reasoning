@@ -1,5 +1,5 @@
 """Intake pipeline node (M1.1): claim validation, domain classification,
-normalization, check-worthiness scoring, and entity extraction.
+and entity extraction.
 
 Consolidates logic from three legacy agent handlers (ingestion_agent,
 claim_detector, entity_extractor) into a single LangGraph node with
@@ -7,9 +7,7 @@ fixed execution order:
 
     1. ingest_claim  — structural validation, CLAIM_TEXT/URL/DATE observations
     2. classify_domain — LLM domain classification, CLAIM_DOMAIN observation
-    3. normalize_claim — text normalization, CLAIM_NORMALIZED observation
-    4. score_check_worthiness — LLM scoring + gate, CHECK_WORTHY_SCORE observation
-    5. extract_entities — LLM NER, ENTITY_* observations
+    3. extract_entities — LLM NER, ENTITY_* observations
 
 All observations are published as side-effects via PipelineContext.
 State updates are returned as a dict for LangGraph to merge.
@@ -39,8 +37,6 @@ from swarm_reasoning.agents.intake.tools.domain_cls import (
 from swarm_reasoning.agents.intake.tools.entity_extractor import (
     extract_entities_llm,
 )
-from swarm_reasoning.agents.intake.tools.normalizer import normalize_claim_text
-from swarm_reasoning.agents.intake.tools.scorer import score_claim_text
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
 from swarm_reasoning.pipeline.state import PipelineState
@@ -200,104 +196,7 @@ async def _classify_domain(
 
 
 # ---------------------------------------------------------------------------
-# Tool 3: normalize_claim — text normalization
-# ---------------------------------------------------------------------------
-
-
-async def _normalize_claim(
-    ctx: PipelineContext,
-    claim_text: str,
-) -> str:
-    """Normalize the claim text and publish CLAIM_NORMALIZED.
-
-    Returns the normalized claim string.
-    """
-    result = normalize_claim_text(claim_text)
-
-    note = None
-    if result.fallback_used:
-        note = "normalization: fallback to raw text"
-    if result.hedges_removed:
-        hedge_note = f"hedges removed: {', '.join(result.hedges_removed[:3])}"
-        note = f"{note}; {hedge_note}" if note else hedge_note
-
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.CLAIM_NORMALIZED,
-        value=result.normalized,
-        value_type=ValueType.ST,
-        method="normalize_claim",
-        note=note,
-    )
-
-    await ctx.publish_progress(AGENT_NAME, "Claim normalized, scoring check-worthiness...")
-    return result.normalized
-
-
-# ---------------------------------------------------------------------------
-# Tool 4: score_check_worthiness — LLM scoring with gate decision
-# ---------------------------------------------------------------------------
-
-
-async def _score_check_worthiness(
-    ctx: PipelineContext,
-    normalized_text: str,
-    client: AsyncAnthropic,
-) -> tuple[float, bool]:
-    """Score check-worthiness and publish CHECK_WORTHY_SCORE observations.
-
-    Returns (score, proceed).
-    """
-    score_result = await score_claim_text(normalized_text, client)
-
-    score_note = (
-        f"LLM rationale: {score_result.rationale[:480]}"
-        if score_result.rationale
-        else None
-    )
-
-    # Publish preliminary score (pass-1) if available
-    if score_result.passes:
-        await ctx.publish_observation(
-            agent=AGENT_NAME,
-            code=ObservationCode.CHECK_WORTHY_SCORE,
-            value=f"{score_result.passes[0]:.2f}",
-            value_type=ValueType.NM,
-            status="P",
-            method="score_claim",
-            note=score_note,
-            units="score",
-            reference_range="0.0-1.0",
-        )
-
-    # Publish final resolved score
-    await ctx.publish_observation(
-        agent=AGENT_NAME,
-        code=ObservationCode.CHECK_WORTHY_SCORE,
-        value=f"{score_result.score:.2f}",
-        value_type=ValueType.NM,
-        method="score_claim",
-        note=score_note,
-        units="score",
-        reference_range="0.0-1.0",
-    )
-
-    if score_result.proceed:
-        await ctx.publish_progress(
-            AGENT_NAME,
-            f"Check-worthy (score: {score_result.score:.2f}), extracting entities...",
-        )
-    else:
-        await ctx.publish_progress(
-            AGENT_NAME,
-            f"Not check-worthy (score: {score_result.score:.2f}), skipping to synthesis",
-        )
-
-    return score_result.score, score_result.proceed
-
-
-# ---------------------------------------------------------------------------
-# Tool 5: extract_entities — LLM-powered named entity recognition
+# Tool 3: extract_entities — LLM-powered named entity recognition
 # ---------------------------------------------------------------------------
 
 
@@ -355,9 +254,9 @@ async def _extract_entities(
 
 
 async def intake_node(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
-    """Intake pipeline node: validate, classify, normalize, score, extract.
+    """Intake pipeline node: validate, classify, extract.
 
-    Executes 5 tools in fixed order. Returns state updates for LangGraph
+    Executes 3 tools in fixed order. Returns state updates for LangGraph
     to merge into PipelineState.
     """
     ctx = get_pipeline_context(config)
@@ -385,31 +284,11 @@ async def intake_node(state: PipelineState, config: RunnableConfig) -> dict[str,
 
     ctx.heartbeat("intake")
 
-    # Tool 3: Normalize claim
-    normalized = await _normalize_claim(ctx, claim_text)
-
-    ctx.heartbeat("intake")
-
-    # Tool 4: Score check-worthiness
-    score, proceed = await _score_check_worthiness(ctx, normalized, client)
-
-    ctx.heartbeat("intake")
-
-    if not proceed:
-        return {
-            "normalized_claim": normalized,
-            "claim_domain": domain,
-            "check_worthy_score": score,
-            "is_check_worthy": False,
-        }
-
-    # Tool 5: Extract entities
-    entities = await _extract_entities(ctx, normalized, client)
+    # Tool 3: Extract entities
+    entities = await _extract_entities(ctx, claim_text, client)
 
     return {
-        "normalized_claim": normalized,
         "claim_domain": domain,
-        "check_worthy_score": score,
         "entities": entities,
         "is_check_worthy": True,
     }

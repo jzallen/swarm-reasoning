@@ -1,10 +1,9 @@
 """Intake agent -- ReAct agent for claim validation, domain classification,
-normalization, check-worthiness scoring, and entity extraction.
+and entity extraction.
 
 Uses LangGraph's create_react_agent with LLM-driven tool selection.
-The agent orchestrates five tools guided by a system prompt that encodes
-the intake workflow. The LLM decides tool order and handles branching
-(e.g. skipping entity extraction when a claim is not check-worthy).
+The agent orchestrates three tools guided by a system prompt that encodes
+the intake workflow.
 
 Pipeline integration (PipelineState translation, observation publishing)
 is handled by the pipeline node wrapper in ``pipeline/nodes/``, not here.
@@ -33,8 +32,6 @@ from swarm_reasoning.agents.intake.tools.domain_cls import (
     call_claude,
 )
 from swarm_reasoning.agents.intake.tools.entity_extractor import extract_entities_llm
-from swarm_reasoning.agents.intake.tools.normalizer import normalize_claim_text
-from swarm_reasoning.agents.intake.tools.scorer import score_claim_text
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)
@@ -58,17 +55,9 @@ fails, stop immediately -- the claim is rejected.
 2. **Classify the domain** using the classify_domain tool. This determines \
 which domain the claim falls under (HEALTHCARE, ECONOMICS, POLICY, etc.).
 
-3. **Normalize the claim** using the normalize_claim tool. This cleans up the \
-text by removing hedging language, resolving pronouns, and standardizing formatting.
+3. **Extract entities** using the extract_entities tool. Pass the claim text.
 
-4. **Score check-worthiness** using the score_check_worthiness tool. Pass the \
-NORMALIZED claim text from step 3. If the claim is NOT check-worthy (the tool \
-will indicate this), skip entity extraction entirely.
-
-5. **Extract entities** using the extract_entities tool, but ONLY if the claim \
-passed the check-worthiness gate in step 4. Pass the normalized claim text.
-
-After completing all applicable steps, report your findings."""
+After completing all steps, report your findings."""
 
 
 # ---------------------------------------------------------------------------
@@ -159,41 +148,6 @@ async def classify_domain(claim_text: str) -> dict[str, str]:
 
 
 @tool
-async def normalize_claim(claim_text: str) -> dict[str, Any]:
-    """Normalize claim text by removing hedging language, resolving pronouns,
-    and standardizing formatting.
-
-    Args:
-        claim_text: The raw claim text to normalize.
-    """
-    result = normalize_claim_text(claim_text)
-    return {
-        "normalized": result.normalized,
-        "hedges_removed": result.hedges_removed,
-        "pronouns_resolved": result.pronouns_resolved,
-    }
-
-
-@tool
-async def score_check_worthiness(normalized_claim: str) -> dict[str, Any]:
-    """Score a normalized claim for check-worthiness using a two-pass LLM protocol.
-
-    Claims scoring >= 0.4 are considered check-worthy and should proceed to
-    entity extraction. Claims below this threshold are NOT check-worthy.
-
-    Args:
-        normalized_claim: The normalized claim text (output of normalize_claim).
-    """
-    client = _get_anthropic_client()
-    result = await score_claim_text(normalized_claim, client)
-    return {
-        "score": result.score,
-        "rationale": result.rationale,
-        "is_check_worthy": result.proceed,
-    }
-
-
-@tool
 async def extract_entities(claim_text: str) -> dict[str, list[str]]:
     """Extract named entities from claim text using LLM-powered NER.
 
@@ -221,8 +175,6 @@ async def extract_entities(claim_text: str) -> dict[str, list[str]]:
 TOOLS = [
     validate_claim,
     classify_domain,
-    normalize_claim,
-    score_check_worthiness,
     extract_entities,
 ]
 

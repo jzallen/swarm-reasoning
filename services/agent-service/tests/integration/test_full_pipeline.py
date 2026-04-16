@@ -66,17 +66,8 @@ def _intake_external_mocks():
 
 
 def _check_worthy_intake_mocks():
-    """Intake mocks that produce a check-worthy claim (score > 0.5)."""
+    """Intake mocks that produce a check-worthy claim with entities."""
     return _intake_external_mocks() + [
-        patch(
-            "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
-            return_value=MagicMock(
-                score=0.85,
-                rationale="Strong factual claim",
-                proceed=True,
-                passes=[0.85],
-            ),
-        ),
         patch(
             "swarm_reasoning.pipeline.nodes.intake.extract_entities_llm",
             return_value=MagicMock(
@@ -85,21 +76,6 @@ def _check_worthy_intake_mocks():
                 dates=["January 2024"],
                 locations=["United States"],
                 statistics=["3.5%"],
-            ),
-        ),
-    ]
-
-
-def _not_check_worthy_intake_mocks():
-    """Intake mocks that produce a not-check-worthy claim (score < 0.5)."""
-    return _intake_external_mocks() + [
-        patch(
-            "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
-            return_value=MagicMock(
-                score=0.15,
-                rationale="Not a verifiable factual claim",
-                proceed=False,
-                passes=[0.15],
             ),
         ),
     ]
@@ -204,10 +180,7 @@ class TestCheckWorthyFullPipeline:
         """Intake output fields survive to the final state."""
         result = await self._invoke(_base_state("cw-5"))
         assert result["is_check_worthy"] is True
-        assert isinstance(result["normalized_claim"], str)
-        assert len(result["normalized_claim"]) > 0
         assert isinstance(result["claim_domain"], str)
-        assert isinstance(result["check_worthy_score"], float)
         assert isinstance(result["entities"], dict)
 
     @pytest.mark.asyncio
@@ -247,9 +220,7 @@ class TestCheckWorthyFullPipeline:
         result = await self._invoke(_base_state("cw-all"))
         expected_fields = [
             # Intake
-            "normalized_claim",
             "claim_domain",
-            "check_worthy_score",
             "entities",
             "is_check_worthy",
             # Validation
@@ -308,60 +279,6 @@ class TestCheckWorthyNoCoverage:
         assert "coverage_left" not in result
         assert "coverage_center" not in result
         assert "coverage_right" not in result
-
-
-# ---------------------------------------------------------------------------
-# Not-check-worthy path: intake -> synthesizer shortcut
-# ---------------------------------------------------------------------------
-
-
-class TestNotCheckWorthyShortcut:
-    """Not-check-worthy path bypasses evidence, coverage, and validation."""
-
-    async def _invoke(self, state: PipelineState) -> dict:
-        mocks = _not_check_worthy_intake_mocks()
-        with ExitStack() as stack:
-            for cm in mocks:
-                stack.enter_context(cm)
-            return await pipeline_graph.ainvoke(state, _make_config())
-
-    @pytest.mark.asyncio
-    async def test_verdict_is_not_check_worthy(self):
-        """Shortcut path produces NOT_CHECK_WORTHY verdict."""
-        result = await self._invoke(_base_state("ncw-1"))
-        assert result["verdict"] == "NOT_CHECK_WORTHY"
-
-    @pytest.mark.asyncio
-    async def test_confidence_is_1_0(self):
-        """NOT_CHECK_WORTHY verdict has full confidence."""
-        result = await self._invoke(_base_state("ncw-2"))
-        assert result["confidence"] == 1.0
-
-    @pytest.mark.asyncio
-    async def test_narrative_mentions_not_check_worthy(self):
-        """Narrative explains the claim was not check-worthy."""
-        result = await self._invoke(_base_state("ncw-3"))
-        assert "not check-worthy" in result["narrative"].lower()
-
-    @pytest.mark.asyncio
-    async def test_skips_validation_fields(self):
-        """Validation fields should not be in state when path was shortcut."""
-        result = await self._invoke(_base_state("ncw-4"))
-        assert "validated_urls" not in result
-        assert "convergence_score" not in result
-
-    @pytest.mark.asyncio
-    async def test_skips_evidence_fields(self):
-        """Evidence fields should not be in state when path was shortcut."""
-        result = await self._invoke(_base_state("ncw-5"))
-        assert "claimreview_matches" not in result
-        assert "domain_sources" not in result
-
-    @pytest.mark.asyncio
-    async def test_is_check_worthy_false(self):
-        """is_check_worthy flag is False in final state."""
-        result = await self._invoke(_base_state("ncw-6"))
-        assert result["is_check_worthy"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -491,14 +408,10 @@ class TestPerStageState:
 
     @pytest.mark.asyncio
     async def test_intake_stage_populates_required_fields(self):
-        """After intake node, state contains normalized_claim, domain, score, entities."""
+        """After intake node, state contains domain, entities, and is_check_worthy."""
         updates = await self._stream_updates(_base_state("stage-1"))
         intake = updates["intake"]
-        assert isinstance(intake["normalized_claim"], str)
-        assert len(intake["normalized_claim"]) > 0
         assert isinstance(intake["claim_domain"], str)
-        assert isinstance(intake["check_worthy_score"], float)
-        assert intake["check_worthy_score"] > 0.5  # check-worthy path
         assert isinstance(intake["entities"], dict)
         assert intake["is_check_worthy"] is True
 

@@ -1,9 +1,8 @@
 """Tests for intake pipeline node (M1.1).
 
 Tests cover:
-- Full happy path: validate → classify → normalize → score → extract
+- Full happy path: validate → classify → extract
 - Validation rejection (short claim, duplicate)
-- Not-check-worthy gate (score below threshold)
 - Domain classification fallback to OTHER
 - Entity extraction with empty results
 - Observation publishing side-effects
@@ -22,8 +21,6 @@ from swarm_reasoning.pipeline.nodes.intake import (
     _classify_domain,
     _extract_entities,
     _ingest_claim,
-    _normalize_claim,
-    _score_check_worthiness,
     intake_node,
 )
 from swarm_reasoning.pipeline.state import PipelineState
@@ -173,68 +170,7 @@ class TestClassifyDomain:
 
 
 # ---------------------------------------------------------------------------
-# Tool 3: _normalize_claim
-# ---------------------------------------------------------------------------
-
-
-class TestNormalizeClaim:
-    """Tests for the claim normalization tool."""
-
-    @pytest.mark.asyncio
-    async def test_normalizes_text(self, mock_ctx):
-        result = await _normalize_claim(mock_ctx, "REPORTEDLY the rate dropped")
-        assert result == "the rate dropped"
-        assert mock_ctx.publish_observation.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_preserves_simple_text(self, mock_ctx):
-        result = await _normalize_claim(mock_ctx, "The rate dropped to 3.5%")
-        assert "the rate dropped to 3.5%" == result
-
-
-# ---------------------------------------------------------------------------
-# Tool 4: _score_check_worthiness
-# ---------------------------------------------------------------------------
-
-
-class TestScoreCheckWorthiness:
-    """Tests for the check-worthiness scoring tool."""
-
-    @pytest.mark.asyncio
-    async def test_check_worthy_claim(self, mock_ctx):
-        mock_client = AsyncMock()
-        with patch(
-            "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
-        ) as mock_score:
-            mock_score.return_value = MagicMock(
-                score=0.8, rationale="Factual claim", proceed=True, passes=[0.8],
-            )
-            score, proceed = await _score_check_worthiness(
-                mock_ctx, "the rate dropped to 3.5%", mock_client,
-            )
-        assert score == 0.8
-        assert proceed is True
-        # Should publish P (pass-1) and F (final) observations
-        assert mock_ctx.publish_observation.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_not_check_worthy_claim(self, mock_ctx):
-        mock_client = AsyncMock()
-        with patch(
-            "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
-        ) as mock_score:
-            mock_score.return_value = MagicMock(
-                score=0.2, rationale="Opinion, not factual", proceed=False, passes=[0.2],
-            )
-            score, proceed = await _score_check_worthiness(
-                mock_ctx, "i like pizza", mock_client,
-            )
-        assert score == 0.2
-        assert proceed is False
-
-
-# ---------------------------------------------------------------------------
-# Tool 5: _extract_entities
+# Tool 3: _extract_entities
 # ---------------------------------------------------------------------------
 
 
@@ -290,7 +226,7 @@ class TestIntakeNode:
 
     @pytest.mark.asyncio
     async def test_happy_path(self, mock_config, mock_ctx, base_state):
-        """Full successful path: validate → classify → normalize → score → extract."""
+        """Full successful path: validate → classify → extract."""
         with (
             patch(
                 "swarm_reasoning.pipeline.nodes.intake._get_anthropic_client",
@@ -305,15 +241,9 @@ class TestIntakeNode:
                 return_value="ECONOMICS",
             ),
             patch(
-                "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
-            ) as mock_score,
-            patch(
                 "swarm_reasoning.pipeline.nodes.intake.extract_entities_llm",
             ) as mock_extract,
         ):
-            mock_score.return_value = MagicMock(
-                score=0.85, rationale="Strong factual claim", proceed=True, passes=[0.85],
-            )
             mock_extract.return_value = MagicMock(
                 persons=[], organizations=[], dates=["2024"],
                 locations=[], statistics=["3.5%"],
@@ -321,13 +251,11 @@ class TestIntakeNode:
             result = await intake_node(base_state, mock_config)
 
         assert result["is_check_worthy"] is True
-        assert result["normalized_claim"] is not None
         assert result["claim_domain"] == "ECONOMICS"
-        assert result["check_worthy_score"] == 0.85
         assert "dates" in result["entities"]
         assert "statistics" in result["entities"]
         # Heartbeat called multiple times
-        assert mock_ctx.heartbeat.call_count >= 5
+        assert mock_ctx.heartbeat.call_count >= 3
 
     @pytest.mark.asyncio
     async def test_rejected_claim(self, mock_config, mock_ctx):
@@ -343,40 +271,6 @@ class TestIntakeNode:
         assert result["is_check_worthy"] is False
         assert len(result["errors"]) == 1
         assert "CLAIM_TEXT_TOO_SHORT" in result["errors"][0]
-
-    @pytest.mark.asyncio
-    async def test_not_check_worthy_skips_entities(self, mock_config, mock_ctx, base_state):
-        """Not-check-worthy claims skip entity extraction."""
-        with (
-            patch(
-                "swarm_reasoning.pipeline.nodes.intake._get_anthropic_client",
-                return_value=AsyncMock(),
-            ),
-            patch(
-                "swarm_reasoning.pipeline.nodes.intake.check_duplicate",
-                return_value=False,
-            ),
-            patch(
-                "swarm_reasoning.pipeline.nodes.intake.call_claude",
-                return_value="OTHER",
-            ),
-            patch(
-                "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
-            ) as mock_score,
-            patch(
-                "swarm_reasoning.pipeline.nodes.intake.extract_entities_llm",
-            ) as mock_extract,
-        ):
-            mock_score.return_value = MagicMock(
-                score=0.1, rationale="Not factual", proceed=False, passes=[0.1],
-            )
-            result = await intake_node(base_state, mock_config)
-
-        assert result["is_check_worthy"] is False
-        assert result["check_worthy_score"] == 0.1
-        assert "entities" not in result
-        # extract_entities_llm should NOT have been called
-        mock_extract.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_agent_name_is_intake(self, mock_config, mock_ctx, base_state):
@@ -395,15 +289,9 @@ class TestIntakeNode:
                 return_value="SCIENCE",
             ),
             patch(
-                "swarm_reasoning.pipeline.nodes.intake.score_claim_text",
-            ) as mock_score,
-            patch(
                 "swarm_reasoning.pipeline.nodes.intake.extract_entities_llm",
             ) as mock_extract,
         ):
-            mock_score.return_value = MagicMock(
-                score=0.9, rationale="Factual", proceed=True, passes=[0.9],
-            )
             mock_extract.return_value = MagicMock(
                 persons=[], organizations=[], dates=[],
                 locations=[], statistics=[],

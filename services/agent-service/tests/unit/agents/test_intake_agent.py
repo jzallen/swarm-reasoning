@@ -4,8 +4,7 @@ Tests cover:
 - Module re-exports from __init__.py
 - IntakeInput / IntakeOutput TypedDict shapes
 - Agent builder (build_intake_agent) graph construction
-- Tool definitions: validate_claim, classify_domain, normalize_claim,
-  score_check_worthiness, extract_entities
+- Tool definitions: validate_claim, classify_domain, extract_entities
 - TOOLS list, AGENT_NAME constant, SYSTEM_PROMPT content
 """
 
@@ -26,8 +25,6 @@ from swarm_reasoning.agents.intake.agent import (
     TOOLS,
     classify_domain,
     extract_entities,
-    normalize_claim,
-    score_check_worthiness,
     validate_claim,
 )
 from swarm_reasoning.agents.intake.models import (
@@ -147,15 +144,13 @@ class TestConstants:
         assert AGENT_NAME == "intake"
 
     def test_tools_count(self):
-        assert len(TOOLS) == 5
+        assert len(TOOLS) == 3
 
     def test_tool_names(self):
         tool_names = {t.name for t in TOOLS}
         expected = {
             "validate_claim",
             "classify_domain",
-            "normalize_claim",
-            "score_check_worthiness",
             "extract_entities",
         }
         assert tool_names == expected
@@ -163,20 +158,12 @@ class TestConstants:
     def test_system_prompt_mentions_all_steps(self):
         assert "Validate the claim" in SYSTEM_PROMPT
         assert "Classify the domain" in SYSTEM_PROMPT
-        assert "Normalize the claim" in SYSTEM_PROMPT
-        assert "Score check-worthiness" in SYSTEM_PROMPT
         assert "Extract entities" in SYSTEM_PROMPT
 
     def test_system_prompt_mentions_tool_names(self):
         assert "validate_claim" in SYSTEM_PROMPT
         assert "classify_domain" in SYSTEM_PROMPT
-        assert "normalize_claim" in SYSTEM_PROMPT
-        assert "score_check_worthiness" in SYSTEM_PROMPT
         assert "extract_entities" in SYSTEM_PROMPT
-
-    def test_system_prompt_mentions_check_worthy_gate(self):
-        assert "NOT check-worthy" in SYSTEM_PROMPT
-        assert "skip" in SYSTEM_PROMPT.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -362,90 +349,6 @@ class TestClassifyDomainTool:
                 {"claim_text": "GDP grew 3%"},
             )
         assert result["domain"] == "ECONOMICS"
-
-
-# ---------------------------------------------------------------------------
-# Tool: normalize_claim
-# ---------------------------------------------------------------------------
-
-
-class TestNormalizeClaimTool:
-    """Tests for the normalize_claim LangChain tool."""
-
-    @pytest.mark.asyncio
-    async def test_normalizes_text(self):
-        result = await normalize_claim.ainvoke(
-            {"claim_text": "REPORTEDLY the rate dropped"},
-        )
-        assert result["normalized"] == "the rate dropped"
-        assert "reportedly" in [h.lower() for h in result["hedges_removed"]]
-
-    @pytest.mark.asyncio
-    async def test_preserves_simple_text(self):
-        result = await normalize_claim.ainvoke(
-            {"claim_text": "The rate is 3.5%"},
-        )
-        assert result["normalized"] == "the rate is 3.5%"
-        assert result["hedges_removed"] == []
-
-    @pytest.mark.asyncio
-    async def test_returns_pronouns_resolved(self):
-        result = await normalize_claim.ainvoke(
-            {"claim_text": "The policy changed"},
-        )
-        assert "pronouns_resolved" in result
-
-
-# ---------------------------------------------------------------------------
-# Tool: score_check_worthiness
-# ---------------------------------------------------------------------------
-
-
-class TestScoreCheckWorthinessTool:
-    """Tests for the score_check_worthiness LangChain tool."""
-
-    @pytest.mark.asyncio
-    async def test_check_worthy(self):
-        with (
-            patch(
-                "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            ),
-            patch(
-                "swarm_reasoning.agents.intake.agent.score_claim_text",
-            ) as mock_score,
-        ):
-            mock_score.return_value = MagicMock(
-                score=0.85,
-                rationale="Strong factual claim",
-                proceed=True,
-            )
-            result = await score_check_worthiness.ainvoke(
-                {"normalized_claim": "the rate dropped to 3.5%"},
-            )
-        assert result["score"] == 0.85
-        assert result["is_check_worthy"] is True
-        assert result["rationale"] == "Strong factual claim"
-
-    @pytest.mark.asyncio
-    async def test_not_check_worthy(self):
-        with (
-            patch(
-                "swarm_reasoning.agents.intake.agent._get_anthropic_client",
-            ),
-            patch(
-                "swarm_reasoning.agents.intake.agent.score_claim_text",
-            ) as mock_score,
-        ):
-            mock_score.return_value = MagicMock(
-                score=0.15,
-                rationale="Opinion",
-                proceed=False,
-            )
-            result = await score_check_worthiness.ainvoke(
-                {"normalized_claim": "i like pizza"},
-            )
-        assert result["score"] == 0.15
-        assert result["is_check_worthy"] is False
 
 
 # ---------------------------------------------------------------------------
