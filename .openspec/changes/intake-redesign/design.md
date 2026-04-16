@@ -123,14 +123,19 @@ Deleted: `normalizer.py`, `scorer.py`
 
 ### 7. Claim decomposition output format
 
-`decompose_claims` returns a structured list of claims with metadata:
+`decompose_claims` returns a structured list of claims. Each claim has three user-facing fields: what to validate, the source quote, and the citation.
 
 ```python
+class Citation(BaseModel):
+    author: str | None       # person or org attributed (None if unattributed)
+    publisher: str           # publication name (e.g. "Reuters", "CDC")
+    date: str | None         # publication date YYYYMMDD if known
+
 class ExtractedClaim(BaseModel):
-    index: int              # 1-5
-    claim_text: str         # the factual claim
-    source_quote: str       # exact quote from article supporting the claim
-    category: str           # preliminary domain hint (HEALTHCARE, ECONOMICS, etc.)
+    index: int               # 1-5
+    claim_text: str          # standalone verifiable sentence — what we will validate
+    quote: str               # single best sentence from article making the claim
+    citation: Citation       # who said it, where, when
 
 class DecomposeResult(BaseModel):
     claims: list[ExtractedClaim]  # up to 5

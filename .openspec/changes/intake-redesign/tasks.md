@@ -62,10 +62,10 @@
 
 ## S5: Implement decompose_claims Tool
 
-- [ ] 5.1 Create `agents/intake/tools/decompose_claims.py` with `ExtractedClaim` and `DecomposeResult` models
-- [ ] 5.2 Implement system prompt for claim extraction (up to 5 claims, source quotes, categories)
+- [ ] 5.1 Create `agents/intake/tools/decompose_claims.py` with `Citation`, `ExtractedClaim`, and `DecomposeResult` models
+- [ ] 5.2 Implement system prompt for claim extraction (up to 5 claims: claim_text, quote, citation)
 - [ ] 5.3 Implement `decompose_claims_llm()` function: ChatAnthropic.ainvoke with config forwarding
-- [ ] 5.4 Implement output parsing: JSON parse, field validation, category validation, truncation to 5
+- [ ] 5.4 Implement output parsing: JSON parse, field validation (claim_text, quote, citation with publisher), truncation to 5
 - [ ] 5.5 Implement retry on JSON parse failure (one retry, then NO_FACTUAL_CLAIMS)
 - [ ] 5.6 Add `get_stream_writer()` progress events
 - [ ] 5.7 Add `decompose_claims` tool definition in `agent.py` with model via closure
