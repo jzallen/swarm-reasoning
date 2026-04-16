@@ -6,6 +6,7 @@ a standalone claim sentence, supporting quote, and source citation.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from langchain_anthropic import ChatAnthropic
@@ -44,6 +45,10 @@ _SYSTEM_PROMPT = (
     'If the article contains no verifiable factual claims, return {"claims": []}.\n'
     "Respond with only the JSON object."
 )
+
+
+MAX_CLAIMS = 5
+"""Maximum number of claims to return from decomposition."""
 
 
 class Citation(BaseModel):
@@ -88,6 +93,11 @@ class DecomposeResult(BaseModel):
     """Extracted publication date in YYYYMMDD format if found."""
 
 
+# Resolve forward references for Pydantic models that reference each other.
+ExtractedClaim.model_rebuild()
+DecomposeResult.model_rebuild()
+
+
 async def decompose_claims_llm(
     article_text: str,
     article_title: str,
@@ -114,3 +124,66 @@ async def decompose_claims_llm(
     ]
     response = await model.ainvoke(messages, config=config)
     return response.content.strip()
+
+
+def parse_decompose_response(raw_text: str) -> list[ExtractedClaim]:
+    """Parse and validate the raw LLM response into a list of ExtractedClaim.
+
+    Performs:
+        1. JSON parsing of the raw text
+        2. Field validation: each claim must have claim_text, quote, and citation
+        3. Citation validation: must have at least publisher; defaults author/date to None
+        4. Truncation to :data:`MAX_CLAIMS` if the LLM returned more
+
+    Returns a list of validated :class:`ExtractedClaim` objects.
+    Raises :class:`json.JSONDecodeError` if the text is not valid JSON.
+    Raises :class:`ValueError` if the JSON lacks a ``claims`` array.
+    """
+    data = json.loads(raw_text)
+
+    if not isinstance(data, dict) or "claims" not in data:
+        raise ValueError("Response JSON must contain a 'claims' array")
+
+    raw_claims = data["claims"]
+    if not isinstance(raw_claims, list):
+        raise ValueError("'claims' must be a list")
+
+    validated: list[ExtractedClaim] = []
+    for i, item in enumerate(raw_claims[:MAX_CLAIMS]):
+        if not isinstance(item, dict):
+            logger.warning("Skipping non-dict claim at index %d", i)
+            continue
+
+        # Required fields
+        claim_text = item.get("claim_text")
+        quote = item.get("quote")
+        citation_raw = item.get("citation")
+
+        if not claim_text or not quote:
+            logger.warning(
+                "Skipping claim at index %d: missing claim_text or quote", i
+            )
+            continue
+
+        if not isinstance(citation_raw, dict) or not citation_raw.get("publisher"):
+            logger.warning(
+                "Skipping claim at index %d: citation missing publisher", i
+            )
+            continue
+
+        citation = Citation(
+            author=citation_raw.get("author"),
+            publisher=citation_raw["publisher"],
+            date=citation_raw.get("date"),
+        )
+
+        validated.append(
+            ExtractedClaim(
+                index=len(validated) + 1,
+                claim_text=claim_text,
+                quote=quote,
+                citation=citation,
+            )
+        )
+
+    return validated
