@@ -4,8 +4,8 @@ Tests cover:
 - Module re-exports from __init__.py
 - IntakeInput / IntakeOutput TypedDict shapes
 - Agent builder (build_intake_agent) graph construction
-- Tool definitions: validate_claim, classify_domain, extract_entities
-- TOOLS list, AGENT_NAME constant, SYSTEM_PROMPT content
+- Tool definitions: validate_claim, classify_domain (closure), extract_entities
+- CLASSIFY_MODEL constant, AGENT_NAME constant, SYSTEM_PROMPT content
 """
 
 from __future__ import annotations
@@ -21,9 +21,8 @@ from swarm_reasoning.agents.intake import (
 )
 from swarm_reasoning.agents.intake.agent import (
     AGENT_NAME,
+    CLASSIFY_MODEL,
     SYSTEM_PROMPT,
-    TOOLS,
-    classify_domain,
     extract_entities,
     fetch_source_content,
     validate_claim,
@@ -144,18 +143,8 @@ class TestConstants:
     def test_agent_name_is_intake(self):
         assert AGENT_NAME == "intake"
 
-    def test_tools_count(self):
-        assert len(TOOLS) == 4
-
-    def test_tool_names(self):
-        tool_names = {t.name for t in TOOLS}
-        expected = {
-            "validate_claim",
-            "fetch_source_content",
-            "classify_domain",
-            "extract_entities",
-        }
-        assert tool_names == expected
+    def test_classify_model_constant(self):
+        assert CLASSIFY_MODEL == "claude-sonnet-4-6"
 
     def test_system_prompt_mentions_all_steps(self):
         assert "Validate the claim" in SYSTEM_PROMPT
@@ -189,7 +178,13 @@ class TestBuildIntakeAgent:
         mock_create.assert_called_once()
         call_kwargs = mock_create.call_args
         assert call_kwargs.kwargs["model"] is mock_model
-        assert call_kwargs.kwargs["tools"] == TOOLS
+        tool_names = {t.name for t in call_kwargs.kwargs["tools"]}
+        assert tool_names == {
+            "validate_claim",
+            "fetch_source_content",
+            "classify_domain",
+            "extract_entities",
+        }
         assert call_kwargs.kwargs["prompt"] == SYSTEM_PROMPT
         assert call_kwargs.kwargs["name"] == AGENT_NAME
 
@@ -207,12 +202,16 @@ class TestBuildIntakeAgent:
             mock_create.return_value = MagicMock()
             build_intake_agent()
 
-        mock_chat.assert_called_once_with(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            temperature=0,
-            api_key="test-key",
-        )
+        # ChatAnthropic is called twice: once for classify_model, once for orchestrator
+        assert mock_chat.call_count == 2
+        # Verify orchestrator model call
+        orchestrator_call = mock_chat.call_args_list[1]
+        assert orchestrator_call.kwargs == {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 1024,
+            "temperature": 0,
+            "api_key": "test-key",
+        }
         mock_create.assert_called_once()
 
     def test_raises_without_api_key(self):
@@ -299,71 +298,114 @@ class TestValidateClaimTool:
 
 
 class TestClassifyDomainTool:
-    """Tests for the classify_domain LangChain tool."""
+    """Tests for the classify_domain LangChain tool (closure-based).
+
+    classify_domain is defined inside build_intake_agent() and closes over
+    a ChatAnthropic model instance. Tests build the agent, extract the tool,
+    and invoke it with mocked model and stream writer.
+    """
 
     @staticmethod
-    def _make_mock_client(text: str) -> AsyncMock:
-        """Create a mock Anthropic client that returns the given text."""
+    def _make_mock_model(text: str) -> AsyncMock:
+        """Create a mock ChatAnthropic that returns an AIMessage with the given text."""
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text=text)]
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-        return mock_client
+        mock_response.content = text
+        mock_model = AsyncMock()
+        mock_model.ainvoke = AsyncMock(return_value=mock_response)
+        return mock_model
+
+    @staticmethod
+    def _get_classify_tool(mock_classify_model):
+        """Build the agent with a mocked classify model and extract classify_domain."""
+        with (
+            patch(
+                "swarm_reasoning.agents.intake.agent.ChatAnthropic",
+                return_value=mock_classify_model,
+            ),
+            patch(
+                "swarm_reasoning.agents.intake.agent.create_react_agent",
+            ) as mock_create,
+        ):
+            mock_create.return_value = MagicMock()
+            build_intake_agent(model=MagicMock())
+            tools = mock_create.call_args.kwargs["tools"]
+            return next(t for t in tools if t.name == "classify_domain")
 
     @pytest.mark.asyncio
     async def test_known_domain(self):
-        mock_client = self._make_mock_client("HEALTHCARE")
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch(
-                "anthropic.AsyncAnthropic",
-                return_value=mock_client,
-            ),
+        mock_model = self._make_mock_model("HEALTHCARE")
+        classify_tool = self._get_classify_tool(mock_model)
+
+        mock_writer = MagicMock()
+        with patch(
+            "swarm_reasoning.agents.intake.agent.get_stream_writer",
+            return_value=mock_writer,
         ):
-            result = await classify_domain.ainvoke(
+            result = await classify_tool.ainvoke(
                 {"claim_text": "Vaccines prevent disease"},
             )
         assert result["domain"] == "HEALTHCARE"
+        mock_writer.assert_called_once_with(
+            {"type": "progress", "message": "Domain classified: HEALTHCARE"},
+        )
 
     @pytest.mark.asyncio
     async def test_falls_back_to_other(self):
-        mock_client = self._make_mock_client("UNKNOWN_DOMAIN")
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch(
-                "anthropic.AsyncAnthropic",
-                return_value=mock_client,
-            ),
+        mock_model = self._make_mock_model("UNKNOWN_DOMAIN")
+        classify_tool = self._get_classify_tool(mock_model)
+
+        mock_writer = MagicMock()
+        with patch(
+            "swarm_reasoning.agents.intake.agent.get_stream_writer",
+            return_value=mock_writer,
         ):
-            result = await classify_domain.ainvoke(
+            result = await classify_tool.ainvoke(
                 {"claim_text": "Something vague"},
             )
         assert result["domain"] == "OTHER"
 
     @pytest.mark.asyncio
-    async def test_retries_on_api_error(self):
-        import anthropic as anthropic_lib
-
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="ECONOMICS")]
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(
+    async def test_retries_on_error(self):
+        mock_success = MagicMock()
+        mock_success.content = "ECONOMICS"
+        mock_model = AsyncMock()
+        mock_model.ainvoke = AsyncMock(
             side_effect=[
-                anthropic_lib.APIConnectionError(request=MagicMock()),
-                mock_response,
+                Exception("API connection error"),
+                mock_success,
             ],
         )
-        with (
-            patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}),
-            patch(
-                "anthropic.AsyncAnthropic",
-                return_value=mock_client,
-            ),
+        classify_tool = self._get_classify_tool(mock_model)
+
+        mock_writer = MagicMock()
+        with patch(
+            "swarm_reasoning.agents.intake.agent.get_stream_writer",
+            return_value=mock_writer,
         ):
-            result = await classify_domain.ainvoke(
+            result = await classify_tool.ainvoke(
                 {"claim_text": "GDP grew 3%"},
             )
         assert result["domain"] == "ECONOMICS"
+
+    @pytest.mark.asyncio
+    async def test_forwards_config_to_model(self):
+        mock_model = self._make_mock_model("SCIENCE")
+        classify_tool = self._get_classify_tool(mock_model)
+
+        mock_writer = MagicMock()
+        config = {"callbacks": [MagicMock()]}
+        with patch(
+            "swarm_reasoning.agents.intake.agent.get_stream_writer",
+            return_value=mock_writer,
+        ):
+            result = await classify_tool.ainvoke(
+                {"claim_text": "Climate change is real"},
+                config=config,
+            )
+        assert result["domain"] == "SCIENCE"
+        # Verify config was forwarded to the model
+        call_kwargs = mock_model.ainvoke.call_args.kwargs
+        assert "config" in call_kwargs
 
 
 # ---------------------------------------------------------------------------

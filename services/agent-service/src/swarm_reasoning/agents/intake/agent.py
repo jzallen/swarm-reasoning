@@ -16,7 +16,10 @@ import os
 from typing import Any
 
 from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langgraph.config import get_stream_writer
 from langgraph.prebuilt import create_react_agent
 
 from swarm_reasoning.agents.intake.models import IntakeOutput
@@ -42,6 +45,7 @@ from swarm_reasoning.temporal.errors import MissingApiKeyError
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "intake"
+CLASSIFY_MODEL = "claude-sonnet-4-6"
 
 _CLASSIFY_SYSTEM_PROMPT = (
     "You are a domain classifier for a fact-checking system. "
@@ -126,46 +130,8 @@ async def validate_claim(
         return {"valid": False, "error": ve.reason}
 
 
-@tool
-async def classify_domain(claim_text: str) -> dict[str, str]:
-    """Classify a claim into a domain category using LLM analysis.
-
-    Returns one of: HEALTHCARE, ECONOMICS, POLICY, SCIENCE, ELECTION, CRIME, OTHER.
-
-    Args:
-        claim_text: The claim text to classify.
-    """
-    import anthropic as anthropic_lib
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise MissingApiKeyError("ANTHROPIC_API_KEY is required for intake agent")
-    client = anthropic_lib.AsyncAnthropic(api_key=api_key)
-    domain: str | None = None
-
-    for attempt in range(2):
-        try:
-            prompt = build_prompt(claim_text, retry=(attempt > 0))
-            response = await client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=10,
-                temperature=0,
-                system=_CLASSIFY_SYSTEM_PROMPT,
-                messages=prompt,
-            )
-            result = response.content[0].text.strip().upper()
-        except (
-            anthropic_lib.AuthenticationError,
-            anthropic_lib.APIConnectionError,
-            anthropic_lib.RateLimitError,
-        ):
-            continue
-
-        if result in DOMAIN_VOCABULARY:
-            domain = result
-            break
-
-    return {"domain": domain or "OTHER"}
+# classify_domain is defined inside build_intake_agent() as a closure
+# over the ChatAnthropic model instance (see below).
 
 
 @tool
@@ -224,20 +190,17 @@ async def extract_entities(claim_text: str) -> dict[str, list[str]]:
 # Agent construction
 # ---------------------------------------------------------------------------
 
-TOOLS = [
-    validate_claim,
-    fetch_source_content,
-    classify_domain,
-    extract_entities,
-]
-
 
 def build_intake_agent(model=None):
     """Build the intake ReAct agent graph.
 
+    Tools that require LLM sub-calls (``classify_domain``) receive their
+    ``ChatAnthropic`` instance via closure and accept ``RunnableConfig``
+    for tracing propagation.
+
     Args:
-        model: Optional ChatAnthropic instance. If None, one is created from
-            the ANTHROPIC_API_KEY environment variable.
+        model: Optional ChatAnthropic instance for the orchestrator. If None,
+            one is created from the ANTHROPIC_API_KEY environment variable.
 
     Returns:
         A compiled LangGraph CompiledStateGraph that processes claims through
@@ -250,6 +213,51 @@ def build_intake_agent(model=None):
         The result dict contains ``structured_response`` (an IntakeOutput)
         and ``messages`` (the full conversation trace).
     """
+    classify_model = ChatAnthropic(
+        model=CLASSIFY_MODEL,
+        max_tokens=10,
+        temperature=0,
+    )
+
+    @tool
+    async def classify_domain(claim_text: str, config: RunnableConfig) -> dict[str, str]:
+        """Classify a claim into a domain category using LLM analysis.
+
+        Returns one of: HEALTHCARE, ECONOMICS, POLICY, SCIENCE, ELECTION, CRIME, OTHER.
+
+        Args:
+            claim_text: The claim text to classify.
+        """
+        domain: str | None = None
+
+        for attempt in range(2):
+            try:
+                prompt = build_prompt(claim_text, retry=(attempt > 0))
+                messages = [
+                    SystemMessage(content=_CLASSIFY_SYSTEM_PROMPT),
+                    HumanMessage(content=prompt[0]["content"]),
+                ]
+                response = await classify_model.ainvoke(messages, config=config)
+                result = response.content.strip().upper()
+            except Exception:
+                logger.warning(
+                    "Domain classification error (attempt %d)",
+                    attempt + 1,
+                    exc_info=True,
+                )
+                continue
+
+            if result in DOMAIN_VOCABULARY:
+                domain = result
+                break
+
+        domain = domain or "OTHER"
+
+        writer = get_stream_writer()
+        writer({"type": "progress", "message": f"Domain classified: {domain}"})
+
+        return {"domain": domain}
+
     if model is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
@@ -261,9 +269,11 @@ def build_intake_agent(model=None):
             api_key=api_key,
         )
 
+    tools = [validate_claim, fetch_source_content, classify_domain, extract_entities]
+
     return create_react_agent(
         model=model,
-        tools=TOOLS,
+        tools=tools,
         prompt=SYSTEM_PROMPT,
         response_format=IntakeOutput,
         name=AGENT_NAME,
