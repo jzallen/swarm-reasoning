@@ -23,7 +23,7 @@ from typing import Any
 from langgraph.types import RunnableConfig
 
 from swarm_reasoning.agents.intake import build_intake_agent
-from swarm_reasoning.pipeline.context import get_pipeline_context
+from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
 from swarm_reasoning.pipeline.state import PipelineState
 
 logger = logging.getLogger(__name__)
@@ -31,12 +31,47 @@ logger = logging.getLogger(__name__)
 AGENT_NAME = "intake"
 
 
+async def _run_agent_with_progress(
+    agent: Any,
+    messages: list[tuple[str, str]],
+    config: RunnableConfig,
+    ctx: PipelineContext,
+) -> dict[str, Any]:
+    """Run the intake agent with streaming, forwarding progress to Redis.
+
+    Uses ``stream_mode=["values", "custom"]`` to capture both the final
+    agent state and custom progress events emitted by tools via
+    ``get_stream_writer()``. Each custom event with a ``message`` field
+    is published to ``progress:{runId}`` via the pipeline context.
+
+    Returns the final agent state dict (with ``structured_response``).
+    """
+    result: dict[str, Any] = {}
+
+    async for chunk in agent.astream(
+        {"messages": messages},
+        config=config,
+        stream_mode=["values", "custom"],
+    ):
+        mode, data = chunk
+
+        if mode == "custom" and isinstance(data, dict):
+            message = data.get("message")
+            if message:
+                await ctx.publish_progress(AGENT_NAME, message)
+
+        if mode == "values":
+            result = data
+
+    return result
+
+
 async def intake_phase_a(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
     """Phase A: URL submission → extracted claims.
 
     Invokes the intake agent with the source URL. The agent runs
     fetch_content and decompose_claims, returning up to 5 factual claims
-    for user selection.
+    for user selection. Progress events from tools are streamed to Redis.
 
     Returns state updates with ``extracted_claims`` and ``article_text``.
     On failure (bad URL, no claims), returns ``error``.
@@ -49,9 +84,11 @@ async def intake_phase_a(state: PipelineState, config: RunnableConfig) -> dict[s
     await ctx.publish_progress(AGENT_NAME, "Starting intake: fetching article...")
 
     agent = build_intake_agent()
-    result = await agent.ainvoke(
-        {"messages": [("user", f"Process this URL: {url}")]},
-        config=config,
+    result = await _run_agent_with_progress(
+        agent,
+        [("user", f"Process this URL: {url}")],
+        config,
+        ctx,
     )
 
     ctx.heartbeat(AGENT_NAME)
@@ -84,7 +121,8 @@ async def intake_phase_b(state: PipelineState, config: RunnableConfig) -> dict[s
     """Phase B: selected claim → domain classification + entity extraction.
 
     Invokes the intake agent with the user's selected claim. The agent
-    runs classify_domain and extract_entities on that claim.
+    runs classify_domain and extract_entities on that claim. Progress
+    events from tools are streamed to Redis.
 
     Returns state updates with ``claim_domain``, ``entities``, and
     ``selected_claim``.
@@ -98,9 +136,11 @@ async def intake_phase_b(state: PipelineState, config: RunnableConfig) -> dict[s
     await ctx.publish_progress(AGENT_NAME, "Analyzing selected claim...")
 
     agent = build_intake_agent()
-    result = await agent.ainvoke(
-        {"messages": [("user", f"Classify and extract entities for this claim: {claim_text}")]},
-        config=config,
+    result = await _run_agent_with_progress(
+        agent,
+        [("user", f"Classify and extract entities for this claim: {claim_text}")],
+        config,
+        ctx,
     )
 
     ctx.heartbeat(AGENT_NAME)
