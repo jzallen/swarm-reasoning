@@ -6,7 +6,14 @@ a standalone claim sentence, supporting quote, and source citation.
 
 from __future__ import annotations
 
+import logging
+
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are a claim extraction system for a fact-checking pipeline. "
@@ -79,3 +86,31 @@ class DecomposeResult(BaseModel):
 
     article_date: str | None = None
     """Extracted publication date in YYYYMMDD format if found."""
+
+
+async def decompose_claims_llm(
+    article_text: str,
+    article_title: str,
+    model: ChatAnthropic,
+    config: RunnableConfig,
+) -> str:
+    """Call the LLM to extract factual claims from article text.
+
+    Sends the system prompt and article content to the model via
+    ``ChatAnthropic.ainvoke``, forwarding *config* for LangSmith tracing.
+
+    Returns the raw response text. Callers are responsible for JSON
+    parsing, field validation, and retry logic.
+
+    Raises ``Exception`` on LLM invocation failure (callers should handle).
+    """
+    user_content = (
+        f"Article Title: {article_title}\n\n"
+        f"Article Text:\n{article_text}"
+    )
+    messages = [
+        SystemMessage(content=_SYSTEM_PROMPT),
+        HumanMessage(content=user_content),
+    ]
+    response = await model.ainvoke(messages, config=config)
+    return response.content.strip()
