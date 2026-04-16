@@ -14,8 +14,7 @@
 - [ ] 1.3 Remove `normalize_claim` and `score_check_worthiness` tool definitions from `agent.py`
 - [ ] 1.4 Remove imports of `normalize_claim_text` and `score_claim_text` from `agent.py`
 - [ ] 1.5 Update system prompt in `agent.py` to remove steps 3 (normalize) and 4 (score)
-- [ ] 1.6 Delete unit tests for normalizer and scorer (find and remove)
-- [ ] 1.7 Verify remaining tests pass after deletion
+- [ ] 1.6 Delete existing unit tests for normalizer and scorer
 
 ---
 
@@ -26,7 +25,6 @@
 - [ ] 2.3 Delete `call_claude()` function from `domain_classification.py` — no longer needed
 - [ ] 2.4 Delete `_SYSTEM_PROMPT` and `_RETRY_SUFFIX` constants (prompt moves to tool closure)
 - [ ] 2.5 Keep `DOMAIN_VOCABULARY` and `build_prompt()` as module exports
-- [ ] 2.6 Update unit tests for domain classification imports
 
 ---
 
@@ -40,7 +38,6 @@
 - [ ] 3.6 Remove `"Do not infer or hallucinate."` from entity extraction system prompt
 - [ ] 3.7 Replace `create_react_agent` with `create_agent` in `agent.py`
 - [ ] 3.8 Verify no tool directly imports `AsyncAnthropic` or `anthropic` (grep check)
-- [ ] 3.9 Update unit tests for new tool signatures (config parameter)
 
 ---
 
@@ -56,7 +53,6 @@
 - [ ] 4.8 Implement word count check (minimum 50 words)
 - [ ] 4.9 Add `get_stream_writer()` progress events
 - [ ] 4.10 Add `fetch_content` tool definition in `agent.py` (no LLM sub-call, pure I/O)
-- [ ] 4.11 Write unit tests: valid URL, invalid format, unreachable, non-HTML, too short, extraction fallback
 
 ---
 
@@ -69,7 +65,6 @@
 - [ ] 5.5 Implement retry on JSON parse failure (one retry, then NO_FACTUAL_CLAIMS)
 - [ ] 5.6 Add `get_stream_writer()` progress events
 - [ ] 5.7 Add `decompose_claims` tool definition in `agent.py` with model via closure
-- [ ] 5.8 Write unit tests: successful extraction, opinion article, short article, malformed LLM response
 
 ---
 
@@ -81,7 +76,6 @@
 - [ ] 6.4 Update SYSTEM_PROMPT for new workflow: fetch → decompose → (user selects) → classify → extract
 - [ ] 6.5 Update `IntakeOutput` model in `models.py` for URL-based flow (extracted claims, selected claim)
 - [ ] 6.6 Replace `create_react_agent` with `create_agent`
-- [ ] 6.7 Write unit tests for agent builder: tool list, model configuration, system prompt content
 
 ---
 
@@ -91,7 +85,6 @@
 - [ ] 7.2 Update PipelineState translation for new IntakeOutput fields
 - [ ] 7.3 Implement `get_stream_writer()` → Redis progress translation in node wrapper
 - [ ] 7.4 Update observation publishing for new flow (CLAIM_TEXT from selected claim, not raw input)
-- [ ] 7.5 Write unit tests for pipeline node: Phase A output, Phase B output, progress translation
 
 ---
 
@@ -102,15 +95,53 @@
 - [ ] 8.3 Remove `check_duplicate()` — dedup moves to pipeline level with URL-based keying
 - [ ] 8.4 Remove `StreamPublishError`, `StreamNotOpenError` — pipeline node handles errors
 - [ ] 8.5 Update `__init__.py` exports
-- [ ] 8.6 Update tests for reduced module scope
 
 ---
 
 ## S9: Integration Tests
 
-- [ ] 9.1 Integration test: valid URL → fetch → decompose → 5 claims returned
-- [ ] 9.2 Integration test: invalid URL → error response with URL_INVALID_FORMAT
-- [ ] 9.3 Integration test: unreachable URL → error response with URL_UNREACHABLE
-- [ ] 9.4 Integration test: opinion article → NO_FACTUAL_CLAIMS
-- [ ] 9.5 Integration test: full flow — URL → claims → user selects → classify + extract → observations in stream
-- [ ] 9.6 Integration test: progress events emitted via get_stream_writer and translated to Redis
+Test the compiled intake agent graph as a whole using `FakeListChatModel` for
+deterministic LLM responses. Mock HTTP at the httpx transport layer. Focus on
+behavior, invariants, and side-effects — not internal construction.
+
+### Fixtures
+
+- [ ] 9.1 Create `conftest.py` with `@pytest.fixture(scope="module")` for compiled intake graph using `FakeListChatModel`
+- [ ] 9.2 Create httpx mock transport fixture returning canned HTML responses (news article, opinion piece, 404, non-HTML)
+- [ ] 9.3 Create helper to build `FakeListChatModel` with canned tool-call responses for each test scenario
+
+### Happy Path: URL → Claims → Selection → Analysis
+
+- [ ] 9.4 Valid news URL produces 1-5 claims, each with `claim_text`, `quote`, and `citation` (citation has `publisher`)
+- [ ] 9.5 After claim selection, agent produces domain classification from `DOMAIN_VOCABULARY` and entity extraction result
+- [ ] 9.6 Full flow state contains: fetched article text, extracted claims, selected claim, domain, entities
+- [ ] 9.7 Progress events are emitted via `stream_mode="custom"` at each tool boundary (fetch, decompose, classify, extract)
+
+### Rejection Paths: Agent Stops Early on Bad Input
+
+- [ ] 9.8 Invalid URL format → agent returns error, no HTTP request made, no LLM calls made
+- [ ] 9.9 Unreachable URL (HTTP 404/500/timeout) → agent returns error with `URL_UNREACHABLE`, no LLM calls made
+- [ ] 9.10 Non-HTML content type → agent returns error with `URL_NOT_HTML`
+- [ ] 9.11 Page with < 50 words of content → agent returns error with `CONTENT_TOO_SHORT`
+- [ ] 9.12 Opinion article with no factual claims → agent returns `NO_FACTUAL_CLAIMS`, no classify/extract calls made
+
+### Invariants
+
+- [ ] 9.13 No tool imports or instantiates `AsyncAnthropic` — grep assertion across `agents/intake/tools/`
+- [ ] 9.14 All LLM sub-calls receive `RunnableConfig` — verified by `FakeListChatModel` callback tracking
+- [ ] 9.15 `decompose_claims` never returns more than 5 claims, even if LLM response contains more
+- [ ] 9.16 Every `citation` in returned claims has a non-empty `publisher` field
+- [ ] 9.17 `quote` field in each claim is a substring of the original article text (exact match check)
+
+### Side-Effect Handling
+
+- [ ] 9.18 HTTP fetch uses 10s timeout — mock transport that sleeps verifies `TimeoutException` is caught
+- [ ] 9.19 Trafilatura extraction failure falls back to BeautifulSoup, then to error — not an unhandled exception
+- [ ] 9.20 Malformed LLM JSON on first decompose attempt triggers one retry, then `NO_FACTUAL_CLAIMS` — not a crash
+- [ ] 9.21 Domain classification with unrecognized LLM response falls back to `OTHER` after 2 attempts
+
+### State Transition Assertions
+
+- [ ] 9.22 Phase A output: PipelineState contains `extracted_claims` list and `article_text`, but no `domain` or `entities`
+- [ ] 9.23 Phase B output: PipelineState contains `selected_claim`, `domain`, `entities`, plus all Phase A fields
+- [ ] 9.24 Rejected input: PipelineState contains `error` field, no claim or analysis fields populated
