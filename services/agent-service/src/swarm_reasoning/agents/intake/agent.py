@@ -30,13 +30,18 @@ from swarm_reasoning.agents.intake.tools.claim_intake import (
     validate_claim_text,
     validate_source_url,
 )
+from swarm_reasoning.agents.intake.tools.decompose_claims import (
+    decompose_and_parse,
+)
 from swarm_reasoning.agents.intake.tools.domain_classification import (
     DOMAIN_VOCABULARY,
     build_prompt,
 )
 from swarm_reasoning.agents.intake.tools.entity_extractor import (
-    EntityExtractionResult,
     _SYSTEM_PROMPT as _ENTITY_SYSTEM_PROMPT,
+)
+from swarm_reasoning.agents.intake.tools.entity_extractor import (
+    EntityExtractionResult,
 )
 from swarm_reasoning.agents.intake.tools.fetch_content import (
     FetchError,
@@ -216,6 +221,12 @@ def build_intake_agent(model=None):
         temperature=0,
     )
 
+    decompose_model = ChatAnthropic(
+        model=DECOMPOSE_MODEL,
+        max_tokens=4096,
+        temperature=0,
+    )
+
     @tool
     async def classify_domain(claim_text: str, config: RunnableConfig) -> dict[str, str]:
         """Classify a claim into a domain category using LLM analysis.
@@ -286,9 +297,7 @@ def build_intake_agent(model=None):
                 data = json.loads(raw_text)
                 result = EntityExtractionResult.model_validate(data)
             except (json.JSONDecodeError, Exception):
-                logger.warning(
-                    "Entity extraction response parse error: %s", raw_text[:200]
-                )
+                logger.warning("Entity extraction response parse error: %s", raw_text[:200])
 
         entities = {
             "persons": result.persons,
@@ -300,11 +309,40 @@ def build_intake_agent(model=None):
 
         writer = get_stream_writer()
         entity_count = sum(len(v) for v in entities.values())
-        writer(
-            {"type": "progress", "message": f"Entities extracted: {entity_count} found"}
-        )
+        writer({"type": "progress", "message": f"Entities extracted: {entity_count} found"})
 
         return entities
+
+    @tool
+    async def decompose_claims_tool(
+        article_text: str,
+        article_title: str,
+        config: RunnableConfig,
+    ) -> dict[str, Any]:
+        """Decompose article text into up to 5 verifiable factual claims.
+
+        Each claim includes a standalone claim sentence, a supporting quote
+        from the article, and a citation with author, publisher, and date.
+
+        Call this after fetching source content. Pass the article text and
+        title from the fetch_source_content result.
+
+        Args:
+            article_text: The full extracted article text.
+            article_title: The article title.
+        """
+        writer = get_stream_writer()
+        claims = await decompose_and_parse(
+            article_text=article_text,
+            article_title=article_title,
+            model=decompose_model,
+            config=config,
+            writer=writer,
+        )
+        return {
+            "claims": [claim.model_dump() for claim in claims],
+            "count": len(claims),
+        }
 
     if model is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -317,7 +355,13 @@ def build_intake_agent(model=None):
             api_key=api_key,
         )
 
-    tools = [validate_claim, fetch_source_content, classify_domain, extract_entities]
+    tools = [
+        validate_claim,
+        fetch_source_content,
+        decompose_claims_tool,
+        classify_domain,
+        extract_entities,
+    ]
 
     return create_agent(
         model=model,
