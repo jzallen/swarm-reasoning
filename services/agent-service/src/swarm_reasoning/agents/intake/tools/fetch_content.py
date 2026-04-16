@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import httpx
 import trafilatura
 from bs4 import BeautifulSoup
+from dateutil import parser as dateutil_parser
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,21 @@ class FetchResult:
     extraction_method: str  # "trafilatura" or "beautifulsoup"
 
 
+def _normalize_date(date_str: str | None) -> str | None:
+    """Normalize a date string to YYYYMMDD format.
+
+    Returns ``None`` if *date_str* is falsy or cannot be parsed.
+    """
+    if not date_str:
+        return None
+    try:
+        dt = dateutil_parser.parse(date_str)
+    except (ValueError, OverflowError):
+        logger.debug("Could not parse date: %s", date_str)
+        return None
+    return dt.strftime("%Y%m%d")
+
+
 def validate_url(url: str) -> None:
     """Validate URL format. Raises FetchError if malformed."""
     if not _URL_PATTERN.match(url):
@@ -84,16 +100,12 @@ async def fetch_html(url: str) -> str:
     return response.text
 
 
-def extract_with_trafilatura(
-    html: str, url: str
-) -> tuple[str | None, str | None, str | None]:
+def extract_with_trafilatura(html: str, url: str) -> tuple[str | None, str | None, str | None]:
     """Extract main text, title, and date using trafilatura.
 
     Returns ``(text, title, date)``; any element may be ``None``.
     """
-    text = trafilatura.extract(
-        html, url=url, include_comments=False, include_tables=False
-    )
+    text = trafilatura.extract(html, url=url, include_comments=False, include_tables=False)
     metadata = trafilatura.extract_metadata(html, default_url=url)
     title = metadata.title if metadata else None
     date = metadata.date if metadata else None
@@ -192,14 +204,12 @@ async def fetch_content(url: str) -> FetchResult:
     if word_count < MIN_WORD_COUNT:
         raise FetchError(f"CONTENT_TOO_SHORT:{word_count}")
 
-    logger.info(
-        "Extracted %d words from %s via %s", word_count, url, extraction_method
-    )
+    logger.info("Extracted %d words from %s via %s", word_count, url, extraction_method)
 
     return FetchResult(
         url=url,
         title=title,
-        date=date,
+        date=_normalize_date(date),
         text=text,
         word_count=word_count,
         extraction_method=extraction_method,

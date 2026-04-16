@@ -24,6 +24,7 @@ from swarm_reasoning.agents.intake.tools.fetch_content import (
     FetchError,
     FetchResult,
     _count_words,
+    _normalize_date,
     extract_title_tag,
     extract_with_beautifulsoup,
     extract_with_trafilatura,
@@ -154,9 +155,7 @@ class TestExtractWithTrafilatura:
                 return_value=mock_metadata,
             ),
         ):
-            text, title, date = extract_with_trafilatura(
-                "<html>...</html>", "https://example.com"
-            )
+            text, title, date = extract_with_trafilatura("<html>...</html>", "https://example.com")
 
         assert text == "Article body text here"
         assert title == "Test Article"
@@ -170,9 +169,7 @@ class TestExtractWithTrafilatura:
                 return_value=None,
             ),
         ):
-            text, title, date = extract_with_trafilatura(
-                "<html>...</html>", "https://example.com"
-            )
+            text, title, date = extract_with_trafilatura("<html>...</html>", "https://example.com")
 
         assert text is None
         assert title is None
@@ -189,9 +186,7 @@ class TestExtractWithTrafilatura:
                 return_value=None,
             ),
         ):
-            text, title, date = extract_with_trafilatura(
-                "<html>...</html>", "https://example.com"
-            )
+            text, title, date = extract_with_trafilatura("<html>...</html>", "https://example.com")
 
         assert text == "Some text"
         assert title is None
@@ -274,6 +269,34 @@ class TestExtractTitleTag:
 
 
 # ---------------------------------------------------------------------------
+# _normalize_date
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeDate:
+    def test_iso_date(self):
+        assert _normalize_date("2024-01-15") == "20240115"
+
+    def test_iso_datetime(self):
+        assert _normalize_date("2024-03-15T10:00:00Z") == "20240315"
+
+    def test_english_date(self):
+        assert _normalize_date("January 10, 2020") == "20200110"
+
+    def test_slash_date(self):
+        assert _normalize_date("03/15/2024") == "20240315"
+
+    def test_returns_none_for_none(self):
+        assert _normalize_date(None) is None
+
+    def test_returns_none_for_empty(self):
+        assert _normalize_date("") is None
+
+    def test_returns_none_for_unparseable(self):
+        assert _normalize_date("not-a-date-at-all") is None
+
+
+# ---------------------------------------------------------------------------
 # _count_words
 # ---------------------------------------------------------------------------
 
@@ -350,13 +373,11 @@ class TestFetchContent:
                 return_value=mock_metadata,
             ),
         ):
-            result = await fetch_content(
-                "https://example.com/article"
-            )
+            result = await fetch_content("https://example.com/article")
 
         assert result.url == "https://example.com/article"
         assert result.title == "Great Article"
-        assert result.date == "2024-06-01"
+        assert result.date == "20240601"
         assert result.text == body_text
         assert result.word_count == MIN_WORD_COUNT
         assert result.extraction_method == "trafilatura"
@@ -380,9 +401,7 @@ class TestFetchContent:
                 return_value=None,
             ),
         ):
-            result = await fetch_content(
-                "https://example.com/article"
-            )
+            result = await fetch_content("https://example.com/article")
 
         assert result.extraction_method == "beautifulsoup"
         assert result.title == "Fallback Title"
@@ -444,10 +463,7 @@ class TestFetchContent:
         """When trafilatura extracts text but metadata has no title,
         the <title> tag should be used as a fallback."""
         body_text = " ".join(["word"] * MIN_WORD_COUNT)
-        html = (
-            f"<html><head><title>HTML Title</title></head>"
-            f"<body><p>{body_text}</p></body></html>"
-        )
+        html = f"<html><head><title>HTML Title</title></head><body><p>{body_text}</p></body></html>"
 
         with (
             patch(f"{_P}.fetch_html", return_value=html),
@@ -460,9 +476,7 @@ class TestFetchContent:
                 return_value=None,
             ),
         ):
-            result = await fetch_content(
-                "https://example.com/article"
-            )
+            result = await fetch_content("https://example.com/article")
 
         assert result.extraction_method == "trafilatura"
         assert result.title == "HTML Title"
@@ -472,10 +486,7 @@ class TestFetchContent:
         """When trafilatura has a title, it should NOT be overridden by
         the <title> tag."""
         body_text = " ".join(["word"] * MIN_WORD_COUNT)
-        html = (
-            f"<html><head><title>HTML Title</title></head>"
-            f"<body><p>{body_text}</p></body></html>"
-        )
+        html = f"<html><head><title>HTML Title</title></head><body><p>{body_text}</p></body></html>"
 
         mock_metadata = MagicMock()
         mock_metadata.title = "Trafilatura Title"
@@ -492,9 +503,7 @@ class TestFetchContent:
                 return_value=mock_metadata,
             ),
         ):
-            result = await fetch_content(
-                "https://example.com/article"
-            )
+            result = await fetch_content("https://example.com/article")
 
         assert result.extraction_method == "trafilatura"
         assert result.title == "Trafilatura Title"
@@ -521,10 +530,8 @@ class TestFetchContent:
                 return_value=mock_metadata,
             ),
         ):
-            result = await fetch_content(
-                "https://example.com/article"
-            )
+            result = await fetch_content("https://example.com/article")
 
         assert result.extraction_method == "beautifulsoup"
         assert result.title == "Trafilatura Title"
-        assert result.date == "2024-01-01"
+        assert result.date == "20240101"
