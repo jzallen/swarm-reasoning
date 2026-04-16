@@ -25,7 +25,7 @@ from swarm_reasoning.pipeline.context import PipelineContext
 from swarm_reasoning.pipeline.nodes.validation import (
     _build_cross_agent_urls,
     _build_validation_input,
-    validation_node,
+    run_validation,
 )
 from swarm_reasoning.pipeline.state import PipelineState
 
@@ -341,7 +341,7 @@ class TestValidationNode:
         """With no upstream data, validation node produces zero-value defaults."""
         ctx = _make_mock_ctx()
         state = _make_state()
-        result = await validation_node(state, _make_config(ctx))
+        result = await run_validation(state, _make_config(ctx))
 
         assert result["validated_urls"] == []
         assert result["convergence_score"] == 0.0
@@ -354,7 +354,7 @@ class TestValidationNode:
         """Validation node publishes start and completion progress."""
         ctx = _make_mock_ctx()
         state = _make_state()
-        await validation_node(state, _make_config(ctx))
+        await run_validation(state, _make_config(ctx))
 
         assert ctx.publish_progress.call_count == 2
         messages = [call.args[1] for call in ctx.publish_progress.call_args_list]
@@ -383,7 +383,7 @@ class TestValidationNode:
             instance = MockValidator.return_value
             instance.validate_all = AsyncMock(return_value=mock_validations)
 
-            result = await validation_node(state, _make_config(ctx))
+            result = await run_validation(state, _make_config(ctx))
 
         assert len(result["validated_urls"]) == 1
         assert result["validated_urls"][0]["status"] == "LIVE"

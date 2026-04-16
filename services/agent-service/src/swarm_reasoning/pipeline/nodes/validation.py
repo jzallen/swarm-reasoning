@@ -92,7 +92,7 @@ def _build_validation_input(state: PipelineState) -> ValidationInput:
 # ---------------------------------------------------------------------------
 
 
-async def validation_node(state: PipelineState, config: RunnableConfig) -> dict:
+async def run_validation(state: PipelineState, config: RunnableConfig) -> dict:
     """Validation pipeline node: delegates to the validation agent.
 
     Translates PipelineState → ValidationInput, runs the procedural

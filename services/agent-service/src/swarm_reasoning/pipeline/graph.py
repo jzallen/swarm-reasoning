@@ -24,7 +24,7 @@ from swarm_reasoning.pipeline.nodes.coverage import coverage_node
 from swarm_reasoning.pipeline.nodes.evidence import evidence_node
 from swarm_reasoning.pipeline.nodes.intake import intake_node
 from swarm_reasoning.pipeline.nodes.synthesizer import synthesizer_node
-from swarm_reasoning.pipeline.nodes.validation import validation_node
+from swarm_reasoning.pipeline.nodes.validation import run_validation
 from swarm_reasoning.pipeline.state import PipelineState
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 # coverage_node: imported from pipeline.nodes.coverage (M3.2)
 
-# validation_node: imported from pipeline.nodes.validation (M4.1)
+# run_validation: imported from pipeline.nodes.validation (M4.1)
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ def build_pipeline_graph() -> StateGraph:
     builder.add_node("intake", intake_node)
     builder.add_node("evidence", evidence_node)
     builder.add_node("coverage", coverage_node)
-    builder.add_node("validation", validation_node)
+    builder.add_node("validation", run_validation)
     builder.add_node("synthesizer", synthesizer_node)
 
     # --- Edges ---

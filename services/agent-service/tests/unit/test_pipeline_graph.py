@@ -24,7 +24,7 @@ from swarm_reasoning.pipeline.graph import (
     pipeline_graph,
     route_after_intake,
     synthesizer_node,
-    validation_node,
+    run_validation,
 )
 from swarm_reasoning.pipeline.state import PipelineState
 
@@ -116,12 +116,12 @@ class TestGraphStructure:
         assert synthesizer_node is real_synthesizer
 
     def test_validation_node_is_wired(self):
-        """Verify validation_node is the real implementation, not a placeholder."""
+        """Verify run_validation is the real implementation, not a placeholder."""
         from swarm_reasoning.pipeline.nodes.validation import (
-            validation_node as real_validation,
+            run_validation as real_validation,
         )
 
-        assert validation_node is real_validation
+        assert run_validation is real_validation
 
 
 class TestRouting:

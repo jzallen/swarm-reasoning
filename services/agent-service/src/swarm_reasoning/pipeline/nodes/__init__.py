@@ -13,7 +13,7 @@ from swarm_reasoning.pipeline.nodes.coverage import (
 from swarm_reasoning.pipeline.nodes.evidence import evidence_node
 from swarm_reasoning.pipeline.nodes.intake import intake_node
 from swarm_reasoning.pipeline.nodes.synthesizer import synthesizer_node
-from swarm_reasoning.pipeline.nodes.validation import validation_node
+from swarm_reasoning.pipeline.nodes.validation import run_validation
 
 __all__ = [
     "coverage_node",
@@ -22,6 +22,6 @@ __all__ = [
     "run_coverage_center",
     "run_coverage_left",
     "run_coverage_right",
+    "run_validation",
     "synthesizer_node",
-    "validation_node",
 ]
