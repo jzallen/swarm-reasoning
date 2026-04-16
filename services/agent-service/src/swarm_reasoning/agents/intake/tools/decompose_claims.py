@@ -187,3 +187,45 @@ def parse_decompose_response(raw_text: str) -> list[ExtractedClaim]:
         )
 
     return validated
+
+
+
+_MAX_RETRIES = 1
+"""Number of retry attempts on JSON parse failure."""
+
+
+async def decompose_claims(
+    article_text: str,
+    article_title: str,
+    model: ChatAnthropic,
+    config: RunnableConfig,
+) -> list[ExtractedClaim]:
+    """Extract factual claims from article text with retry on parse failure.
+
+    Calls :func:`decompose_claims_llm` and parses the response via
+    :func:`parse_decompose_response`. On ``JSONDecodeError`` or
+    ``ValueError``, retries once. If the retry also fails, returns an
+    empty list (NO_FACTUAL_CLAIMS).
+    """
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            raw_text = await decompose_claims_llm(
+                article_text, article_title, model, config
+            )
+            return parse_decompose_response(raw_text)
+        except (json.JSONDecodeError, ValueError) as exc:
+            if attempt < _MAX_RETRIES:
+                logger.warning(
+                    "Claim decomposition JSON parse failed (attempt %d), retrying: %s",
+                    attempt + 1,
+                    exc,
+                )
+            else:
+                logger.warning(
+                    "Claim decomposition JSON parse failed after %d attempts, "
+                    "returning NO_FACTUAL_CLAIMS: %s",
+                    attempt + 1,
+                    exc,
+                )
+                return []
+    return []  # unreachable, satisfies type checker
