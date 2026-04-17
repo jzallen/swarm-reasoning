@@ -6,9 +6,17 @@ deterministic, offline testing without real LLM API calls.
 
 from __future__ import annotations
 
+import uuid
+from typing import Any
+
 import httpx
 import pytest
-from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models.fake_chat_models import (
+    FakeListChatModel,
+    FakeMessagesListChatModel,
+)
+from langchain_core.messages import AIMessage
 from langgraph.prebuilt import create_react_agent
 
 from swarm_reasoning.agents.intake.agent import (
@@ -19,22 +27,86 @@ from swarm_reasoning.agents.intake.agent import (
 from swarm_reasoning.agents.intake.models import IntakeOutput
 
 
+def tool_call_message(
+    tool_name: str, args: dict[str, Any], call_id: str | None = None
+) -> AIMessage:
+    """Build an AIMessage with a single tool_call for fake orchestrator scripts."""
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": tool_name,
+                "args": args,
+                "id": call_id or f"call_{uuid.uuid4().hex[:8]}",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+
+def build_tool_call_orchestrator(
+    steps: list[AIMessage | dict[str, Any] | str],
+) -> FakeMessagesListChatModel:
+    """Build a fake orchestrator model that emits a scripted sequence of AIMessages.
+
+    Each step is coerced into an AIMessage:
+      - ``AIMessage`` — used verbatim
+      - ``{"tool": name, "args": {...}, "id": str?}`` — AIMessage with one tool_call
+      - ``str`` — AIMessage with that content and no tool_calls (terminal response)
+
+    The returned model cycles through the responses in order on each invocation,
+    which matches how ``create_react_agent`` drives the orchestrator through a
+    fetch → decompose → classify → extract sequence, followed by a final
+    terminal message.
+    """
+    messages: list[AIMessage] = []
+    for step in steps:
+        if isinstance(step, AIMessage):
+            messages.append(step)
+        elif isinstance(step, str):
+            messages.append(AIMessage(content=step))
+        elif isinstance(step, dict) and "tool" in step:
+            messages.append(
+                tool_call_message(
+                    tool_name=step["tool"],
+                    args=step.get("args", {}),
+                    call_id=step.get("id"),
+                )
+            )
+        else:
+            raise ValueError(f"Unrecognized orchestrator step: {step!r}")
+    return FakeMessagesListChatModel(responses=messages)
+
+
 def build_fake_intake_agent(
     orchestrator_responses: list[str] | None = None,
     decompose_responses: list[str] | None = None,
     classify_responses: list[str] | None = None,
     entity_responses: list[str] | None = None,
+    orchestrator_model: BaseChatModel | None = None,
 ):
-    """Build an intake agent graph with FakeListChatModel instances.
+    """Build an intake agent graph with fake chat models.
 
-    Each model parameter accepts a list of canned string responses that
-    the fake model returns in order. If None, a single empty response is
-    used as default.
+    ``decompose_responses``, ``classify_responses``, and ``entity_responses``
+    each accept a list of canned string responses returned in order by a
+    ``FakeListChatModel`` for the respective sub-tool LLM call.
+
+    The orchestrator (which drives the react loop via tool calls) can be
+    supplied in two mutually exclusive ways:
+
+    - ``orchestrator_model``: a pre-built ``BaseChatModel`` — typically the
+      result of :func:`build_tool_call_orchestrator` for scripted tool-call
+      scenarios. Takes precedence when provided.
+    - ``orchestrator_responses``: a list of string responses used to build a
+      ``FakeListChatModel``. Suitable only for scenarios that do not require
+      the orchestrator to emit tool calls.
+
+    If neither is provided, a no-op orchestrator that returns an empty string
+    is used.
 
     Returns the compiled LangGraph CompiledStateGraph.
     """
     import json
-    from typing import Any
 
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_core.runnables import RunnableConfig
@@ -55,7 +127,8 @@ def build_fake_intake_agent(
         EntityExtractionResult,
     )
 
-    orchestrator_model = FakeListChatModel(responses=orchestrator_responses or [""])
+    if orchestrator_model is None:
+        orchestrator_model = FakeListChatModel(responses=orchestrator_responses or [""])
     decompose_model = FakeListChatModel(responses=decompose_responses or ['{"claims": []}'])
     classify_model = FakeListChatModel(responses=classify_responses or ["OTHER"])
     entity_model = FakeListChatModel(
