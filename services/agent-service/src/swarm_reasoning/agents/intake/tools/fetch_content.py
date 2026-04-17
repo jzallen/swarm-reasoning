@@ -107,10 +107,17 @@ async def fetch_html(url: str) -> str:
 def extract_with_trafilatura(html: str, url: str) -> tuple[str | None, str | None, str | None]:
     """Extract main text, title, and date using trafilatura.
 
-    Returns ``(text, title, date)``; any element may be ``None``.
+    Returns ``(text, title, date)``; any element may be ``None``. If
+    trafilatura raises an exception internally, returns ``(None, None, None)``
+    so the caller can fall back to BeautifulSoup rather than surfacing the
+    raw parser error.
     """
-    text = trafilatura.extract(html, url=url, include_comments=False, include_tables=False)
-    metadata = trafilatura.extract_metadata(html, default_url=url)
+    try:
+        text = trafilatura.extract(html, url=url, include_comments=False, include_tables=False)
+        metadata = trafilatura.extract_metadata(html, default_url=url)
+    except Exception:
+        logger.exception("Trafilatura extraction raised; falling back to BeautifulSoup")
+        return None, None, None
     title = metadata.title if metadata else None
     date = metadata.date if metadata else None
     return text, title, date

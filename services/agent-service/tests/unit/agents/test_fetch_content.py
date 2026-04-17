@@ -523,6 +523,77 @@ class TestFetchContent:
         assert result.extraction_method == "trafilatura"
         assert result.title == "Trafilatura Title"
 
+    # -----------------------------------------------------------------
+    # S9/9.19: trafilatura failure → BS4 fallback → error, never an
+    # unhandled exception
+    # -----------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_trafilatura_raises_falls_back_to_beautifulsoup(self):
+        """When ``trafilatura`` raises during extraction (not just returns
+        ``None``), ``fetch_content`` must catch the exception and fall back
+        to BeautifulSoup. A well-formed HTML body rescues the call and
+        ``extraction_method`` flips to ``"beautifulsoup"``."""
+        body_text = " ".join(["word"] * MIN_WORD_COUNT)
+        html = (
+            f"<html><head><title>BS4 Rescued</title></head><body><p>{body_text}</p></body></html>"
+        )
+
+        with (
+            patch(f"{_P}.fetch_html", return_value=html),
+            patch(
+                f"{_P}.trafilatura.extract",
+                side_effect=RuntimeError("internal trafilatura failure"),
+            ),
+            patch(
+                f"{_P}.trafilatura.extract_metadata",
+                side_effect=RuntimeError("internal trafilatura failure"),
+            ),
+        ):
+            result = await fetch_content("https://example.com/article")
+
+        assert result.extraction_method == "beautifulsoup"
+        assert result.title == "BS4 Rescued"
+        assert result.word_count >= MIN_WORD_COUNT
+
+    @pytest.mark.asyncio
+    async def test_trafilatura_raises_then_bs4_empty_raises_fetch_error(self):
+        """When both extractors yield nothing — trafilatura raises and
+        BeautifulSoup finds no text — callers see a clean
+        ``FetchError("EXTRACTION_FAILED")`` rather than the underlying
+        parser exception. This is the full ``trafilatura → BS4 → error``
+        chain from the intake-redesign spec (S9/9.19)."""
+        html = "<html><body></body></html>"
+
+        with (
+            patch(f"{_P}.fetch_html", return_value=html),
+            patch(
+                f"{_P}.trafilatura.extract",
+                side_effect=RuntimeError("internal trafilatura failure"),
+            ),
+            patch(
+                f"{_P}.trafilatura.extract_metadata",
+                side_effect=RuntimeError("internal trafilatura failure"),
+            ),
+        ):
+            with pytest.raises(FetchError, match="EXTRACTION_FAILED"):
+                await fetch_content("https://example.com/empty")
+
+    def test_extract_with_trafilatura_swallows_exceptions(self):
+        """``extract_with_trafilatura`` returns ``(None, None, None)`` when
+        the underlying library raises, guaranteeing the orchestrator's
+        ``if not text`` branch triggers the BS4 fallback path instead of
+        letting the exception propagate."""
+        with patch(
+            f"{_P}.trafilatura.extract",
+            side_effect=RuntimeError("trafilatura blew up"),
+        ):
+            text, title, date = extract_with_trafilatura("<html>...</html>", "https://example.com")
+
+        assert text is None
+        assert title is None
+        assert date is None
+
     @pytest.mark.asyncio
     async def test_trafilatura_title_preserved_on_fallback(self):
         """When trafilatura returns no text but has metadata,
