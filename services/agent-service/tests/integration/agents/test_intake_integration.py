@@ -6,6 +6,8 @@ a valid news URL flows through ``fetch_content`` and ``decompose_claims``
 into a structured ``IntakeOutput`` with the expected claim shape.
 
 S9/9.4: Valid news URL produces 1-5 claims with claim_text, quote, citation.
+S9/9.5: After claim selection, agent produces domain classification and
+        entity extraction.
 """
 
 from __future__ import annotations
@@ -14,6 +16,9 @@ import json
 
 import pytest
 
+from swarm_reasoning.agents.intake.tools.domain_classification import (
+    DOMAIN_VOCABULARY,
+)
 from tests.integration.agents.conftest import (
     build_fake_intake_agent,
     build_tool_call_orchestrator,
@@ -209,3 +214,212 @@ class TestValidNewsUrlProducesClaims:
         assert payload["url"] == NEWS_URL
         assert payload["word_count"] >= 50
         assert "Economy Grows" in payload["title"]
+
+
+# ---------------------------------------------------------------------------
+# S9/9.5: After claim selection, agent produces domain + entity extraction
+# ---------------------------------------------------------------------------
+
+_SELECTED_CLAIM = _CANNED_CLAIMS[0]
+
+_ENTITY_JSON = json.dumps(
+    {
+        "persons": [],
+        "organizations": ["Bureau of Economic Analysis"],
+        "dates": ["20241001-20241231"],
+        "locations": ["United States"],
+        "statistics": ["3.2 percent"],
+    }
+)
+
+
+def _scripted_intake_agent_phase_b(
+    claims: list[dict],
+    selected_claim: dict,
+    *,
+    classify_responses: list[str] | None = None,
+    entity_responses: list[str] | None = None,
+    domain: str = "ECONOMICS",
+    entities: dict[str, list[str]] | None = None,
+):
+    """Build a fake intake agent that drives both phases end-to-end.
+
+    Orchestrator script: fetch → decompose → terminal → classify_domain →
+    extract_entities → terminal → IntakeOutput. This mirrors the full
+    two-phase workflow a real orchestrator would run once the user has
+    selected a claim from Phase A's extracted list.
+    """
+    decompose_json = json.dumps({"claims": claims})
+    entities = entities or {
+        "persons": [],
+        "organizations": ["Bureau of Economic Analysis"],
+        "dates": ["20241001-20241231"],
+        "locations": ["United States"],
+        "statistics": ["3.2 percent"],
+    }
+
+    orchestrator = build_tool_call_orchestrator(
+        [
+            {"tool": "fetch_content", "args": {"url": NEWS_URL}},
+            {
+                "tool": "decompose_claims",
+                "args": {
+                    "article_text": "scripted article text",
+                    "article_title": "scripted title",
+                },
+            },
+            {
+                "tool": "classify_domain",
+                "args": {"claim_text": selected_claim["claim_text"]},
+            },
+            {
+                "tool": "extract_entities",
+                "args": {"claim_text": selected_claim["claim_text"]},
+            },
+            "Analysis complete.",
+            {
+                "tool": "IntakeOutput",
+                "args": {
+                    "article_text": "scripted article text",
+                    "article_title": "Economy Grows 3.2% in Q4",
+                    "article_date": "20250115",
+                    "extracted_claims": claims,
+                    "selected_claim": selected_claim,
+                    "domain": domain,
+                    "entities": entities,
+                },
+            },
+        ]
+    )
+    return build_fake_intake_agent(
+        orchestrator_model=orchestrator,
+        decompose_responses=[decompose_json],
+        classify_responses=classify_responses or [domain],
+        entity_responses=entity_responses or [_ENTITY_JSON],
+    )
+
+
+class TestSelectedClaimProducesDomainAndEntities:
+    """S9/9.5: after claim selection, agent produces domain classification
+    from DOMAIN_VOCABULARY and entity extraction result."""
+
+    @pytest.mark.asyncio
+    async def test_structured_response_has_domain(self, patched_fetch_httpx):
+        """IntakeOutput.domain is populated with a DOMAIN_VOCABULARY value."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        intake_output = result["structured_response"]
+        assert "domain" in intake_output
+        assert intake_output["domain"] in DOMAIN_VOCABULARY
+
+    @pytest.mark.asyncio
+    async def test_structured_response_has_entities(self, patched_fetch_httpx):
+        """IntakeOutput.entities carries all five NER entity buckets."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        intake_output = result["structured_response"]
+        assert "entities" in intake_output
+        entities = intake_output["entities"]
+        for bucket in ("persons", "organizations", "dates", "locations", "statistics"):
+            assert bucket in entities, f"missing entity bucket: {bucket}"
+            assert isinstance(entities[bucket], list)
+
+    @pytest.mark.asyncio
+    async def test_structured_response_has_selected_claim(self, patched_fetch_httpx):
+        """IntakeOutput carries the selected_claim alongside domain/entities."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        intake_output = result["structured_response"]
+        assert intake_output["selected_claim"]["claim_text"] == _SELECTED_CLAIM["claim_text"]
+
+    @pytest.mark.asyncio
+    async def test_classify_domain_tool_runs_on_selected_claim(self, patched_fetch_httpx):
+        """classify_domain runs exactly once against the selected claim_text
+        and its ToolMessage carries a DOMAIN_VOCABULARY value."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        classify_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "classify_domain"
+        ]
+        assert len(classify_messages) == 1
+
+        payload = json.loads(classify_messages[0].content)
+        assert payload["domain"] in DOMAIN_VOCABULARY
+
+    @pytest.mark.asyncio
+    async def test_extract_entities_tool_runs_on_selected_claim(self, patched_fetch_httpx):
+        """extract_entities runs exactly once and its ToolMessage payload
+        carries the five NER buckets."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        entity_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "extract_entities"
+        ]
+        assert len(entity_messages) == 1
+
+        payload = json.loads(entity_messages[0].content)
+        for bucket in ("persons", "organizations", "dates", "locations", "statistics"):
+            assert bucket in payload
+            assert isinstance(payload[bucket], list)
+
+    @pytest.mark.asyncio
+    async def test_phase_b_runs_after_phase_a(self, patched_fetch_httpx):
+        """Tool-call order is fetch → decompose → classify → extract, so
+        Phase B (classify + extract) only runs after Phase A (fetch +
+        decompose) completes."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        tool_names = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool"
+        ]
+        ordering_tools = [
+            name
+            for name in tool_names
+            if name in {"fetch_content", "decompose_claims", "classify_domain", "extract_entities"}
+        ]
+        assert ordering_tools == [
+            "fetch_content",
+            "decompose_claims",
+            "classify_domain",
+            "extract_entities",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_classify_domain_llm_response_propagates(self, patched_fetch_httpx):
+        """The fake classify LLM's response drives the domain value in the
+        ToolMessage payload, proving the sub-call actually ran (not just the
+        scripted IntakeOutput path)."""
+        agent = _scripted_intake_agent_phase_b(
+            _CANNED_CLAIMS,
+            _SELECTED_CLAIM,
+            classify_responses=["HEALTHCARE"],
+            domain="HEALTHCARE",
+        )
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        classify_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "classify_domain"
+        ]
+        payload = json.loads(classify_messages[0].content)
+        assert payload["domain"] == "HEALTHCARE"
