@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
-from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -51,10 +51,16 @@ class LLMUnavailableError(Exception):
 
 async def extract_entities_llm(
     claim: str,
-    client: AsyncAnthropic,
+    client: Any,
     max_tokens: int = 512,
 ) -> EntityExtractionResult:
     """Extract named entities from a claim using Claude LLM.
+
+    ``client`` is a duck-typed Anthropic async client exposing
+    ``client.messages.create(...)``. The concrete type is accepted as ``Any``
+    so this module does not take a hard dependency on the low-level SDK
+    client -- the new intake flow routes LLM sub-calls through
+    ``ChatAnthropic`` via ``RunnableConfig`` instead (see agent.py).
 
     Returns an EntityExtractionResult with five entity lists.
     Raises LLMUnavailableError on API failures.
