@@ -361,6 +361,7 @@ def _build_mock_handler(
       - ``*/news-article`` → 200, NEWS_ARTICLE_HTML
       - ``*/opinion-article`` → 200, OPINION_ARTICLE_HTML
       - ``*/not-found`` → 404
+      - ``*/server-error`` → 500
       - ``*/non-html`` → 200, application/pdf content
       - ``*/short-content`` → 200, SHORT_CONTENT_HTML
       - ``*/timeout`` → raises TimeoutError (simulates FETCH_TIMEOUT)
@@ -384,6 +385,11 @@ def _build_mock_handler(
             404,
             {"content-type": "text/html"},
             b"<html><body>Not Found</body></html>",
+        ),
+        "server-error": (
+            500,
+            {"content-type": "text/html"},
+            b"<html><body>Internal Server Error</body></html>",
         ),
         "non-html": (
             200,

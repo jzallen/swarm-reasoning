@@ -14,6 +14,8 @@ S9/9.7: Progress events are emitted via ``stream_mode="custom"`` at each
         tool boundary (fetch, decompose, classify, extract).
 S9/9.8: Invalid URL format -> agent returns ``URL_INVALID_FORMAT`` error
         with no HTTP request and no sub-LLM tool calls.
+S9/9.9: Unreachable URL (HTTP 404/500/timeout) -> agent returns ``URL_UNREACHABLE``
+        error; HTTP request is attempted and fails, no sub-LLM tool calls run.
 """
 
 from __future__ import annotations
@@ -910,3 +912,198 @@ class TestInvalidUrlFormatReturnsError:
         assert not state.get("selected_claim")
         assert not state.get("domain")
         assert not state.get("entities")
+
+
+# ---------------------------------------------------------------------------
+# S9/9.9: Unreachable URL (HTTP 404/500/timeout) -> error with URL_UNREACHABLE
+# ---------------------------------------------------------------------------
+
+
+# (url_suffix, expected fetch_content error code for that failure mode)
+# The real fetch_content tool maps each network condition to its own reason
+# string; the orchestrator's job is to collapse these into the canonical
+# user-facing ``URL_UNREACHABLE`` code in the final IntakeOutput.
+_UNREACHABLE_CASES = [
+    ("https://example.com/not-found", "HTTP_404"),
+    ("https://example.com/server-error", "HTTP_500"),
+    ("https://example.com/timeout", "FETCH_TIMEOUT"),
+]
+
+
+def _unreachable_url_agent(bad_url: str):
+    """Scripted orchestrator for the unreachable-URL rejection path.
+
+    Replays the trajectory a real orchestrator would take after observing
+    ``fetch_content`` return ``success=False``: no further tool calls, and
+    an IntakeOutput carrying only ``error="URL_UNREACHABLE"`` (the canonical
+    user-facing code that collapses HTTP_4xx / HTTP_5xx / FETCH_TIMEOUT).
+    """
+    orchestrator = build_tool_call_orchestrator(
+        [
+            {"tool": "fetch_content", "args": {"url": bad_url}},
+            "URL unreachable, stopping intake.",
+            {
+                "tool": "IntakeOutput",
+                "args": {
+                    "article_text": "",
+                    "article_title": "",
+                    "article_date": "",
+                    "extracted_claims": [],
+                    "error": "URL_UNREACHABLE",
+                },
+            },
+        ]
+    )
+    return build_fake_intake_agent(orchestrator_model=orchestrator)
+
+
+class TestUnreachableUrlReturnsError:
+    """S9/9.9: URLs that validate syntactically but fail the HTTP round-trip
+    (404, 500, or timeout) short-circuit the intake pipeline with
+    ``URL_UNREACHABLE``.
+
+    Guarantees:
+      - structured_response carries ``error="URL_UNREACHABLE"`` regardless
+        of which underlying network failure occurred.
+      - ``httpx.AsyncClient`` IS constructed (the URL passes format
+        validation, so fetch_html runs and the failure surfaces from the
+        HTTP layer — unlike S9/9.8 where construction is skipped entirely).
+      - ``fetch_content``'s ToolMessage records the concrete failure reason
+        (HTTP_404 / HTTP_500 / FETCH_TIMEOUT) — proving the real tool ran
+        against the mock transport, not just the scripted IntakeOutput.
+      - Phase A/B sub-tools (decompose_claims, classify_domain,
+        extract_entities) never run, so their LLM sub-calls are
+        transitively never made.
+    """
+
+    @pytest.mark.parametrize(("bad_url", "expected_fetch_error"), _UNREACHABLE_CASES)
+    @pytest.mark.asyncio
+    async def test_structured_response_has_url_unreachable_error(
+        self, patched_fetch_httpx, bad_url, expected_fetch_error
+    ):
+        """Each unreachable-URL failure mode yields the same rejection code."""
+        agent = _unreachable_url_agent(bad_url)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {bad_url}")]})
+
+        state = result["structured_response"]
+        assert state.get("error") == "URL_UNREACHABLE"
+
+    @pytest.mark.parametrize(("bad_url", "expected_fetch_error"), _UNREACHABLE_CASES)
+    @pytest.mark.asyncio
+    async def test_http_request_is_attempted(
+        self, patched_fetch_httpx, bad_url, expected_fetch_error
+    ):
+        """Format-valid URLs reach the HTTP layer -- ``httpx.AsyncClient``
+        is constructed so the transport can surface the failure. This is
+        what distinguishes 9.9 from 9.8 (which rejects before HTTP)."""
+        agent = _unreachable_url_agent(bad_url)
+
+        await agent.ainvoke({"messages": [("user", f"Process this URL: {bad_url}")]})
+
+        assert patched_fetch_httpx.call_count >= 1, (
+            "httpx.AsyncClient must be constructed on the unreachable-URL "
+            f"path; got {patched_fetch_httpx.call_count} calls"
+        )
+
+    @pytest.mark.parametrize(("bad_url", "expected_fetch_error"), _UNREACHABLE_CASES)
+    @pytest.mark.asyncio
+    async def test_fetch_content_tool_records_network_failure(
+        self, patched_fetch_httpx, bad_url, expected_fetch_error
+    ):
+        """fetch_content ran exactly once; its ToolMessage records the
+        specific network failure reason that the orchestrator would then
+        collapse into URL_UNREACHABLE."""
+        agent = _unreachable_url_agent(bad_url)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {bad_url}")]})
+
+        fetch_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "fetch_content"
+        ]
+        assert len(fetch_messages) == 1
+
+        payload = json.loads(fetch_messages[0].content)
+        assert payload["success"] is False
+        assert payload["error"] == expected_fetch_error
+        assert payload["url"] == bad_url
+
+    @pytest.mark.parametrize(("bad_url", "expected_fetch_error"), _UNREACHABLE_CASES)
+    @pytest.mark.asyncio
+    async def test_no_sub_llm_tools_run(self, patched_fetch_httpx, bad_url, expected_fetch_error):
+        """decompose_claims / classify_domain / extract_entities never run
+        on the unreachable-URL rejection path -- their LLM sub-calls are
+        never made."""
+        agent = _unreachable_url_agent(bad_url)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {bad_url}")]})
+
+        sub_tool_names = {"decompose_claims", "classify_domain", "extract_entities"}
+        ran = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) in sub_tool_names
+        ]
+        assert ran == [], f"expected no sub-tool messages on rejection, got {ran}"
+
+    @pytest.mark.parametrize(("bad_url", "expected_fetch_error"), _UNREACHABLE_CASES)
+    @pytest.mark.asyncio
+    async def test_rejection_state_has_no_success_fields(
+        self, patched_fetch_httpx, bad_url, expected_fetch_error
+    ):
+        """Rejection payload is minimal: no article text, no claims, no
+        domain/entities populated -- success-path fields stay absent."""
+        agent = _unreachable_url_agent(bad_url)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {bad_url}")]})
+
+        state = result["structured_response"]
+        assert state.get("error") == "URL_UNREACHABLE"
+        assert not state.get("article_text")
+        assert not state.get("extracted_claims")
+        assert not state.get("selected_claim")
+        assert not state.get("domain")
+        assert not state.get("entities")
+
+    @pytest.mark.asyncio
+    async def test_fetch_error_progress_event_is_emitted(self, patched_fetch_httpx):
+        """On network failure, ``fetch_content`` still emits a
+        ``Fetch error: ...`` progress event via the custom stream --
+        the SSE relay sees the failure boundary."""
+        bad_url = "https://example.com/not-found"
+        agent = _unreachable_url_agent(bad_url)
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {bad_url}")
+        )
+
+        assert any("Fetching article content" in m for m in messages), messages
+        assert any(m.startswith("Fetch error:") for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_different_failure_modes_collapse_to_same_user_code(self, patched_fetch_httpx):
+        """404, 500, and timeout all produce distinct fetch_content error
+        reasons, but they collapse into the same user-facing
+        ``URL_UNREACHABLE`` code in the final IntakeOutput. This is the
+        core contract 9.9 enforces."""
+        fetch_errors: set[str] = set()
+        user_errors: set[str] = set()
+
+        for bad_url, _expected in _UNREACHABLE_CASES:
+            agent = _unreachable_url_agent(bad_url)
+            result = await agent.ainvoke({"messages": [("user", f"Process this URL: {bad_url}")]})
+
+            fetch_messages = [
+                m
+                for m in result["messages"]
+                if getattr(m, "type", None) == "tool"
+                and getattr(m, "name", None) == "fetch_content"
+            ]
+            payload = json.loads(fetch_messages[0].content)
+            fetch_errors.add(payload["error"])
+            user_errors.add(result["structured_response"].get("error"))
+
+        assert fetch_errors == {"HTTP_404", "HTTP_500", "FETCH_TIMEOUT"}
+        assert user_errors == {"URL_UNREACHABLE"}
