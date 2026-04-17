@@ -29,6 +29,10 @@ S9/9.17: Every extracted claim's ``quote`` field is a verbatim substring of
         the article text returned by ``fetch_content`` -- locks the
         design.md §7 invariant that a quote is a single sentence drawn from
         the article, not a paraphrase or fabrication.
+S9/9.18: HTTP fetch uses a 10-second request timeout, and a mock transport
+        raising ``httpx.TimeoutException`` is caught at the fetch layer and
+        surfaced as ``error='FETCH_TIMEOUT'`` in the ``fetch_content``
+        ToolMessage payload (no uncaught exception reaches the agent).
 """
 
 from __future__ import annotations
@@ -2029,3 +2033,115 @@ class TestQuoteIsSubstringOfArticleText:
             "article text -- the NEWS_ARTICLE_HTML fixture or the sentinel "
             "string needs to be updated so this negative control is meaningful"
         )
+
+
+# ---------------------------------------------------------------------------
+# S9/9.18: HTTP fetch uses 10s timeout — mock transport verifies
+#          TimeoutException caught
+# ---------------------------------------------------------------------------
+
+
+TIMEOUT_URL = "https://example.com/timeout"
+
+
+def _timeout_url_agent(bad_url: str):
+    """Scripted orchestrator for the timeout rejection path.
+
+    Replays the trajectory a real orchestrator would take after observing
+    ``fetch_content`` return ``success=False`` with ``error="FETCH_TIMEOUT"``:
+    no further tool calls, and an IntakeOutput carrying only the canonical
+    user-facing ``URL_UNREACHABLE`` code (which collapses FETCH_TIMEOUT).
+    """
+    orchestrator = build_tool_call_orchestrator(
+        [
+            {"tool": "fetch_content", "args": {"url": bad_url}},
+            "URL timed out, stopping intake.",
+            {
+                "tool": "IntakeOutput",
+                "args": {
+                    "article_text": "",
+                    "article_title": "",
+                    "article_date": "",
+                    "extracted_claims": [],
+                    "error": "URL_UNREACHABLE",
+                },
+            },
+        ]
+    )
+    return build_fake_intake_agent(orchestrator_model=orchestrator)
+
+
+class TestHttpFetchUses10SecondTimeout:
+    """S9/9.18: The intake agent's HTTP fetch uses a 10-second request
+    timeout, and ``httpx.TimeoutException`` raised by the transport is
+    caught at the fetch layer and surfaced as ``FETCH_TIMEOUT`` in the
+    ``fetch_content`` ToolMessage payload -- no uncaught exception
+    escapes to the orchestrator.
+
+    Guarantees:
+      - ``fetch_content``'s request timeout constant is exactly 10.0s
+        (spec S4/4.4 / intake-redesign).
+      - Every ``httpx.AsyncClient`` constructed by the fetch tool passes
+        ``timeout=10.0``; the constant propagates end-to-end.
+      - A mock transport raising ``httpx.TimeoutException`` is translated
+        into a ``fetch_content`` payload with ``success=False,
+        error='FETCH_TIMEOUT'``; the exception never leaks to the agent.
+    """
+
+    def test_request_timeout_constant_is_10_seconds(self):
+        """The module-level ``_REQUEST_TIMEOUT`` is 10.0s per the
+        intake-redesign spec. Guarding the constant itself defends against
+        silent regressions during future refactors of ``fetch_content``."""
+        from swarm_reasoning.agents.intake.tools.fetch_content import (
+            _REQUEST_TIMEOUT,
+        )
+
+        assert _REQUEST_TIMEOUT == 10.0, (
+            "fetch_content HTTP timeout must be 10.0s per intake-redesign "
+            f"spec S4/4.4; got {_REQUEST_TIMEOUT}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_httpx_async_client_constructed_with_10s_timeout(self, patched_fetch_httpx):
+        """End-to-end check: invoking the intake agent constructs
+        ``httpx.AsyncClient`` with ``timeout=10.0`` on the fetch path.
+        This proves the spec constant propagates through ``fetch_html``
+        into the live client construction, not just the module source."""
+        agent = _timeout_url_agent(TIMEOUT_URL)
+
+        await agent.ainvoke({"messages": [("user", f"Process this URL: {TIMEOUT_URL}")]})
+
+        assert patched_fetch_httpx.call_count >= 1, (
+            "httpx.AsyncClient must be constructed on the fetch path; "
+            f"got {patched_fetch_httpx.call_count} calls"
+        )
+        timeouts = [call.kwargs.get("timeout") for call in patched_fetch_httpx.call_args_list]
+        assert all(t == 10.0 for t in timeouts), (
+            f"httpx.AsyncClient called with timeouts={timeouts}; expected 10.0"
+        )
+
+    @pytest.mark.asyncio
+    async def test_mock_timeout_exception_is_caught_as_fetch_timeout(self, patched_fetch_httpx):
+        """The mock transport raises ``httpx.TimeoutException`` for any
+        URL ending ``/timeout``. ``fetch_html`` must catch it and raise
+        ``FetchError('FETCH_TIMEOUT')``, which the ``fetch_content`` tool
+        surfaces as ``success=False, error='FETCH_TIMEOUT'`` in its
+        ToolMessage payload. No uncaught ``httpx.TimeoutException``
+        escapes the tool."""
+        agent = _timeout_url_agent(TIMEOUT_URL)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {TIMEOUT_URL}")]})
+
+        fetch_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "fetch_content"
+        ]
+        assert len(fetch_messages) == 1, (
+            f"fetch_content must run exactly once; got {len(fetch_messages)}"
+        )
+
+        payload = json.loads(fetch_messages[0].content)
+        assert payload["success"] is False
+        assert payload["error"] == "FETCH_TIMEOUT"
+        assert payload["url"] == TIMEOUT_URL

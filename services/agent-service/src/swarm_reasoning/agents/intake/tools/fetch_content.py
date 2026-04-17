@@ -26,8 +26,8 @@ MIN_WORD_COUNT = 50
 MAX_CONTENT_BYTES = 5 * 1024 * 1024
 """Maximum response body size (5 MB)."""
 
-_REQUEST_TIMEOUT = 30.0
-"""HTTP request timeout in seconds."""
+_REQUEST_TIMEOUT = 10.0
+"""HTTP request timeout in seconds (intake-redesign spec S4/4.4)."""
 
 _USER_AGENT = "SwarmReasoning/1.0 (fact-checking bot)"
 
