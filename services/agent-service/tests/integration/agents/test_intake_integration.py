@@ -10,6 +10,8 @@ S9/9.5: After claim selection, agent produces domain classification and
         entity extraction.
 S9/9.6: Full flow state contains fetched article text, extracted claims,
         selected claim, domain, and entities together.
+S9/9.7: Progress events are emitted via ``stream_mode="custom"`` at each
+        tool boundary (fetch, decompose, classify, extract).
 """
 
 from __future__ import annotations
@@ -564,3 +566,211 @@ class TestFullFlowStateContainsAllRequiredFields:
         for bucket in ("persons", "organizations", "dates", "locations", "statistics"):
             assert bucket in tool_messages["extract_entities"]
             assert bucket in state["entities"]
+
+
+# ---------------------------------------------------------------------------
+# S9/9.7: Progress events emitted via stream_mode="custom" at each tool boundary
+# ---------------------------------------------------------------------------
+
+
+async def _collect_custom_stream(agent, user_message: str) -> list[dict]:
+    """Drive the agent via ``astream(stream_mode="custom")`` and collect the
+    writer-emitted payloads.
+
+    Tools call ``get_stream_writer()`` to publish ``{"type": "progress",
+    "message": ...}`` dicts. With ``stream_mode="custom"`` these surface as
+    astream events — SSE/Redis relay consumes them verbatim.
+    """
+    events: list[dict] = []
+    async for event in agent.astream(
+        {"messages": [("user", user_message)]},
+        stream_mode="custom",
+    ):
+        events.append(event)
+    return events
+
+
+def _progress_messages(events: list[dict]) -> list[str]:
+    """Extract ``message`` strings from progress-typed events."""
+    return [e["message"] for e in events if e.get("type") == "progress"]
+
+
+class TestToolBoundaryProgressEvents:
+    """S9/9.7: each tool boundary emits a progress event via the langgraph
+    stream writer; ``astream(stream_mode="custom")`` yields those events to
+    the caller for relay to the SSE/Redis progress channel.
+
+    Tools under test (one event-emitting boundary each):
+      - fetch_content     → "Fetching article content..." + "Content extracted: N words"
+      - decompose_claims  → "Analyzing article for factual claims..." + "Found N claims for review"
+      - classify_domain   → "Domain classified: DOMAIN"
+      - extract_entities  → "Entities extracted: N found"
+    """
+
+    @pytest.mark.asyncio
+    async def test_stream_yields_progress_events(self, patched_fetch_httpx):
+        """``astream(stream_mode="custom")`` yields at least one progress
+        event — the writer channel is wired through to the caller."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        events = await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+
+        assert events, "stream_mode='custom' yielded no events"
+        assert any(e.get("type") == "progress" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_every_event_is_progress_dict(self, patched_fetch_httpx):
+        """Every event on the custom stream is a progress-typed dict with a
+        non-empty string message — the SSE relay contract."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        events = await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+
+        assert events
+        for event in events:
+            assert isinstance(event, dict)
+            assert event.get("type") == "progress"
+            assert isinstance(event.get("message"), str)
+            assert event["message"], "progress message must be non-empty"
+
+    @pytest.mark.asyncio
+    async def test_fetch_content_boundary_emits_progress(self, patched_fetch_httpx):
+        """fetch_content emits start and completion progress events."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+        )
+
+        assert any("Fetching article content" in m for m in messages), messages
+        assert any("Content extracted" in m and "words" in m for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_decompose_claims_boundary_emits_progress(self, patched_fetch_httpx):
+        """decompose_claims emits analyzing + found-N-claims progress events."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+        )
+
+        assert any("Analyzing article for factual claims" in m for m in messages), messages
+        assert any("Found" in m and "claims for review" in m for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_classify_domain_boundary_emits_progress(self, patched_fetch_httpx):
+        """classify_domain emits a ``Domain classified: DOMAIN`` event carrying
+        the classified value."""
+        agent = _scripted_intake_agent_phase_b(
+            _CANNED_CLAIMS,
+            _SELECTED_CLAIM,
+            classify_responses=["ECONOMICS"],
+            domain="ECONOMICS",
+        )
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+        )
+
+        assert any(m == "Domain classified: ECONOMICS" for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_extract_entities_boundary_emits_progress(self, patched_fetch_httpx):
+        """extract_entities emits an ``Entities extracted: N found`` event
+        whose count matches the returned buckets."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+        )
+
+        # Default canned entities: 1 org + 1 date + 1 location + 1 statistic = 4 entities.
+        expected_count = sum(
+            len(v)
+            for v in {
+                "persons": [],
+                "organizations": ["Bureau of Economic Analysis"],
+                "dates": ["20241001-20241231"],
+                "locations": ["United States"],
+                "statistics": ["3.2 percent"],
+            }.values()
+        )
+        assert any(m == f"Entities extracted: {expected_count} found" for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_all_four_tool_boundaries_emit_in_order(self, patched_fetch_httpx):
+        """All four tool boundaries (fetch → decompose → classify → extract)
+        emit progress events, and their first occurrences arrive in that
+        order — the SSE timeline matches the tool-call timeline."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+        )
+
+        def first_index(predicate) -> int:
+            for i, m in enumerate(messages):
+                if predicate(m):
+                    return i
+            return -1
+
+        fetch_idx = first_index(lambda m: "Fetching article content" in m)
+        decompose_idx = first_index(lambda m: "Analyzing article for factual claims" in m)
+        classify_idx = first_index(lambda m: m.startswith("Domain classified:"))
+        extract_idx = first_index(lambda m: m.startswith("Entities extracted:"))
+
+        for label, idx in (
+            ("fetch", fetch_idx),
+            ("decompose", decompose_idx),
+            ("classify", classify_idx),
+            ("extract", extract_idx),
+        ):
+            assert idx >= 0, f"no progress event from {label} boundary: {messages}"
+
+        assert fetch_idx < decompose_idx < classify_idx < extract_idx, messages
+
+    @pytest.mark.asyncio
+    async def test_fetch_error_path_emits_error_progress(self, patched_fetch_httpx):
+        """On fetch failure, fetch_content still emits a progress event —
+        the error boundary is also observable on the custom stream."""
+        bad_url = "https://example.com/not-found"
+        orchestrator = build_tool_call_orchestrator(
+            [
+                {"tool": "fetch_content", "args": {"url": bad_url}},
+                "Fetch failed.",
+                {
+                    "tool": "IntakeOutput",
+                    "args": {
+                        "article_text": "",
+                        "article_title": "",
+                        "article_date": "",
+                        "extracted_claims": [],
+                        "error": "URL_UNREACHABLE",
+                    },
+                },
+            ]
+        )
+        agent = build_fake_intake_agent(orchestrator_model=orchestrator)
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {bad_url}")
+        )
+
+        assert any("Fetching article content" in m for m in messages), messages
+        assert any(m.startswith("Fetch error:") for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_custom_stream_does_not_leak_message_chunks(self, patched_fetch_httpx):
+        """``stream_mode="custom"`` yields only writer payloads — not
+        LangGraph message/state updates. This keeps the SSE relay free of
+        non-progress chatter."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        events = await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+
+        # Every event is a writer-emitted progress dict; no AIMessage/ToolMessage
+        # objects, no (node, state) update tuples should leak through.
+        for event in events:
+            assert isinstance(event, dict)
+            assert set(event.keys()) == {"type", "message"}, event
+            assert event["type"] == "progress"
