@@ -19,6 +19,9 @@ S9/9.9: Unreachable URL (HTTP 404/500/timeout) -> agent returns ``URL_UNREACHABL
 S9/9.10: Non-HTML content type (e.g. application/pdf) -> agent returns
         ``URL_NOT_HTML`` error; HTTP request succeeds but fetch_content rejects
         the body at the content-type gate, no sub-LLM tool calls run.
+S9/9.11: Page with fewer than 50 words of extractable content -> agent returns
+        ``CONTENT_TOO_SHORT`` error; HTTP request succeeds and extraction runs
+        but the word-count gate fires before any sub-LLM tool call.
 """
 
 from __future__ import annotations
@@ -1262,3 +1265,195 @@ class TestNonHtmlContentTypeReturnsError:
 
         assert any("Fetching article content" in m for m in messages), messages
         assert any(m == "Fetch error: URL_NOT_HTML" for m in messages), messages
+
+
+# ---------------------------------------------------------------------------
+# S9/9.11: Page with < 50 words of content -> error with CONTENT_TOO_SHORT
+# ---------------------------------------------------------------------------
+
+
+SHORT_CONTENT_URL = "https://example.com/short-content"
+
+
+def _short_content_url_agent(bad_url: str):
+    """Scripted orchestrator for the short-content rejection path.
+
+    Replays the trajectory a real orchestrator would take after observing
+    ``fetch_content`` return ``success=False`` with an error reason starting
+    ``CONTENT_TOO_SHORT``: no further tool calls, and an IntakeOutput carrying
+    only ``error="CONTENT_TOO_SHORT"`` (the canonical user-facing code; the
+    fetch-level reason carries the actual word count suffix, e.g.
+    ``CONTENT_TOO_SHORT:6``).
+    """
+    orchestrator = build_tool_call_orchestrator(
+        [
+            {"tool": "fetch_content", "args": {"url": bad_url}},
+            "Extracted content too short, stopping intake.",
+            {
+                "tool": "IntakeOutput",
+                "args": {
+                    "article_text": "",
+                    "article_title": "",
+                    "article_date": "",
+                    "extracted_claims": [],
+                    "error": "CONTENT_TOO_SHORT",
+                },
+            },
+        ]
+    )
+    return build_fake_intake_agent(orchestrator_model=orchestrator)
+
+
+class TestShortContentReturnsError:
+    """S9/9.11: URLs that validate syntactically, return a 2xx HTML response,
+    and pass the content-type gate but yield fewer than 50 words of
+    extractable text are rejected by ``fetch_content`` at the word-count gate,
+    before any claim decomposition happens.
+
+    Guarantees:
+      - structured_response carries ``error="CONTENT_TOO_SHORT"``.
+      - ``httpx.AsyncClient`` IS constructed (the URL passes format
+        validation, the HTTP round-trip succeeds, and the content-type gate
+        passes — the failure surfaces only after extraction runs and the
+        word count is measured).
+      - ``fetch_content``'s ToolMessage records an error starting with
+        ``CONTENT_TOO_SHORT`` (the fetch-level reason includes the measured
+        word count, e.g. ``CONTENT_TOO_SHORT:6``) -- proving the real
+        extraction pipeline ran against the mock transport and reached the
+        word-count gate, not just the scripted IntakeOutput.
+      - Phase A/B sub-tools (decompose_claims, classify_domain,
+        extract_entities) never run, so their LLM sub-calls are
+        transitively never made.
+    """
+
+    @pytest.mark.asyncio
+    async def test_structured_response_has_content_too_short_error(self, patched_fetch_httpx):
+        """The canonical short-content rejection surfaces as CONTENT_TOO_SHORT."""
+        agent = _short_content_url_agent(SHORT_CONTENT_URL)
+
+        result = await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {SHORT_CONTENT_URL}")]}
+        )
+
+        state = result["structured_response"]
+        assert state.get("error") == "CONTENT_TOO_SHORT"
+
+    @pytest.mark.asyncio
+    async def test_http_request_is_attempted(self, patched_fetch_httpx):
+        """Format-valid URLs reach the HTTP layer -- ``httpx.AsyncClient``
+        is constructed so the transport can serve the short HTML response.
+        The content-type gate also passes, so this failure surfaces strictly
+        later than 9.8 (pre-HTTP) and 9.10 (pre-extraction)."""
+        agent = _short_content_url_agent(SHORT_CONTENT_URL)
+
+        await agent.ainvoke({"messages": [("user", f"Process this URL: {SHORT_CONTENT_URL}")]})
+
+        assert patched_fetch_httpx.call_count >= 1, (
+            "httpx.AsyncClient must be constructed on the short-content "
+            f"rejection path; got {patched_fetch_httpx.call_count} calls"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fetch_content_tool_records_content_too_short(self, patched_fetch_httpx):
+        """fetch_content ran exactly once; its ToolMessage records an error
+        starting with ``CONTENT_TOO_SHORT`` -- proving extraction ran and the
+        word-count gate fired, not some upstream gate (URL_NOT_HTML,
+        EXTRACTION_FAILED) that would indicate a different failure mode.
+
+        The fetch-level error reason carries the measured word count as a
+        suffix (e.g. ``CONTENT_TOO_SHORT:6``); the orchestrator collapses it
+        into the bare ``CONTENT_TOO_SHORT`` user-facing code."""
+        agent = _short_content_url_agent(SHORT_CONTENT_URL)
+
+        result = await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {SHORT_CONTENT_URL}")]}
+        )
+
+        fetch_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "fetch_content"
+        ]
+        assert len(fetch_messages) == 1
+
+        payload = json.loads(fetch_messages[0].content)
+        assert payload["success"] is False
+        assert payload["url"] == SHORT_CONTENT_URL
+        assert payload["error"].startswith("CONTENT_TOO_SHORT"), payload["error"]
+
+    @pytest.mark.asyncio
+    async def test_fetch_content_word_count_is_below_threshold(self, patched_fetch_httpx):
+        """The fetch-level error reason encodes the measured word count as a
+        ``CONTENT_TOO_SHORT:N`` suffix, and that N is strictly below the
+        50-word minimum. This pins the gate's behavior to its stated
+        threshold, not just the presence of the error string."""
+        agent = _short_content_url_agent(SHORT_CONTENT_URL)
+
+        result = await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {SHORT_CONTENT_URL}")]}
+        )
+
+        fetch_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "fetch_content"
+        ]
+        payload = json.loads(fetch_messages[0].content)
+
+        reason = payload["error"]
+        assert ":" in reason, f"expected CONTENT_TOO_SHORT:<count>, got {reason!r}"
+        _, _, count_str = reason.partition(":")
+        word_count = int(count_str)
+        assert word_count < 50, f"measured word count must be < 50, got {word_count}"
+
+    @pytest.mark.asyncio
+    async def test_no_sub_llm_tools_run(self, patched_fetch_httpx):
+        """decompose_claims / classify_domain / extract_entities never run
+        on the short-content rejection path -- their LLM sub-calls are
+        never made."""
+        agent = _short_content_url_agent(SHORT_CONTENT_URL)
+
+        result = await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {SHORT_CONTENT_URL}")]}
+        )
+
+        sub_tool_names = {"decompose_claims", "classify_domain", "extract_entities"}
+        ran = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) in sub_tool_names
+        ]
+        assert ran == [], f"expected no sub-tool messages on rejection, got {ran}"
+
+    @pytest.mark.asyncio
+    async def test_rejection_state_has_no_success_fields(self, patched_fetch_httpx):
+        """Rejection payload is minimal: no article text, no claims, no
+        domain/entities populated -- success-path fields stay absent."""
+        agent = _short_content_url_agent(SHORT_CONTENT_URL)
+
+        result = await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {SHORT_CONTENT_URL}")]}
+        )
+
+        state = result["structured_response"]
+        assert state.get("error") == "CONTENT_TOO_SHORT"
+        assert not state.get("article_text")
+        assert not state.get("extracted_claims")
+        assert not state.get("selected_claim")
+        assert not state.get("domain")
+        assert not state.get("entities")
+
+    @pytest.mark.asyncio
+    async def test_fetch_error_progress_event_is_emitted(self, patched_fetch_httpx):
+        """On short content, ``fetch_content`` still emits a
+        ``Fetch error: CONTENT_TOO_SHORT:N`` progress event via the custom
+        stream -- the SSE relay sees the failure boundary, carrying the
+        measured word count."""
+        agent = _short_content_url_agent(SHORT_CONTENT_URL)
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {SHORT_CONTENT_URL}")
+        )
+
+        assert any("Fetching article content" in m for m in messages), messages
+        assert any(m.startswith("Fetch error: CONTENT_TOO_SHORT") for m in messages), messages
