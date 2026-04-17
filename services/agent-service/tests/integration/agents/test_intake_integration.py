@@ -30,8 +30,10 @@ S9/9.12: Opinion article with no factual claims -> agent returns
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
+from langchain_core.callbacks import BaseCallbackHandler
 
 from swarm_reasoning.agents.intake.tools.domain_classification import (
     DOMAIN_VOCABULARY,
@@ -1676,3 +1678,188 @@ class TestOpinionArticleReturnsNoFactualClaims:
         # Phase B progress events must never appear on the rejection path.
         assert not any(m.startswith("Domain classified:") for m in messages), messages
         assert not any(m.startswith("Entities extracted:") for m in messages), messages
+
+
+# ---------------------------------------------------------------------------
+# S9/9.14: All LLM sub-calls receive RunnableConfig
+# ---------------------------------------------------------------------------
+
+
+class _ChatModelStartTracker(BaseCallbackHandler):
+    """Records ``on_chat_model_start`` events from every LLM invocation.
+
+    A single instance is registered once via the top-level
+    ``agent.ainvoke(..., config={"callbacks": [tracker], "tags": [...]})``.
+    Each sub-tool that forwards its injected ``RunnableConfig`` to
+    ``model.ainvoke(..., config=config)`` will propagate this tracker into
+    its chat-model callback tree; each sub-tool that fails to forward
+    config would break the propagation chain for that sub-call and its
+    callback would never fire.
+    """
+
+    def __init__(self) -> None:
+        self.invocations: list[dict[str, Any]] = []
+
+    def on_chat_model_start(  # type: ignore[override]
+        self,
+        serialized: dict[str, Any],
+        messages: list[list[Any]],
+        **kwargs: Any,
+    ) -> None:
+        first_system = ""
+        if messages and messages[0]:
+            head = messages[0][0]
+            content = getattr(head, "content", "")
+            if isinstance(content, str):
+                first_system = content
+        self.invocations.append(
+            {
+                "system": first_system,
+                "tags": list(kwargs.get("tags") or []),
+            }
+        )
+
+
+_DECOMPOSE_SYSTEM_PREFIX = "You are a claim extraction system"
+_CLASSIFY_SYSTEM_PREFIX = "You are a domain classifier"
+_ENTITY_SYSTEM_PREFIX = "You are a named entity recognition"
+
+_SUB_LLM_PREFIXES = (
+    _DECOMPOSE_SYSTEM_PREFIX,
+    _CLASSIFY_SYSTEM_PREFIX,
+    _ENTITY_SYSTEM_PREFIX,
+)
+
+_CONFIG_PROPAGATION_TAG = "test-intake-runnable-config-propagation"
+
+
+def _sub_llm_invocations(tracker: _ChatModelStartTracker) -> list[dict[str, Any]]:
+    """Filter tracker invocations down to the three intake sub-LLM calls.
+
+    The orchestrator's own chat-model starts are discarded: it is driven by a
+    ``FakeMessagesListChatModel`` that receives the react agent's working
+    conversation (HumanMessage + ToolMessages + the main intake SYSTEM_PROMPT),
+    not one of the three sub-tool system prompts. Filtering by the unique
+    system-message prefix of each sub-tool isolates the decompose_claims,
+    classify_domain, and extract_entities LLM calls.
+    """
+    return [
+        inv
+        for inv in tracker.invocations
+        if any(inv["system"].startswith(prefix) for prefix in _SUB_LLM_PREFIXES)
+    ]
+
+
+class TestAllLlmSubCallsReceiveRunnableConfig:
+    """S9/9.14: every LLM sub-call (decompose_claims, classify_domain,
+    extract_entities) receives the caller's ``RunnableConfig``.
+
+    Verified by registering a ``BaseCallbackHandler`` on the top-level
+    ``agent.ainvoke`` config. ``FakeListChatModel.ainvoke`` fires
+    ``on_chat_model_start`` whenever a sub-tool invokes it with a config
+    whose callback tree includes this handler; a tool that fails to forward
+    its injected ``RunnableConfig`` would break propagation for that
+    sub-call and its callback would be absent from the tracker. We also
+    propagate a unique tag from the top-level config and assert it is
+    visible on each sub-call's callback invocation -- this confirms the
+    RunnableConfig itself flows, not merely the callback manager.
+    """
+
+    @pytest.mark.asyncio
+    async def test_each_sub_llm_invokes_top_level_callback(self, patched_fetch_httpx):
+        """All three sub-LLM invocations fire ``on_chat_model_start`` on the
+        handler registered via the top-level RunnableConfig, proving their
+        tools forwarded config through to ``model.ainvoke``."""
+        tracker = _ChatModelStartTracker()
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {NEWS_URL}")]},
+            config={"callbacks": [tracker]},
+        )
+
+        sub_calls = _sub_llm_invocations(tracker)
+        systems = [inv["system"] for inv in sub_calls]
+
+        decompose = [s for s in systems if s.startswith(_DECOMPOSE_SYSTEM_PREFIX)]
+        classify = [s for s in systems if s.startswith(_CLASSIFY_SYSTEM_PREFIX)]
+        entity = [s for s in systems if s.startswith(_ENTITY_SYSTEM_PREFIX)]
+
+        assert len(decompose) == 1, (
+            "decompose_claims LLM sub-call did not fire the top-level callback "
+            f"(saw {len(decompose)}); config was not forwarded to model.ainvoke"
+        )
+        assert len(classify) == 1, (
+            "classify_domain LLM sub-call did not fire the top-level callback "
+            f"(saw {len(classify)}); config was not forwarded to model.ainvoke"
+        )
+        assert len(entity) == 1, (
+            "extract_entities LLM sub-call did not fire the top-level callback "
+            f"(saw {len(entity)}); config was not forwarded to model.ainvoke"
+        )
+
+    @pytest.mark.asyncio
+    async def test_top_level_tag_propagates_to_every_sub_llm(self, patched_fetch_httpx):
+        """A unique ``tags`` value on the top-level RunnableConfig appears in
+        every sub-LLM callback invocation -- confirming the RunnableConfig
+        itself (not just the callback manager) flows into each sub-call.
+
+        If a tool called ``model.ainvoke(messages)`` without its injected
+        config, the child run would start from an empty config and this tag
+        would be missing from the corresponding sub-call's tags.
+        """
+        tracker = _ChatModelStartTracker()
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {NEWS_URL}")]},
+            config={"callbacks": [tracker], "tags": [_CONFIG_PROPAGATION_TAG]},
+        )
+
+        sub_calls = _sub_llm_invocations(tracker)
+        assert len(sub_calls) == 3, (
+            "expected exactly 3 sub-LLM invocations (decompose, classify, "
+            f"extract); got {len(sub_calls)}: "
+            f"{[inv['system'][:40] for inv in sub_calls]}"
+        )
+
+        for inv in sub_calls:
+            assert _CONFIG_PROPAGATION_TAG in inv["tags"], (
+                f"top-level tag {_CONFIG_PROPAGATION_TAG!r} missing from "
+                f"sub-call tags {inv['tags']!r} (system prefix "
+                f"{inv['system'][:40]!r}); RunnableConfig did not propagate"
+            )
+
+    @pytest.mark.asyncio
+    async def test_sub_llm_callbacks_observed_in_tool_call_order(self, patched_fetch_httpx):
+        """Sub-LLM callback invocations arrive in the pipeline's
+        canonical order: decompose -> classify -> extract. This is a
+        stronger check than mere presence -- it verifies the tracker was
+        not merely re-invoked by retries, caching, or some unrelated path,
+        but observed each sub-call exactly once in the expected sequence.
+        """
+        tracker = _ChatModelStartTracker()
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {NEWS_URL}")]},
+            config={"callbacks": [tracker]},
+        )
+
+        sub_calls = _sub_llm_invocations(tracker)
+
+        def _label(inv: dict[str, Any]) -> str:
+            system = inv["system"]
+            if system.startswith(_DECOMPOSE_SYSTEM_PREFIX):
+                return "decompose"
+            if system.startswith(_CLASSIFY_SYSTEM_PREFIX):
+                return "classify"
+            if system.startswith(_ENTITY_SYSTEM_PREFIX):
+                return "extract"
+            return "other"
+
+        assert [_label(inv) for inv in sub_calls] == [
+            "decompose",
+            "classify",
+            "extract",
+        ]
