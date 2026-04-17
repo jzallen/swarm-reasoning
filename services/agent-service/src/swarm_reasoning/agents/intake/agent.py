@@ -1,7 +1,7 @@
 """Intake agent -- URL-based content extraction, claim decomposition,
 domain classification, and entity extraction.
 
-Uses LangGraph's create_react_agent with LLM-driven tool selection.
+Uses LangChain's create_agent with LLM-driven tool selection.
 The agent orchestrates four tools guided by a system prompt that encodes
 the two-phase intake workflow.
 
@@ -16,12 +16,12 @@ import logging
 import os
 from typing import Any
 
+from langchain.agents import create_agent
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
-from langgraph.prebuilt import create_react_agent
 
 from swarm_reasoning.agents.intake.models import IntakeOutput
 from swarm_reasoning.agents.intake.tools.decompose_claims import (
@@ -326,10 +326,10 @@ def build_intake_agent(model=None):
         extract_entities,
     ]
 
-    return create_react_agent(
+    return create_agent(
         model=model,
         tools=tools,
-        prompt=SYSTEM_PROMPT,
+        system_prompt=SYSTEM_PROMPT,
         response_format=IntakeOutput,
         name=AGENT_NAME,
     )
