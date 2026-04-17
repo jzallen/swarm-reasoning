@@ -8,6 +8,8 @@ into a structured ``IntakeOutput`` with the expected claim shape.
 S9/9.4: Valid news URL produces 1-5 claims with claim_text, quote, citation.
 S9/9.5: After claim selection, agent produces domain classification and
         entity extraction.
+S9/9.6: Full flow state contains fetched article text, extracted claims,
+        selected claim, domain, and entities together.
 """
 
 from __future__ import annotations
@@ -423,3 +425,142 @@ class TestSelectedClaimProducesDomainAndEntities:
         ]
         payload = json.loads(classify_messages[0].content)
         assert payload["domain"] == "HEALTHCARE"
+
+
+# ---------------------------------------------------------------------------
+# S9/9.6: Full flow state contains all five required fields
+# ---------------------------------------------------------------------------
+
+
+class TestFullFlowStateContainsAllRequiredFields:
+    """S9/9.6: the final agent state produced by the full two-phase flow
+    contains fetched article text, extracted claims, selected claim, domain,
+    and entities -- all present together in a single coherent snapshot.
+
+    Unlike S9/9.5 which checks individual Phase B fields, these tests assert
+    the *combined* structured_response -- the state a downstream pipeline
+    node would read after the intake agent completes both phases.
+    """
+
+    @pytest.mark.asyncio
+    async def test_full_flow_state_contains_all_five_fields(self, patched_fetch_httpx):
+        """Final structured_response carries all five Phase A+B fields together."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        for field in ("article_text", "extracted_claims", "selected_claim", "domain", "entities"):
+            assert field in state, f"final state missing field: {field}"
+
+    @pytest.mark.asyncio
+    async def test_full_flow_state_fields_are_non_empty(self, patched_fetch_httpx):
+        """Each of the five required fields is populated (non-empty / truthy)."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert state["article_text"], "article_text must be non-empty"
+        assert state["extracted_claims"], "extracted_claims must be non-empty"
+        assert state["selected_claim"], "selected_claim must be populated"
+        assert state["domain"], "domain must be non-empty"
+        assert state["entities"], "entities must be populated"
+
+    @pytest.mark.asyncio
+    async def test_full_flow_state_has_no_error_field(self, patched_fetch_httpx):
+        """Happy-path final state does not carry an ``error`` field --
+        rejection-path fields are mutually exclusive with success fields."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert "error" not in state or not state.get("error")
+
+    @pytest.mark.asyncio
+    async def test_full_flow_state_article_text_is_string(self, patched_fetch_httpx):
+        """The fetched article text in final state is a non-empty string."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert isinstance(state["article_text"], str)
+        assert len(state["article_text"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_full_flow_state_extracted_claims_shape(self, patched_fetch_httpx):
+        """Final state's extracted_claims list preserves 1-5 claims with
+        the required claim_text / quote / citation shape."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        claims = result["structured_response"]["extracted_claims"]
+        assert 1 <= len(claims) <= 5
+        for claim in claims:
+            assert claim["claim_text"]
+            assert claim["quote"]
+            assert claim["citation"]["publisher"]
+
+    @pytest.mark.asyncio
+    async def test_full_flow_state_selected_claim_matches_an_extracted(self, patched_fetch_httpx):
+        """The selected_claim in final state is one of the extracted_claims
+        (selection is a choice from the Phase A list, not a fresh claim)."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        extracted_texts = {c["claim_text"] for c in state["extracted_claims"]}
+        assert state["selected_claim"]["claim_text"] in extracted_texts
+
+    @pytest.mark.asyncio
+    async def test_full_flow_state_domain_and_entities_shape(self, patched_fetch_httpx):
+        """Final state's domain is a DOMAIN_VOCABULARY value and entities
+        carries all five NER buckets as lists."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert state["domain"] in DOMAIN_VOCABULARY
+        for bucket in ("persons", "organizations", "dates", "locations", "statistics"):
+            assert bucket in state["entities"], f"missing entity bucket: {bucket}"
+            assert isinstance(state["entities"][bucket], list)
+
+    @pytest.mark.asyncio
+    async def test_full_flow_state_coherent_with_tool_messages(self, patched_fetch_httpx):
+        """State fields are coherent with the tool-call record: fetch ran,
+        decompose produced the same claim count, classify produced the same
+        domain, and extract produced the same entity buckets. Proves the
+        final state is a faithful reflection of the tool-call history, not
+        a side-channel fabrication."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        tool_messages = {
+            m.name: json.loads(m.content)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool"
+            and getattr(m, "name", None)
+            in {"fetch_content", "decompose_claims", "classify_domain", "extract_entities"}
+        }
+
+        # fetch_content ran and succeeded against the mocked URL
+        assert tool_messages["fetch_content"]["success"] is True
+        assert tool_messages["fetch_content"]["url"] == NEWS_URL
+
+        # decompose_claims produced the same number of claims present in state
+        assert tool_messages["decompose_claims"]["claim_count"] == len(state["extracted_claims"])
+
+        # classify_domain's tool output domain matches state.domain
+        assert tool_messages["classify_domain"]["domain"] == state["domain"]
+
+        # extract_entities buckets are structurally present in state.entities
+        for bucket in ("persons", "organizations", "dates", "locations", "statistics"):
+            assert bucket in tool_messages["extract_entities"]
+            assert bucket in state["entities"]
