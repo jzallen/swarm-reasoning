@@ -38,6 +38,14 @@ S9/9.20: Malformed LLM JSON in ``decompose_claims`` triggers exactly one
         unparseable output the tool emits ``error='NO_FACTUAL_CLAIMS'`` and
         Phase B is skipped. Positive control: if the retry returns valid
         JSON, the pipeline recovers and Phase B runs normally.
+S9/9.21: Unrecognized domain classification (LLM response outside
+        ``DOMAIN_VOCABULARY``) on both attempts falls back to ``OTHER``;
+        classify_domain's LLM fires exactly twice (attempt + retry), and
+        the second attempt uses the retry prompt with the vocabulary
+        reminder. Phase B continues normally — the fallback is a valid
+        classification, not a terminal rejection. Positive control: if
+        the retry returns a recognized code, that code is used instead of
+        the fallback.
 """
 
 from __future__ import annotations
@@ -2463,3 +2471,338 @@ class TestMalformedDecomposeJsonRetryRecovers:
             f"decompose payload unexpectedly carries error {payload.get('error')!r} "
             "after successful retry"
         )
+
+
+# ---------------------------------------------------------------------------
+# S9/9.21: Unrecognized domain classification falls back to OTHER after 2 attempts
+# ---------------------------------------------------------------------------
+
+
+_UNRECOGNIZED_DOMAIN_FIRST = "FINANCE"
+_UNRECOGNIZED_DOMAIN_SECOND = "SPORTS"
+
+
+def _classify_domain_payload(result: dict) -> dict:
+    """Return the decoded JSON payload from the single ``classify_domain`` ToolMessage."""
+    classify_messages = [
+        m
+        for m in result["messages"]
+        if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "classify_domain"
+    ]
+    assert len(classify_messages) == 1, "expected exactly one classify_domain ToolMessage"
+    return json.loads(classify_messages[0].content)
+
+
+class _ClassifyMessageTracker(BaseCallbackHandler):
+    """Capture the user message content of every chat-model invocation whose
+    system prompt identifies it as the classify_domain sub-LLM.
+
+    The production classify tool builds its prompt list from
+    ``build_prompt(claim_text, retry=...)`` and prepends the classify system
+    prompt. By recording the HumanMessage content from each classify
+    invocation we can assert (a) the first attempt uses the plain prompt
+    shape, and (b) the second attempt (retry=True) injects the fallback
+    vocabulary reminder produced by ``build_prompt``.
+    """
+
+    def __init__(self) -> None:
+        self.user_contents: list[str] = []
+
+    def on_chat_model_start(  # type: ignore[override]
+        self,
+        serialized: dict[str, Any],
+        messages: list[list[Any]],
+        **kwargs: Any,
+    ) -> None:
+        if not messages or not messages[0]:
+            return
+        head = messages[0][0]
+        system_content = getattr(head, "content", "") or ""
+        if not isinstance(system_content, str):
+            return
+        if not system_content.startswith(_CLASSIFY_SYSTEM_PREFIX):
+            return
+        user_content = ""
+        if len(messages[0]) > 1:
+            second = messages[0][1]
+            content = getattr(second, "content", "") or ""
+            if isinstance(content, str):
+                user_content = content
+        self.user_contents.append(user_content)
+
+
+def _unrecognized_domain_agent(
+    classify_responses: list[str],
+    *,
+    domain: str = "OTHER",
+):
+    """Build an intake agent whose classify_domain sub-LLM returns the
+    supplied sequence of unrecognized responses.
+
+    The orchestrator script mirrors the happy-path Phase B trajectory
+    (fetch → decompose → classify → extract → IntakeOutput); only the
+    classify sub-LLM's response list changes. The final ``IntakeOutput``
+    carries ``domain`` (defaulting to ``"OTHER"`` to match the tool's
+    fallback), but the tool's actual return value is what observable
+    assertions -- progress events and the classify ToolMessage -- test.
+    """
+    return _scripted_intake_agent_phase_b(
+        _CANNED_CLAIMS,
+        _SELECTED_CLAIM,
+        classify_responses=classify_responses,
+        domain=domain,
+    )
+
+
+class TestUnrecognizedDomainFallsBackToOther:
+    """S9/9.21: when the classify_domain sub-LLM returns a value outside
+    ``DOMAIN_VOCABULARY`` on both attempts, the tool silently falls back
+    to ``"OTHER"`` and Phase B continues normally.
+
+    This pins the two-attempt retry contract inside ``classify_domain``:
+
+    * Attempt 1 (``retry=False``) invokes the classify LLM once. If the
+      stripped/upper-cased response is a member of ``DOMAIN_VOCABULARY``
+      the tool returns immediately.
+    * On an unrecognized response, attempt 2 (``retry=True``) reinvokes
+      the LLM with ``build_prompt(..., retry=True)`` — whose user content
+      appends the "your previous response was not recognized" reminder
+      and an explicit enumeration of the seven valid domain codes.
+    * If attempt 2 also yields a token outside the vocabulary, the tool
+      emits ``{"domain": "OTHER"}``, publishes a ``Domain classified:
+      OTHER`` progress event, and returns control to the orchestrator.
+
+    This path is distinct from the NO_FACTUAL_CLAIMS rejection (S9/9.12,
+    S9/9.20): the fallback is a valid domain code, Phase B is *not*
+    aborted, and extract_entities still runs against the selected claim.
+    Downstream agents treat ``OTHER`` as a coherent classification bucket
+    rather than an error state.
+    """
+
+    @pytest.mark.asyncio
+    async def test_structured_response_domain_is_other_fallback(self, patched_fetch_httpx):
+        """Two consecutive unrecognized responses surface as ``domain="OTHER"``
+        in the final IntakeOutput, with no ``error`` key set."""
+        agent = _unrecognized_domain_agent(
+            [_UNRECOGNIZED_DOMAIN_FIRST, _UNRECOGNIZED_DOMAIN_SECOND]
+        )
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert state["domain"] == "OTHER"
+        assert state["domain"] in DOMAIN_VOCABULARY
+        assert state.get("error") is None or not state.get("error"), (
+            f"OTHER fallback must not carry an error code; got {state.get('error')!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_classify_tool_payload_domain_is_other(self, patched_fetch_httpx):
+        """classify_domain's ToolMessage payload carries the fallback
+        ``{"domain": "OTHER"}`` — proving the fallback originates in the
+        tool itself, not in the orchestrator's fabricated IntakeOutput."""
+        agent = _unrecognized_domain_agent(
+            [_UNRECOGNIZED_DOMAIN_FIRST, _UNRECOGNIZED_DOMAIN_SECOND]
+        )
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        payload = _classify_domain_payload(result)
+        assert payload == {"domain": "OTHER"}
+
+    @pytest.mark.asyncio
+    async def test_classify_llm_invoked_exactly_twice(self, patched_fetch_httpx):
+        """The classify sub-LLM fires exactly twice: one initial attempt
+        plus one retry. Zero invocations would mean the tool skipped the
+        LLM entirely; one would mean no retry fired; three or more would
+        exceed the documented two-attempt retry budget."""
+        tracker = _ChatModelStartTracker()
+        agent = _unrecognized_domain_agent(
+            [_UNRECOGNIZED_DOMAIN_FIRST, _UNRECOGNIZED_DOMAIN_SECOND]
+        )
+
+        await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {NEWS_URL}")]},
+            config={"callbacks": [tracker]},
+        )
+
+        classify_calls = [
+            inv for inv in tracker.invocations if inv["system"].startswith(_CLASSIFY_SYSTEM_PREFIX)
+        ]
+        assert len(classify_calls) == 2, (
+            f"classify LLM must fire exactly twice (attempt + one retry); got {len(classify_calls)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_progress_event_emits_other_fallback(self, patched_fetch_httpx):
+        """The classify boundary progress event reports the fallback code,
+        and the raw unrecognized tokens never leak onto the custom stream."""
+        agent = _unrecognized_domain_agent(
+            [_UNRECOGNIZED_DOMAIN_FIRST, _UNRECOGNIZED_DOMAIN_SECOND]
+        )
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+        )
+
+        assert any(m == "Domain classified: OTHER" for m in messages), messages
+        # Unrecognized raw LLM responses must never reach the SSE relay.
+        assert not any(_UNRECOGNIZED_DOMAIN_FIRST in m for m in messages), messages
+        assert not any(_UNRECOGNIZED_DOMAIN_SECOND in m for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_phase_b_continues_after_fallback(self, patched_fetch_httpx):
+        """The OTHER fallback is not a rejection: extract_entities still
+        runs after classify_domain, so the full Phase B tool-call order
+        (fetch → decompose → classify → extract) is preserved. This is
+        the primary behavioural distinction from the NO_FACTUAL_CLAIMS
+        rejection paths where Phase B is skipped entirely."""
+        agent = _unrecognized_domain_agent(
+            [_UNRECOGNIZED_DOMAIN_FIRST, _UNRECOGNIZED_DOMAIN_SECOND]
+        )
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        ordering_tools = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool"
+            and getattr(m, "name", None)
+            in {"fetch_content", "decompose_claims", "classify_domain", "extract_entities"}
+        ]
+        assert ordering_tools == [
+            "fetch_content",
+            "decompose_claims",
+            "classify_domain",
+            "extract_entities",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_second_attempt_uses_retry_prompt(self, patched_fetch_httpx):
+        """Attempt 1 uses the plain ``Claim: <text>`` prompt; attempt 2
+        uses the ``build_prompt(retry=True)`` variant whose user content
+        appends the "your previous response was not recognized" reminder
+        and an enumeration of every ``DOMAIN_VOCABULARY`` code.
+
+        This pins the ``retry=(attempt > 0)`` branch in classify_domain:
+        if the retry fired without toggling the flag, attempt 2 would
+        repeat the plain prompt and the reminder text would be absent;
+        if the flag were set on attempt 1, the plain-prompt guard on the
+        first call would fail.
+        """
+        tracker = _ClassifyMessageTracker()
+        agent = _unrecognized_domain_agent(
+            [_UNRECOGNIZED_DOMAIN_FIRST, _UNRECOGNIZED_DOMAIN_SECOND]
+        )
+
+        await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {NEWS_URL}")]},
+            config={"callbacks": [tracker]},
+        )
+
+        assert len(tracker.user_contents) == 2, (
+            "expected exactly two classify user messages (attempt + retry); "
+            f"got {len(tracker.user_contents)}"
+        )
+        first, second = tracker.user_contents
+
+        assert "previous response was not recognized" not in first, (
+            f"attempt 1 must use the plain prompt, not the retry prompt; got: {first!r}"
+        )
+        assert "previous response was not recognized" in second, (
+            "attempt 2 must use the retry prompt with the fallback-vocabulary "
+            f"reminder; got: {second!r}"
+        )
+        # The retry prompt enumerates the full domain vocabulary so the LLM
+        # can correct itself — every recognized code must appear literally.
+        for code in DOMAIN_VOCABULARY:
+            assert code in second, (
+                f"retry prompt must enumerate domain code {code!r}; got user content: {second!r}"
+            )
+
+
+class TestUnrecognizedDomainRetryRecovers:
+    """S9/9.21 positive control: if the first classify response is
+    unrecognized but the retry returns a value in ``DOMAIN_VOCABULARY``,
+    the tool returns that recognized code rather than the ``OTHER``
+    fallback.
+
+    Together with
+    :class:`TestUnrecognizedDomainFallsBackToOther`, this brackets the
+    retry contract from both sides:
+
+    * Retry-exhausted path (both responses bad) → fallback to ``OTHER``.
+    * Retry-recovered path (retry response valid) → that code propagates.
+
+    If the retry never fired, the first unrecognized response would
+    persist and the recovered-path assertion (``domain == "HEALTHCARE"``)
+    would fail at the structured-response check.
+    """
+
+    @pytest.mark.asyncio
+    async def test_valid_retry_response_becomes_domain(self, patched_fetch_httpx):
+        """First classify response is unrecognized; the retry returns
+        ``HEALTHCARE``. The recovered code propagates to the final
+        IntakeOutput and the classify ToolMessage — proving the retry
+        actually ran and its recognized output was consumed."""
+        agent = _scripted_intake_agent_phase_b(
+            _CANNED_CLAIMS,
+            _SELECTED_CLAIM,
+            classify_responses=[_UNRECOGNIZED_DOMAIN_FIRST, "HEALTHCARE"],
+            domain="HEALTHCARE",
+        )
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert state["domain"] == "HEALTHCARE"
+        payload = _classify_domain_payload(result)
+        assert payload == {"domain": "HEALTHCARE"}
+
+    @pytest.mark.asyncio
+    async def test_retry_recovery_classify_llm_invoked_exactly_twice(self, patched_fetch_httpx):
+        """Even on the recovery path the classify LLM fires exactly twice
+        — the retry is an unconditional budget exhausted only on value
+        mismatch, and the tool short-circuits as soon as a valid code
+        arrives. Three or more invocations would mean a spurious third
+        attempt; one would mean the retry never ran (contradicting the
+        structured-response assertion)."""
+        tracker = _ChatModelStartTracker()
+        agent = _scripted_intake_agent_phase_b(
+            _CANNED_CLAIMS,
+            _SELECTED_CLAIM,
+            classify_responses=[_UNRECOGNIZED_DOMAIN_FIRST, "HEALTHCARE"],
+            domain="HEALTHCARE",
+        )
+
+        await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {NEWS_URL}")]},
+            config={"callbacks": [tracker]},
+        )
+
+        classify_calls = [
+            inv for inv in tracker.invocations if inv["system"].startswith(_CLASSIFY_SYSTEM_PREFIX)
+        ]
+        assert len(classify_calls) == 2, (
+            f"classify LLM must fire exactly twice on the recovery path; got {len(classify_calls)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_retry_recovery_progress_emits_recovered_domain(self, patched_fetch_httpx):
+        """The classify progress event reports the recovered domain code
+        rather than the ``OTHER`` fallback — the tool selects the first
+        recognized response, so the successful retry value is what
+        reaches the SSE relay."""
+        agent = _scripted_intake_agent_phase_b(
+            _CANNED_CLAIMS,
+            _SELECTED_CLAIM,
+            classify_responses=[_UNRECOGNIZED_DOMAIN_FIRST, "HEALTHCARE"],
+            domain="HEALTHCARE",
+        )
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+        )
+
+        assert any(m == "Domain classified: HEALTHCARE" for m in messages), messages
+        assert not any(m == "Domain classified: OTHER" for m in messages), messages
