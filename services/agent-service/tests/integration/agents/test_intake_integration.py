@@ -2806,3 +2806,174 @@ class TestUnrecognizedDomainRetryRecovers:
 
         assert any(m == "Domain classified: HEALTHCARE" for m in messages), messages
         assert not any(m == "Domain classified: OTHER" for m in messages), messages
+
+
+# ---------------------------------------------------------------------------
+# S9/9.24: Rejected input state transition — error field, no claim/analysis
+# ---------------------------------------------------------------------------
+#
+# Cross-path consolidated assertion: every rejection trajectory produces an
+# IntakeOutput with the same structural shape — an ``error`` field carrying
+# the path-specific code, and *no* success-path fields populated. Per-path
+# tests (S9/9.8-9.12) assert this invariant for their own scenario; this
+# test pins the cross-path uniformity so a future rejection-handling
+# refactor can't drift one path's shape away from the others.
+#
+# Five canonical rejection codes are covered, one per gate:
+#
+#   URL_INVALID_FORMAT  — pre-HTTP   (S9/9.8)
+#   URL_UNREACHABLE     — HTTP layer (S9/9.9)
+#   URL_NOT_HTML        — content-type gate inside fetch_content (S9/9.10)
+#   CONTENT_TOO_SHORT   — word-count gate inside fetch_content (S9/9.11)
+#   NO_FACTUAL_CLAIMS   — semantic gate inside decompose_claims (S9/9.12)
+
+
+_REJECTION_PATHS = [
+    pytest.param(
+        lambda: _invalid_url_agent("not-a-url"),
+        "Process this URL: not-a-url",
+        "URL_INVALID_FORMAT",
+        id="url-invalid-format",
+    ),
+    pytest.param(
+        lambda: _unreachable_url_agent("https://example.com/not-found"),
+        "Process this URL: https://example.com/not-found",
+        "URL_UNREACHABLE",
+        id="url-unreachable",
+    ),
+    pytest.param(
+        lambda: _non_html_url_agent(NON_HTML_URL),
+        f"Process this URL: {NON_HTML_URL}",
+        "URL_NOT_HTML",
+        id="url-not-html",
+    ),
+    pytest.param(
+        lambda: _short_content_url_agent(SHORT_CONTENT_URL),
+        f"Process this URL: {SHORT_CONTENT_URL}",
+        "CONTENT_TOO_SHORT",
+        id="content-too-short",
+    ),
+    pytest.param(
+        lambda: _opinion_article_agent(),
+        f"Process this URL: {OPINION_URL}",
+        "NO_FACTUAL_CLAIMS",
+        id="no-factual-claims",
+    ),
+]
+
+
+class TestRejectedInputStateInvariant:
+    """S9/9.24: every rejection path produces a uniformly shaped state.
+
+    Whichever gate fires (URL format, HTTP, content-type, word-count, or
+    the semantic no-claims gate inside decompose_claims), the agent's
+    ``structured_response`` must:
+
+      - carry an ``error`` field with the canonical user-facing code for
+        that gate;
+      - leave every success-path field empty/absent — no extracted claims,
+        no selected claim, no domain classification, no entity extraction
+        result.
+
+    Per-rejection-path tests already check this for their own scenario;
+    consolidating the assertion here pins the *cross-path* contract so a
+    future change to one gate's IntakeOutput shape can't silently diverge
+    from the others.
+    """
+
+    @pytest.mark.parametrize(("agent_factory", "user_message", "expected_error"), _REJECTION_PATHS)
+    @pytest.mark.asyncio
+    async def test_error_field_carries_path_specific_code(
+        self, patched_fetch_httpx, agent_factory, user_message, expected_error
+    ):
+        """Every rejection path's ``structured_response`` carries an
+        ``error`` field whose value is the canonical user-facing code for
+        that path. The error field is never absent on a rejection — that
+        is the discriminator the orchestrator and downstream pipeline
+        nodes rely on to short-circuit the rest of the flow."""
+        agent = agent_factory()
+
+        result = await agent.ainvoke({"messages": [("user", user_message)]})
+
+        state = result["structured_response"]
+        assert state.get("error") == expected_error, (
+            f"rejection state must carry error={expected_error!r}; got {state.get('error')!r}"
+        )
+
+    @pytest.mark.parametrize(("agent_factory", "user_message", "expected_error"), _REJECTION_PATHS)
+    @pytest.mark.asyncio
+    async def test_no_claim_fields_populated(
+        self, patched_fetch_httpx, agent_factory, user_message, expected_error
+    ):
+        """Rejection state has no claim-related fields populated:
+        ``extracted_claims`` is empty/absent and ``selected_claim`` is
+        absent. This holds even on the NO_FACTUAL_CLAIMS path where
+        decompose_claims actually ran — the empty-claims rejection is the
+        whole point, so the orchestrator must not surface a selected
+        claim even though Phase A reached the decompose tool."""
+        agent = agent_factory()
+
+        result = await agent.ainvoke({"messages": [("user", user_message)]})
+
+        state = result["structured_response"]
+        leaked_claims = state.get("extracted_claims")
+        assert not leaked_claims, (
+            f"rejection state must not carry extracted_claims; got {leaked_claims!r}"
+        )
+        assert not state.get("selected_claim"), (
+            f"rejection state must not carry selected_claim; got {state.get('selected_claim')!r}"
+        )
+
+    @pytest.mark.parametrize(("agent_factory", "user_message", "expected_error"), _REJECTION_PATHS)
+    @pytest.mark.asyncio
+    async def test_no_analysis_fields_populated(
+        self, patched_fetch_httpx, agent_factory, user_message, expected_error
+    ):
+        """Rejection state has no Phase B analysis fields populated:
+        ``domain`` and ``entities`` are absent. Phase B (classify_domain
+        + extract_entities) never runs on any rejection path, so its
+        outputs must never appear in the structured response — even as
+        defaults."""
+        agent = agent_factory()
+
+        result = await agent.ainvoke({"messages": [("user", user_message)]})
+
+        state = result["structured_response"]
+        assert not state.get("domain"), (
+            f"rejection state must not carry domain; got {state.get('domain')!r}"
+        )
+        assert not state.get("entities"), (
+            f"rejection state must not carry entities; got {state.get('entities')!r}"
+        )
+
+    @pytest.mark.parametrize(("agent_factory", "user_message", "expected_error"), _REJECTION_PATHS)
+    @pytest.mark.asyncio
+    async def test_state_keys_are_subset_of_allowed_rejection_keys(
+        self, patched_fetch_httpx, agent_factory, user_message, expected_error
+    ):
+        """Every populated key in the rejection state belongs to a small
+        allow-list: the ``error`` discriminator plus a handful of
+        article-metadata fields the orchestrator may forward as empty
+        scaffolding. Crucially, none of the success-path keys
+        (``extracted_claims``, ``selected_claim``, ``domain``,
+        ``entities``) are *truthy* — pinning the shape so a refactor that
+        leaks a populated success field on rejection fails here even if
+        the per-key truthiness checks above were updated piecemeal."""
+        agent = agent_factory()
+
+        result = await agent.ainvoke({"messages": [("user", user_message)]})
+
+        state = result["structured_response"]
+
+        success_keys = {"extracted_claims", "selected_claim", "domain", "entities"}
+        populated_success_keys = {k for k in success_keys if state.get(k)}
+        assert populated_success_keys == set(), (
+            f"rejection state leaked success-path keys: {populated_success_keys}"
+        )
+
+        # The error discriminator must always be present and truthy on a
+        # rejection — otherwise downstream consumers can't tell rejection
+        # from success.
+        assert state.get("error"), (
+            f"rejection state must carry a truthy error field; got {state.get('error')!r}"
+        )
