@@ -86,12 +86,26 @@ class TestFetchHtml:
         mock_response = MagicMock()
         mock_response.text = "<html><body>Hello</body></html>"
         mock_response.content = b"<html><body>Hello</body></html>"
+        mock_response.headers = {"content-type": "text/html; charset=utf-8"}
         mock_response.raise_for_status = MagicMock()
 
         client = _mock_httpx_client(return_value=mock_response)
         with patch(f"{_P}.httpx.AsyncClient", return_value=client):
             result = await fetch_html("https://example.com")
         assert result == "<html><body>Hello</body></html>"
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_html_content_type(self):
+        mock_response = MagicMock()
+        mock_response.text = ""
+        mock_response.content = b"%PDF-1.4 ..."
+        mock_response.headers = {"content-type": "application/pdf"}
+        mock_response.raise_for_status = MagicMock()
+
+        client = _mock_httpx_client(return_value=mock_response)
+        with patch(f"{_P}.httpx.AsyncClient", return_value=client):
+            with pytest.raises(FetchError, match="URL_NOT_HTML"):
+                await fetch_html("https://example.com/file.pdf")
 
     @pytest.mark.asyncio
     async def test_timeout(self):
@@ -126,6 +140,7 @@ class TestFetchHtml:
         mock_response = MagicMock()
         mock_response.text = "x"
         mock_response.content = b"x" * (MAX_CONTENT_BYTES + 1)
+        mock_response.headers = {"content-type": "text/html"}
         mock_response.raise_for_status = MagicMock()
 
         client = _mock_httpx_client(return_value=mock_response)

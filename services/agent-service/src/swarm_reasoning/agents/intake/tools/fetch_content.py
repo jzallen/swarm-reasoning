@@ -94,6 +94,10 @@ async def fetch_html(url: str) -> str:
         except httpx.RequestError:
             raise FetchError("FETCH_CONNECTION_ERROR")
 
+    content_type = response.headers.get("content-type", "")
+    if "text/html" not in content_type.lower():
+        raise FetchError("URL_NOT_HTML")
+
     if len(response.content) > MAX_CONTENT_BYTES:
         raise FetchError("CONTENT_TOO_LARGE")
 

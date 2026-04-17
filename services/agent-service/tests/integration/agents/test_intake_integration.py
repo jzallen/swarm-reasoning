@@ -16,6 +16,9 @@ S9/9.8: Invalid URL format -> agent returns ``URL_INVALID_FORMAT`` error
         with no HTTP request and no sub-LLM tool calls.
 S9/9.9: Unreachable URL (HTTP 404/500/timeout) -> agent returns ``URL_UNREACHABLE``
         error; HTTP request is attempted and fails, no sub-LLM tool calls run.
+S9/9.10: Non-HTML content type (e.g. application/pdf) -> agent returns
+        ``URL_NOT_HTML`` error; HTTP request succeeds but fetch_content rejects
+        the body at the content-type gate, no sub-LLM tool calls run.
 """
 
 from __future__ import annotations
@@ -1107,3 +1110,155 @@ class TestUnreachableUrlReturnsError:
 
         assert fetch_errors == {"HTTP_404", "HTTP_500", "FETCH_TIMEOUT"}
         assert user_errors == {"URL_UNREACHABLE"}
+
+
+# ---------------------------------------------------------------------------
+# S9/9.10: Non-HTML content type -> error with URL_NOT_HTML
+# ---------------------------------------------------------------------------
+
+
+NON_HTML_URL = "https://example.com/non-html"
+
+
+def _non_html_url_agent(bad_url: str):
+    """Scripted orchestrator for the non-HTML-content rejection path.
+
+    Replays the trajectory a real orchestrator would take after observing
+    ``fetch_content`` return ``success=False`` with ``error="URL_NOT_HTML"``:
+    no further tool calls, and an IntakeOutput carrying only
+    ``error="URL_NOT_HTML"``.
+    """
+    orchestrator = build_tool_call_orchestrator(
+        [
+            {"tool": "fetch_content", "args": {"url": bad_url}},
+            "URL is not HTML, stopping intake.",
+            {
+                "tool": "IntakeOutput",
+                "args": {
+                    "article_text": "",
+                    "article_title": "",
+                    "article_date": "",
+                    "extracted_claims": [],
+                    "error": "URL_NOT_HTML",
+                },
+            },
+        ]
+    )
+    return build_fake_intake_agent(orchestrator_model=orchestrator)
+
+
+class TestNonHtmlContentTypeReturnsError:
+    """S9/9.10: URLs that validate syntactically and return a 2xx response
+    but carry a non-HTML ``Content-Type`` (e.g. ``application/pdf``) are
+    rejected by ``fetch_content`` at the content-type gate, before any
+    extraction work happens.
+
+    Guarantees:
+      - structured_response carries ``error="URL_NOT_HTML"``.
+      - ``httpx.AsyncClient`` IS constructed (the URL passes format
+        validation and the HTTP round-trip succeeds — the failure surfaces
+        after headers are inspected, not from the network layer).
+      - ``fetch_content``'s ToolMessage records ``error="URL_NOT_HTML"`` --
+        proving the real tool ran against the mock transport and reached
+        the content-type gate, not just the scripted IntakeOutput.
+      - Extraction (trafilatura/BeautifulSoup) never runs -- the gate
+        short-circuits before text processing.
+      - Phase A/B sub-tools (decompose_claims, classify_domain,
+        extract_entities) never run, so their LLM sub-calls are
+        transitively never made.
+    """
+
+    @pytest.mark.asyncio
+    async def test_structured_response_has_url_not_html_error(self, patched_fetch_httpx):
+        """The canonical non-HTML rejection surfaces as URL_NOT_HTML."""
+        agent = _non_html_url_agent(NON_HTML_URL)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NON_HTML_URL}")]})
+
+        state = result["structured_response"]
+        assert state.get("error") == "URL_NOT_HTML"
+
+    @pytest.mark.asyncio
+    async def test_http_request_is_attempted(self, patched_fetch_httpx):
+        """Format-valid URLs reach the HTTP layer even when the response is
+        non-HTML -- the content-type gate runs *after* the round-trip
+        completes, so ``httpx.AsyncClient`` is constructed. This is what
+        distinguishes 9.10 from 9.8 (which rejects before HTTP)."""
+        agent = _non_html_url_agent(NON_HTML_URL)
+
+        await agent.ainvoke({"messages": [("user", f"Process this URL: {NON_HTML_URL}")]})
+
+        assert patched_fetch_httpx.call_count >= 1, (
+            "httpx.AsyncClient must be constructed on the non-HTML "
+            f"rejection path; got {patched_fetch_httpx.call_count} calls"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fetch_content_tool_records_url_not_html(self, patched_fetch_httpx):
+        """fetch_content ran exactly once; its ToolMessage records
+        ``URL_NOT_HTML`` directly -- proving the content-type gate fired
+        against the mock transport's ``application/pdf`` response, not
+        some other error (EXTRACTION_FAILED / CONTENT_TOO_SHORT) that
+        would indicate the gate leaked and extraction ran on PDF bytes."""
+        agent = _non_html_url_agent(NON_HTML_URL)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NON_HTML_URL}")]})
+
+        fetch_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "fetch_content"
+        ]
+        assert len(fetch_messages) == 1
+
+        payload = json.loads(fetch_messages[0].content)
+        assert payload["success"] is False
+        assert payload["error"] == "URL_NOT_HTML"
+        assert payload["url"] == NON_HTML_URL
+
+    @pytest.mark.asyncio
+    async def test_no_sub_llm_tools_run(self, patched_fetch_httpx):
+        """decompose_claims / classify_domain / extract_entities never run
+        on the non-HTML rejection path -- their LLM sub-calls are never
+        made."""
+        agent = _non_html_url_agent(NON_HTML_URL)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NON_HTML_URL}")]})
+
+        sub_tool_names = {"decompose_claims", "classify_domain", "extract_entities"}
+        ran = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) in sub_tool_names
+        ]
+        assert ran == [], f"expected no sub-tool messages on rejection, got {ran}"
+
+    @pytest.mark.asyncio
+    async def test_rejection_state_has_no_success_fields(self, patched_fetch_httpx):
+        """Rejection payload is minimal: no article text, no claims, no
+        domain/entities populated -- success-path fields stay absent."""
+        agent = _non_html_url_agent(NON_HTML_URL)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NON_HTML_URL}")]})
+
+        state = result["structured_response"]
+        assert state.get("error") == "URL_NOT_HTML"
+        assert not state.get("article_text")
+        assert not state.get("extracted_claims")
+        assert not state.get("selected_claim")
+        assert not state.get("domain")
+        assert not state.get("entities")
+
+    @pytest.mark.asyncio
+    async def test_fetch_error_progress_event_is_emitted(self, patched_fetch_httpx):
+        """On non-HTML content, ``fetch_content`` still emits a
+        ``Fetch error: URL_NOT_HTML`` progress event via the custom stream
+        -- the SSE relay sees the failure boundary."""
+        agent = _non_html_url_agent(NON_HTML_URL)
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {NON_HTML_URL}")
+        )
+
+        assert any("Fetching article content" in m for m in messages), messages
+        assert any(m == "Fetch error: URL_NOT_HTML" for m in messages), messages
