@@ -1,0 +1,1 @@
+"""Fact-checker CLI package."""

@@ -1,0 +1,70 @@
+"""Fact-checker CLI: drive swarm-reasoning agents from the terminal.
+
+Usage:
+    fact-checker agents intake --url https://example.com/article
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+
+import click
+
+
+@click.group()
+def main() -> None:
+    """Fact-checker CLI."""
+
+
+@main.group()
+def agents() -> None:
+    """Run individual agents."""
+
+
+@agents.command()
+@click.option("--url", required=True, help="Article URL to ingest.")
+def intake(url: str) -> None:
+    """Run the intake agent on a URL and print the structured output."""
+    try:
+        asyncio.run(_run_intake(url))
+    except KeyboardInterrupt as exc:
+        raise click.Abort() from exc
+
+
+async def _run_intake(url: str) -> None:
+    # Imported lazily so `fact-checker --help` works without the agent
+    # service installed in the current environment.
+    from swarm_reasoning.agents.intake.agent import build_intake_agent
+
+    agent = build_intake_agent()
+    inputs = {"messages": [("user", f"Process this URL: {url}")]}
+
+    final_state = None
+    async for mode, payload in agent.astream(inputs, stream_mode=["custom", "values"]):
+        if mode == "custom":
+            message = payload.get("message") if isinstance(payload, dict) else None
+            if message:
+                click.echo(click.style(f"• {message}", fg="cyan"), err=True)
+        elif mode == "values":
+            final_state = payload
+
+    if not final_state:
+        click.echo(click.style("No result returned.", fg="red"), err=True)
+        raise click.Abort()
+
+    structured = final_state.get("structured_response")
+    if structured is None:
+        click.echo(
+            click.style("No structured_response in final state.", fg="yellow"),
+            err=True,
+        )
+        click.echo(json.dumps(final_state, indent=2, default=str, ensure_ascii=False))
+        return
+
+    output = structured.model_dump() if hasattr(structured, "model_dump") else structured
+    click.echo(json.dumps(output, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
