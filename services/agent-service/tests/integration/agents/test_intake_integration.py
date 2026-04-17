@@ -12,6 +12,8 @@ S9/9.6: Full flow state contains fetched article text, extracted claims,
         selected claim, domain, and entities together.
 S9/9.7: Progress events are emitted via ``stream_mode="custom"`` at each
         tool boundary (fetch, decompose, classify, extract).
+S9/9.8: Invalid URL format -> agent returns ``URL_INVALID_FORMAT`` error
+        with no HTTP request and no sub-LLM tool calls.
 """
 
 from __future__ import annotations
@@ -774,3 +776,137 @@ class TestToolBoundaryProgressEvents:
             assert isinstance(event, dict)
             assert set(event.keys()) == {"type", "message"}, event
             assert event["type"] == "progress"
+
+
+# ---------------------------------------------------------------------------
+# S9/9.8: Invalid URL format -> agent returns error, no HTTP or LLM calls
+# ---------------------------------------------------------------------------
+
+
+_INVALID_URLS = [
+    "not-a-url",
+    "ftp://example.com/article",
+    "example.com/article",
+    "https://example",
+    "",
+]
+
+
+def _invalid_url_agent(bad_url: str):
+    """Scripted orchestrator for the rejection path.
+
+    Real orchestrators reading ``fetch_content``'s error dict are told by
+    the system prompt to stop; the script replays that trajectory:
+    fetch (with the bad URL) -> terminal -> IntakeOutput carrying only
+    ``error="URL_INVALID_FORMAT"``.
+    """
+    orchestrator = build_tool_call_orchestrator(
+        [
+            {"tool": "fetch_content", "args": {"url": bad_url}},
+            "URL format invalid, stopping intake.",
+            {
+                "tool": "IntakeOutput",
+                "args": {
+                    "article_text": "",
+                    "article_title": "",
+                    "article_date": "",
+                    "extracted_claims": [],
+                    "error": "URL_INVALID_FORMAT",
+                },
+            },
+        ]
+    )
+    return build_fake_intake_agent(orchestrator_model=orchestrator)
+
+
+class TestInvalidUrlFormatReturnsError:
+    """S9/9.8: malformed URLs are rejected by ``validate_url`` inside the
+    fetch_content tool before any network or sub-LLM work happens.
+
+    Guarantees:
+      - structured_response carries ``error="URL_INVALID_FORMAT"``.
+      - ``httpx.AsyncClient`` is never constructed (patched_fetch_httpx
+        records zero calls).
+      - Phase A/B sub-tools (decompose_claims, classify_domain,
+        extract_entities) never run, so their LLM sub-calls are
+        transitively never made.
+    """
+
+    @pytest.mark.parametrize("bad_url", _INVALID_URLS)
+    @pytest.mark.asyncio
+    async def test_structured_response_has_url_invalid_format_error(
+        self, patched_fetch_httpx, bad_url
+    ):
+        """Each malformed URL pattern yields the same rejection code."""
+        agent = _invalid_url_agent(bad_url)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {bad_url}")]})
+
+        state = result["structured_response"]
+        assert state.get("error") == "URL_INVALID_FORMAT"
+
+    @pytest.mark.asyncio
+    async def test_no_http_request_is_made(self, patched_fetch_httpx):
+        """``validate_url`` raises before ``fetch_html`` runs, so the
+        patched ``httpx.AsyncClient`` constructor is never called."""
+        agent = _invalid_url_agent("not-a-url")
+
+        await agent.ainvoke({"messages": [("user", "Process this URL: not-a-url")]})
+
+        assert patched_fetch_httpx.call_count == 0, (
+            "httpx.AsyncClient must not be constructed on the invalid-URL "
+            f"rejection path; got {patched_fetch_httpx.call_count} calls"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_sub_llm_tools_run(self, patched_fetch_httpx):
+        """decompose_claims / classify_domain / extract_entities never run
+        on the rejection path -- their LLM sub-calls are never made."""
+        agent = _invalid_url_agent("not-a-url")
+
+        result = await agent.ainvoke({"messages": [("user", "Process this URL: not-a-url")]})
+
+        sub_tool_names = {"decompose_claims", "classify_domain", "extract_entities"}
+        ran = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) in sub_tool_names
+        ]
+        assert ran == [], f"expected no sub-tool messages on rejection, got {ran}"
+
+    @pytest.mark.asyncio
+    async def test_fetch_content_tool_message_records_rejection(self, patched_fetch_httpx):
+        """fetch_content ran exactly once; its ToolMessage records the
+        failed validation with the URL_INVALID_FORMAT reason -- proving
+        the tool actually executed, not just the scripted IntakeOutput."""
+        agent = _invalid_url_agent("not-a-url")
+
+        result = await agent.ainvoke({"messages": [("user", "Process this URL: not-a-url")]})
+
+        fetch_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "fetch_content"
+        ]
+        assert len(fetch_messages) == 1
+
+        payload = json.loads(fetch_messages[0].content)
+        assert payload["success"] is False
+        assert payload["error"] == "URL_INVALID_FORMAT"
+        assert payload["url"] == "not-a-url"
+
+    @pytest.mark.asyncio
+    async def test_rejection_state_has_no_success_fields(self, patched_fetch_httpx):
+        """Rejection payload is minimal: no article text, no claims, no
+        domain/entities populated -- success-path fields stay absent."""
+        agent = _invalid_url_agent("not-a-url")
+
+        result = await agent.ainvoke({"messages": [("user", "Process this URL: not-a-url")]})
+
+        state = result["structured_response"]
+        assert state.get("error") == "URL_INVALID_FORMAT"
+        assert not state.get("article_text")
+        assert not state.get("extracted_claims")
+        assert not state.get("selected_claim")
+        assert not state.get("domain")
+        assert not state.get("entities")
