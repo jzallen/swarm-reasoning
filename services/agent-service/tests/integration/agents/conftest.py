@@ -17,6 +17,7 @@ from langchain_core.language_models.fake_chat_models import (
     FakeMessagesListChatModel,
 )
 from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt import create_react_agent
 
 from swarm_reasoning.agents.intake.agent import (
@@ -25,6 +26,19 @@ from swarm_reasoning.agents.intake.agent import (
     fetch_content,
 )
 from swarm_reasoning.agents.intake.models import IntakeOutput
+
+
+class ScriptedOrchestratorModel(FakeMessagesListChatModel):
+    """``FakeMessagesListChatModel`` with ``bind_tools`` support.
+
+    ``create_react_agent`` calls ``model.bind_tools(tools)`` on the orchestrator
+    before driving the react loop; the base ``FakeMessagesListChatModel`` raises
+    ``NotImplementedError``. This subclass is a no-op binder: tool metadata is
+    ignored because scripted responses already encode the exact tool calls.
+    """
+
+    def bind_tools(self, tools, **kwargs):  # type: ignore[override]
+        return self
 
 
 def tool_call_message(
@@ -75,7 +89,7 @@ def build_tool_call_orchestrator(
             )
         else:
             raise ValueError(f"Unrecognized orchestrator step: {step!r}")
-    return FakeMessagesListChatModel(responses=messages)
+    return ScriptedOrchestratorModel(responses=messages)
 
 
 def build_fake_intake_agent(
@@ -109,7 +123,6 @@ def build_fake_intake_agent(
     import json
 
     from langchain_core.messages import HumanMessage, SystemMessage
-    from langchain_core.runnables import RunnableConfig
     from langchain_core.tools import tool
     from langgraph.config import get_stream_writer
 
@@ -425,3 +438,27 @@ def mock_httpx_transport():
 def mock_httpx_client(mock_httpx_transport):
     """Pre-configured httpx.AsyncClient using the mock transport."""
     return httpx.AsyncClient(transport=mock_httpx_transport)
+
+
+@pytest.fixture
+def patched_fetch_httpx(mock_httpx_transport):
+    """Patch ``httpx.AsyncClient`` in fetch_content to route through the mock transport.
+
+    The intake agent's ``fetch_content`` tool constructs its own
+    ``httpx.AsyncClient`` inside ``fetch_html``. This fixture intercepts that
+    construction and injects the canned-route mock transport, so integration
+    tests exercise the real fetch pipeline without touching the network.
+    """
+    from unittest.mock import patch
+
+    original_cls = httpx.AsyncClient
+
+    def _factory(*args, **kwargs):
+        kwargs["transport"] = mock_httpx_transport
+        return original_cls(*args, **kwargs)
+
+    with patch(
+        "swarm_reasoning.agents.intake.tools.fetch_content.httpx.AsyncClient",
+        side_effect=_factory,
+    ) as mock_cls:
+        yield mock_cls
