@@ -22,6 +22,9 @@ S9/9.10: Non-HTML content type (e.g. application/pdf) -> agent returns
 S9/9.11: Page with fewer than 50 words of extractable content -> agent returns
         ``CONTENT_TOO_SHORT`` error; HTTP request succeeds and extraction runs
         but the word-count gate fires before any sub-LLM tool call.
+S9/9.12: Opinion article with no factual claims -> agent returns
+        ``NO_FACTUAL_CLAIMS`` error; fetch_content succeeds and decompose_claims
+        runs but the LLM returns an empty claims list, short-circuiting Phase B.
 """
 
 from __future__ import annotations
@@ -1457,3 +1460,219 @@ class TestShortContentReturnsError:
 
         assert any("Fetching article content" in m for m in messages), messages
         assert any(m.startswith("Fetch error: CONTENT_TOO_SHORT") for m in messages), messages
+
+
+# ---------------------------------------------------------------------------
+# S9/9.12: Opinion article with no factual claims -> error with NO_FACTUAL_CLAIMS
+# ---------------------------------------------------------------------------
+
+
+OPINION_URL = "https://example.com/opinion-article"
+
+
+def _opinion_article_agent(url: str = OPINION_URL):
+    """Scripted orchestrator for the no-factual-claims rejection path.
+
+    The URL validates, the HTTP round-trip succeeds, the response is HTML,
+    and extraction yields >=50 words — every fetch-level gate passes. The
+    failure surfaces *inside* ``decompose_claims``: the LLM returns
+    ``{"claims": []}`` because the article is pure opinion. The tool
+    converts that empty list into ``error="NO_FACTUAL_CLAIMS"`` in its
+    ToolMessage payload, and the orchestrator — seeing that error — stops
+    Phase A and emits an IntakeOutput carrying only
+    ``error="NO_FACTUAL_CLAIMS"``.
+    """
+    orchestrator = build_tool_call_orchestrator(
+        [
+            {"tool": "fetch_content", "args": {"url": url}},
+            {
+                "tool": "decompose_claims",
+                "args": {
+                    "article_text": "scripted opinion article text",
+                    "article_title": "Opinion: Why We Should Rethink Our Priorities",
+                },
+            },
+            "No factual claims found, stopping intake.",
+            {
+                "tool": "IntakeOutput",
+                "args": {
+                    "article_text": "",
+                    "article_title": "",
+                    "article_date": "",
+                    "extracted_claims": [],
+                    "error": "NO_FACTUAL_CLAIMS",
+                },
+            },
+        ]
+    )
+    return build_fake_intake_agent(
+        orchestrator_model=orchestrator,
+        decompose_responses=['{"claims": []}'],
+    )
+
+
+class TestOpinionArticleReturnsNoFactualClaims:
+    """S9/9.12: articles that pass every fetch-level gate (format, HTTP,
+    content-type, word-count) but contain no verifiable factual claims are
+    rejected by ``decompose_claims`` after the LLM returns an empty claims
+    list. This is the first rejection code that originates from a *semantic*
+    gate rather than a structural one.
+
+    Guarantees:
+      - structured_response carries ``error="NO_FACTUAL_CLAIMS"``.
+      - ``httpx.AsyncClient`` IS constructed (the URL is valid and the HTTP
+        round-trip completes; all fetch-level gates pass).
+      - ``fetch_content``'s ToolMessage records ``success=True`` — proving
+        the failure originates downstream of fetch, not at any fetch gate
+        (distinguishes 9.12 from 9.8/9.9/9.10/9.11).
+      - ``decompose_claims`` ran exactly once; its ToolMessage records
+        ``claim_count=0`` and ``error="NO_FACTUAL_CLAIMS"``.
+      - Phase B sub-tools (classify_domain, extract_entities) never run —
+        the orchestrator correctly reads the decompose error and stops.
+      - Rejection state carries no success fields (no selected_claim,
+        domain, or entities).
+    """
+
+    @pytest.mark.asyncio
+    async def test_structured_response_has_no_factual_claims_error(self, patched_fetch_httpx):
+        """The canonical no-claims rejection surfaces as NO_FACTUAL_CLAIMS."""
+        agent = _opinion_article_agent()
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {OPINION_URL}")]})
+
+        state = result["structured_response"]
+        assert state.get("error") == "NO_FACTUAL_CLAIMS"
+
+    @pytest.mark.asyncio
+    async def test_http_request_is_attempted(self, patched_fetch_httpx):
+        """Every fetch-level gate passes, so ``httpx.AsyncClient`` is
+        constructed and the HTTP round-trip completes. This distinguishes
+        9.12 from the pre-fetch rejection paths (9.8 skips HTTP entirely)
+        and from the fetch-level failure paths (9.9/9.10/9.11 surface
+        errors from fetch_content itself)."""
+        agent = _opinion_article_agent()
+
+        await agent.ainvoke({"messages": [("user", f"Process this URL: {OPINION_URL}")]})
+
+        assert patched_fetch_httpx.call_count >= 1, (
+            "httpx.AsyncClient must be constructed on the no-claims "
+            f"rejection path; got {patched_fetch_httpx.call_count} calls"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fetch_content_succeeded(self, patched_fetch_httpx):
+        """fetch_content ran exactly once and succeeded — proving the
+        failure originates downstream of the fetch pipeline, not at any
+        fetch-level gate. Word count must also be >=50 (the OPINION_ARTICLE
+        fixture is a real paragraph-length article, not a stub)."""
+        agent = _opinion_article_agent()
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {OPINION_URL}")]})
+
+        fetch_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "fetch_content"
+        ]
+        assert len(fetch_messages) == 1
+
+        payload = json.loads(fetch_messages[0].content)
+        assert payload["success"] is True
+        assert payload["url"] == OPINION_URL
+        assert payload["word_count"] >= 50
+        assert "error" not in payload or not payload.get("error")
+
+    @pytest.mark.asyncio
+    async def test_decompose_claims_tool_records_no_factual_claims(self, patched_fetch_httpx):
+        """decompose_claims ran exactly once; its ToolMessage records
+        ``claim_count=0`` and ``error="NO_FACTUAL_CLAIMS"`` — proving the
+        semantic gate fired inside the tool against the empty LLM response,
+        not that the orchestrator fabricated the error code."""
+        agent = _opinion_article_agent()
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {OPINION_URL}")]})
+
+        decompose_messages = [
+            m
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "decompose_claims"
+        ]
+        assert len(decompose_messages) == 1
+
+        payload = json.loads(decompose_messages[0].content)
+        assert payload["claim_count"] == 0
+        assert payload["claims"] == []
+        assert payload.get("error") == "NO_FACTUAL_CLAIMS"
+
+    @pytest.mark.asyncio
+    async def test_phase_b_sub_tools_never_run(self, patched_fetch_httpx):
+        """classify_domain and extract_entities never run on the no-claims
+        rejection path — the orchestrator reads decompose_claims's error
+        and stops Phase A before any Phase B sub-LLM call is made."""
+        agent = _opinion_article_agent()
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {OPINION_URL}")]})
+
+        phase_b_tools = {"classify_domain", "extract_entities"}
+        ran = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) in phase_b_tools
+        ]
+        assert ran == [], f"expected no Phase B tool messages on rejection, got {ran}"
+
+    @pytest.mark.asyncio
+    async def test_rejection_state_has_no_success_fields(self, patched_fetch_httpx):
+        """Rejection payload is minimal: no extracted claims, no selected
+        claim, no domain or entities populated — success-path fields stay
+        absent. (article_text/article_title are scripted empty here; the
+        orchestrator's IntakeOutput mirrors what a real orchestrator would
+        emit when no claim is selectable.)"""
+        agent = _opinion_article_agent()
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {OPINION_URL}")]})
+
+        state = result["structured_response"]
+        assert state.get("error") == "NO_FACTUAL_CLAIMS"
+        assert not state.get("extracted_claims")
+        assert not state.get("selected_claim")
+        assert not state.get("domain")
+        assert not state.get("entities")
+
+    @pytest.mark.asyncio
+    async def test_tool_call_order_is_fetch_then_decompose_only(self, patched_fetch_httpx):
+        """Tool-call timeline is exactly fetch_content → decompose_claims,
+        with no classify_domain or extract_entities after. Pins the
+        rejection-path trajectory: Phase A runs to completion; Phase B
+        never starts."""
+        agent = _opinion_article_agent()
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {OPINION_URL}")]})
+
+        tool_names = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool"
+            and getattr(m, "name", None)
+            in {"fetch_content", "decompose_claims", "classify_domain", "extract_entities"}
+        ]
+        assert tool_names == ["fetch_content", "decompose_claims"], tool_names
+
+    @pytest.mark.asyncio
+    async def test_progress_events_reach_found_zero_claims(self, patched_fetch_httpx):
+        """The custom stream emits the decompose boundary's progress
+        events even when the LLM returns zero claims: the "Analyzing..."
+        pre-call event and the "Found 0 claims for review" post-parse
+        event are both observable by the SSE relay."""
+        agent = _opinion_article_agent()
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {OPINION_URL}")
+        )
+
+        assert any("Fetching article content" in m for m in messages), messages
+        assert any("Analyzing article for factual claims" in m for m in messages), messages
+        assert any(m == "Found 0 claims for review" for m in messages), messages
+        # Phase B progress events must never appear on the rejection path.
+        assert not any(m.startswith("Domain classified:") for m in messages), messages
+        assert not any(m.startswith("Entities extracted:") for m in messages), messages
