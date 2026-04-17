@@ -46,6 +46,10 @@ S9/9.21: Unrecognized domain classification (LLM response outside
         classification, not a terminal rejection. Positive control: if
         the retry returns a recognized code, that code is used instead of
         the fallback.
+S9/9.23: Phase B output (full two-phase flow) carries ``selected_claim``,
+        ``domain``, and ``entities`` *in addition to* the Phase A fields
+        ``extracted_claims`` and ``article_text`` -- the Phase B tools add
+        new structured_response fields rather than overwriting Phase A's.
 """
 
 from __future__ import annotations
@@ -2806,3 +2810,208 @@ class TestUnrecognizedDomainRetryRecovers:
 
         assert any(m == "Domain classified: HEALTHCARE" for m in messages), messages
         assert not any(m == "Domain classified: OTHER" for m in messages), messages
+
+
+# ---------------------------------------------------------------------------
+# S9/9.23: Phase B output has selected_claim, domain, entities plus Phase A
+#          fields -- Phase B adds, Phase A fields survive
+# ---------------------------------------------------------------------------
+
+
+_PHASE_A_FIELDS = ("extracted_claims", "article_text")
+_PHASE_B_FIELDS = ("selected_claim", "domain", "entities")
+
+
+class TestPhaseBStateHasPhaseBFieldsPlusPhaseAFields:
+    """S9/9.23: after the full two-phase flow runs (fetch → decompose →
+    classify → extract → IntakeOutput), the intake agent's
+    structured_response carries both the Phase B fields -- ``selected_claim``,
+    ``domain``, ``entities`` -- *and* the Phase A fields -- ``extracted_claims``,
+    ``article_text`` -- together in a single coherent state.
+
+    This pins the symmetric counterpart of S9/9.22. Where Phase A alone
+    emits its two fields and nothing from Phase B, Phase B does *not*
+    replace the Phase A fields: it appends its three fields to the
+    existing Phase A state so the downstream pipeline node receives a
+    complete record of the intake agent's work.
+
+    Guarantees:
+      - structured_response contains all three Phase B fields
+        (``selected_claim`` matching the user-selected claim,
+        ``domain`` inside ``DOMAIN_VOCABULARY``, ``entities`` carrying
+        the five NER buckets).
+      - structured_response *still* contains both Phase A fields
+        (``extracted_claims`` with the same 1-5 claims decompose
+        produced, ``article_text`` with the fetched body) -- Phase B
+        must not drop them.
+      - No ``error`` field -- the happy-path output is mutually
+        exclusive with the rejection-path shape.
+      - The tool trajectory shows both phases ran in order
+        (``fetch_content`` → ``decompose_claims`` → ``classify_domain``
+        → ``extract_entities``) and the final state fields are coherent
+        with their respective ToolMessage payloads.
+    """
+
+    @pytest.mark.asyncio
+    async def test_phase_b_state_has_selected_claim(self, patched_fetch_httpx):
+        """Phase B output carries ``selected_claim`` matching the claim
+        the user selected from Phase A's list."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert "selected_claim" in state
+        assert state["selected_claim"], "selected_claim must be populated after Phase B"
+        assert state["selected_claim"]["claim_text"] == _SELECTED_CLAIM["claim_text"]
+
+    @pytest.mark.asyncio
+    async def test_phase_b_state_has_domain(self, patched_fetch_httpx):
+        """Phase B output carries ``domain`` with a DOMAIN_VOCABULARY value."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert "domain" in state
+        assert state["domain"], "domain must be non-empty after Phase B"
+        assert state["domain"] in DOMAIN_VOCABULARY
+
+    @pytest.mark.asyncio
+    async def test_phase_b_state_has_entities_with_all_buckets(self, patched_fetch_httpx):
+        """Phase B output carries ``entities`` with all five NER buckets
+        as lists."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert "entities" in state
+        entities = state["entities"]
+        assert entities, "entities dict must be populated after Phase B"
+        for bucket in ("persons", "organizations", "dates", "locations", "statistics"):
+            assert bucket in entities, f"missing entity bucket: {bucket}"
+            assert isinstance(entities[bucket], list)
+
+    @pytest.mark.asyncio
+    async def test_phase_b_state_still_has_extracted_claims(self, patched_fetch_httpx):
+        """Phase B preserves Phase A's ``extracted_claims`` -- the list of
+        1-5 decomposed claims survives into the final state, not dropped
+        when selected_claim is added."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert "extracted_claims" in state
+        claims = state["extracted_claims"]
+        assert 1 <= len(claims) <= 5
+        assert [c["claim_text"] for c in claims] == [c["claim_text"] for c in _CANNED_CLAIMS]
+
+    @pytest.mark.asyncio
+    async def test_phase_b_state_still_has_article_text(self, patched_fetch_httpx):
+        """Phase B preserves Phase A's ``article_text`` -- the fetched
+        article body survives into the final state."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert "article_text" in state
+        assert isinstance(state["article_text"], str)
+        assert state["article_text"], "article_text must be non-empty after Phase B"
+
+    @pytest.mark.asyncio
+    async def test_phase_b_state_has_all_phase_a_and_phase_b_fields(self, patched_fetch_httpx):
+        """Phase B structured_response contains the union of Phase A and
+        Phase B fields -- the critical co-occurrence assertion."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        for field in _PHASE_A_FIELDS + _PHASE_B_FIELDS:
+            assert field in state, f"Phase B state missing field {field!r}"
+            assert state[field], f"Phase B state field {field!r} is empty: {state[field]!r}"
+
+    @pytest.mark.asyncio
+    async def test_phase_b_state_has_no_error_field(self, patched_fetch_httpx):
+        """Phase B happy-path output carries no ``error`` field -- the
+        success-shape and rejection-shape are mutually exclusive."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert not state.get("error"), (
+            f"Phase B happy path mis-flagged as error={state.get('error')!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_phase_b_state_selected_claim_is_one_of_extracted(self, patched_fetch_httpx):
+        """The ``selected_claim`` in Phase B state is one of the
+        ``extracted_claims`` -- selection is a choice from Phase A's
+        list, not a fresh claim invented by Phase B."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        extracted_texts = {c["claim_text"] for c in state["extracted_claims"]}
+        assert state["selected_claim"]["claim_text"] in extracted_texts
+
+    @pytest.mark.asyncio
+    async def test_phase_b_state_coherent_with_tool_messages(self, patched_fetch_httpx):
+        """Phase B state fields are coherent with the tool-call record:
+        fetch_content ran against NEWS_URL, decompose_claims produced the
+        same claim count as ``extracted_claims``, classify_domain's
+        payload domain matches ``state.domain``, and extract_entities
+        populated the same five NER buckets as ``state.entities``. This
+        proves the final state reflects real tool output, not a scripted
+        shortcut."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        tool_messages = {
+            m.name: json.loads(m.content)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool"
+            and getattr(m, "name", None)
+            in {"fetch_content", "decompose_claims", "classify_domain", "extract_entities"}
+        }
+
+        assert tool_messages["fetch_content"]["success"] is True
+        assert tool_messages["fetch_content"]["url"] == NEWS_URL
+        assert tool_messages["decompose_claims"]["claim_count"] == len(state["extracted_claims"])
+        assert tool_messages["classify_domain"]["domain"] == state["domain"]
+        for bucket in ("persons", "organizations", "dates", "locations", "statistics"):
+            assert bucket in tool_messages["extract_entities"]
+            assert bucket in state["entities"]
+
+    @pytest.mark.asyncio
+    async def test_phase_b_runs_full_trajectory(self, patched_fetch_httpx):
+        """Tool-call order is fetch → decompose → classify → extract --
+        both phases ran in order. Proves Phase B fields arrived via the
+        full trajectory, not from a Phase A short-circuit."""
+        agent = _scripted_intake_agent_phase_b(_CANNED_CLAIMS, _SELECTED_CLAIM)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        tool_names = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool"
+        ]
+        ordering_tools = [
+            name
+            for name in tool_names
+            if name in {"fetch_content", "decompose_claims", "classify_domain", "extract_entities"}
+        ]
+        assert ordering_tools == [
+            "fetch_content",
+            "decompose_claims",
+            "classify_domain",
+            "extract_entities",
+        ]
