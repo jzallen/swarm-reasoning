@@ -33,6 +33,11 @@ S9/9.18: HTTP fetch uses a 10-second request timeout, and a mock transport
         raising ``httpx.TimeoutException`` is caught at the fetch layer and
         surfaced as ``error='FETCH_TIMEOUT'`` in the ``fetch_content``
         ToolMessage payload (no uncaught exception reaches the agent).
+S9/9.20: Malformed LLM JSON in ``decompose_claims`` triggers exactly one
+        retry (per ``decompose_and_parse``); if the retry also returns
+        unparseable output the tool emits ``error='NO_FACTUAL_CLAIMS'`` and
+        Phase B is skipped. Positive control: if the retry returns valid
+        JSON, the pipeline recovers and Phase B runs normally.
 """
 
 from __future__ import annotations
@@ -2145,3 +2150,316 @@ class TestHttpFetchUses10SecondTimeout:
         assert payload["success"] is False
         assert payload["error"] == "FETCH_TIMEOUT"
         assert payload["url"] == TIMEOUT_URL
+
+
+# ---------------------------------------------------------------------------
+# S9/9.20: Malformed LLM JSON triggers one retry, then NO_FACTUAL_CLAIMS
+# ---------------------------------------------------------------------------
+
+
+_MALFORMED_NOT_JSON = "not valid json at all {{{{{"
+_MALFORMED_WRONG_SHAPE = '{"not_claims_key": "unexpected shape"}'
+
+
+def _malformed_decompose_agent(decompose_responses: list[str]):
+    """Scripted orchestrator for the malformed-decompose-JSON rejection path.
+
+    The URL validates, the HTTP round-trip succeeds, and fetch_content
+    returns a proper news article. The failure surfaces *inside*
+    ``decompose_claims``: the LLM's raw response cannot be parsed as the
+    expected ``{"claims": [...]}`` schema. The tool's ``decompose_and_parse``
+    helper retries exactly once on ``JSONDecodeError``/``ValueError``; when
+    the retry also fails, it returns an empty list and the tool's payload
+    carries ``error="NO_FACTUAL_CLAIMS"``. The orchestrator, seeing that
+    error, emits an IntakeOutput carrying only ``error="NO_FACTUAL_CLAIMS"``.
+
+    ``decompose_responses`` is passed verbatim to the underlying
+    ``FakeListChatModel``; it cycles through the list on each invocation,
+    so supplying 2 responses exercises exactly attempt 1 + retry.
+    """
+    orchestrator = build_tool_call_orchestrator(
+        [
+            {"tool": "fetch_content", "args": {"url": NEWS_URL}},
+            {
+                "tool": "decompose_claims",
+                "args": {
+                    "article_text": "scripted article text",
+                    "article_title": "scripted title",
+                },
+            },
+            "No factual claims after retry, stopping intake.",
+            {
+                "tool": "IntakeOutput",
+                "args": {
+                    "article_text": "",
+                    "article_title": "",
+                    "article_date": "",
+                    "extracted_claims": [],
+                    "error": "NO_FACTUAL_CLAIMS",
+                },
+            },
+        ]
+    )
+    return build_fake_intake_agent(
+        orchestrator_model=orchestrator,
+        decompose_responses=decompose_responses,
+    )
+
+
+class TestMalformedDecomposeJsonRetriesOnceThenNoFactualClaims:
+    """S9/9.20: when ``decompose_claims`` receives malformed JSON from the
+    LLM (either invalid JSON text or a JSON object missing the ``claims``
+    array), the tool retries the LLM call exactly once. If the retry also
+    returns unparseable output, the tool returns an empty claims list and
+    emits ``error="NO_FACTUAL_CLAIMS"`` in its ToolMessage payload -- the
+    orchestrator then terminates Phase A, and the final IntakeOutput
+    carries ``error="NO_FACTUAL_CLAIMS"``.
+
+    This pins the retry contract in
+    ``swarm_reasoning.agents.intake.tools.decompose_claims.decompose_and_parse``:
+    on ``JSONDecodeError``/``ValueError`` the call is retried exactly once;
+    on persistent failure the tool degrades gracefully rather than raising
+    through the agent. 9.20 is a sibling of 9.12: both terminate at
+    ``NO_FACTUAL_CLAIMS``, but 9.12's failure is *semantic* (LLM returned
+    an empty claims list) while 9.20's failure is *structural* (LLM
+    returned unparseable output, twice).
+
+    Guarantees:
+      - structured_response carries ``error="NO_FACTUAL_CLAIMS"``.
+      - ``fetch_content`` runs exactly once and succeeds (the malformed
+        JSON failure is downstream of fetch).
+      - ``decompose_claims`` runs exactly once at the tool layer, but its
+        underlying LLM is invoked exactly twice (attempt + one retry).
+      - ``decompose_claims`` ToolMessage records ``claim_count=0`` and
+        ``error="NO_FACTUAL_CLAIMS"``.
+      - Phase B sub-tools (classify_domain, extract_entities) never run.
+      - Progress stream emits the decompose boundary events ("Analyzing..."
+        followed by "Found 0 claims for review") even on the retry-exhausted
+        rejection path.
+      - Positive control: if the first response is malformed but the retry
+        returns valid JSON, the pipeline recovers and Phase B runs normally.
+    """
+
+    @pytest.mark.asyncio
+    async def test_structured_response_has_no_factual_claims_error(self, patched_fetch_httpx):
+        """Two consecutive malformed LLM responses surface as the canonical
+        NO_FACTUAL_CLAIMS rejection in the agent's structured output."""
+        agent = _malformed_decompose_agent([_MALFORMED_NOT_JSON, _MALFORMED_WRONG_SHAPE])
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert state.get("error") == "NO_FACTUAL_CLAIMS"
+
+    @pytest.mark.asyncio
+    async def test_decompose_llm_invoked_exactly_twice(self, patched_fetch_httpx):
+        """The underlying decompose LLM is invoked exactly twice -- the
+        initial attempt plus exactly one retry. Zero invocations would mean
+        no LLM call happened; one would mean no retry; three or more would
+        mean the retry count exceeds the spec."""
+        tracker = _ChatModelStartTracker()
+        agent = _malformed_decompose_agent([_MALFORMED_NOT_JSON, _MALFORMED_WRONG_SHAPE])
+
+        await agent.ainvoke(
+            {"messages": [("user", f"Process this URL: {NEWS_URL}")]},
+            config={"callbacks": [tracker]},
+        )
+
+        decompose_calls = [
+            inv for inv in tracker.invocations if inv["system"].startswith(_DECOMPOSE_SYSTEM_PREFIX)
+        ]
+        assert len(decompose_calls) == 2, (
+            f"decompose LLM must be invoked exactly twice (attempt + one retry); "
+            f"got {len(decompose_calls)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fetch_content_succeeded(self, patched_fetch_httpx):
+        """fetch_content ran exactly once and succeeded -- proving the
+        malformed-JSON failure originates strictly downstream of fetch,
+        not at any fetch-level gate (distinguishes 9.20 from 9.8-9.11)."""
+        agent = _malformed_decompose_agent([_MALFORMED_NOT_JSON, _MALFORMED_WRONG_SHAPE])
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        payload = _fetch_content_payload(result)
+        assert payload["success"] is True
+        assert payload["url"] == NEWS_URL
+        assert "error" not in payload or not payload.get("error")
+
+    @pytest.mark.asyncio
+    async def test_decompose_tool_records_no_factual_claims_after_retry(self, patched_fetch_httpx):
+        """decompose_claims ran exactly once at the tool layer (the retry
+        is internal to ``decompose_and_parse``); its ToolMessage records
+        ``claim_count=0`` and ``error="NO_FACTUAL_CLAIMS"``, proving the
+        tool degraded gracefully rather than raising a parse exception
+        through the agent."""
+        agent = _malformed_decompose_agent([_MALFORMED_NOT_JSON, _MALFORMED_WRONG_SHAPE])
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        payload = _decompose_claims_payload(result)
+        assert payload["claim_count"] == 0
+        assert payload["claims"] == []
+        assert payload.get("error") == "NO_FACTUAL_CLAIMS"
+
+    @pytest.mark.asyncio
+    async def test_phase_b_sub_tools_never_run(self, patched_fetch_httpx):
+        """classify_domain and extract_entities never run when decompose
+        exhausts its retry budget and returns NO_FACTUAL_CLAIMS -- the
+        orchestrator reads the error code and stops Phase A before any
+        Phase B sub-LLM call is made."""
+        agent = _malformed_decompose_agent([_MALFORMED_NOT_JSON, _MALFORMED_WRONG_SHAPE])
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        phase_b_tools = {"classify_domain", "extract_entities"}
+        ran = [
+            getattr(m, "name", None)
+            for m in result["messages"]
+            if getattr(m, "type", None) == "tool" and getattr(m, "name", None) in phase_b_tools
+        ]
+        assert ran == [], f"expected no Phase B tool messages on rejection, got {ran}"
+
+    @pytest.mark.asyncio
+    async def test_progress_emits_analyzing_then_found_zero(self, patched_fetch_httpx):
+        """The decompose boundary's progress events fire even when both
+        attempts fail: the pre-call ``"Analyzing..."`` event and the
+        post-retry ``"Found 0 claims for review"`` event are both
+        observable on the custom stream. Phase B progress events must not
+        appear because those tools never run."""
+        agent = _malformed_decompose_agent([_MALFORMED_NOT_JSON, _MALFORMED_WRONG_SHAPE])
+
+        messages = _progress_messages(
+            await _collect_custom_stream(agent, f"Process this URL: {NEWS_URL}")
+        )
+
+        assert any("Analyzing article for factual claims" in m for m in messages), messages
+        assert any(m == "Found 0 claims for review" for m in messages), messages
+        assert not any(m.startswith("Domain classified:") for m in messages), messages
+        assert not any(m.startswith("Entities extracted:") for m in messages), messages
+
+    @pytest.mark.asyncio
+    async def test_both_malformed_flavors_are_retried(self, patched_fetch_httpx):
+        """Both flavors of malformed JSON -- ``JSONDecodeError`` (unparseable
+        text) and ``ValueError`` (parseable JSON missing the ``claims``
+        array) -- are caught and retried. Swapping the order across the
+        two attempts must still yield NO_FACTUAL_CLAIMS, proving the retry
+        clause matches ``(JSONDecodeError, ValueError)`` and not just one
+        of the two."""
+        agent = _malformed_decompose_agent([_MALFORMED_WRONG_SHAPE, _MALFORMED_NOT_JSON])
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        assert result["structured_response"].get("error") == "NO_FACTUAL_CLAIMS"
+        assert _decompose_claims_payload(result).get("error") == "NO_FACTUAL_CLAIMS"
+
+
+def _malformed_then_valid_decompose_agent(decompose_responses: list[str], claims: list[dict]):
+    """Positive-control orchestrator: scripted through Phase B as if
+    decompose succeeded. The decompose LLM is fed a malformed-then-valid
+    response pair so the retry recovers; the orchestrator is driven through
+    the full fetch → decompose → classify → extract → IntakeOutput
+    trajectory exactly like the happy path in :func:`_scripted_intake_agent`.
+    """
+    orchestrator = build_tool_call_orchestrator(
+        [
+            {"tool": "fetch_content", "args": {"url": NEWS_URL}},
+            {
+                "tool": "decompose_claims",
+                "args": {
+                    "article_text": "scripted article text",
+                    "article_title": "scripted title",
+                },
+            },
+            {
+                "tool": "classify_domain",
+                "args": {"claim_text": claims[0]["claim_text"]},
+            },
+            {
+                "tool": "extract_entities",
+                "args": {"claim_text": claims[0]["claim_text"]},
+            },
+            "Extracted claims ready for user selection.",
+            {
+                "tool": "IntakeOutput",
+                "args": {
+                    "article_text": "scripted article text",
+                    "article_title": "scripted title",
+                    "article_date": "20250115",
+                    "extracted_claims": claims,
+                    "selected_claim": claims[0],
+                    "domain": "ECONOMICS",
+                    "entities": {
+                        "persons": [],
+                        "organizations": [],
+                        "dates": [],
+                        "locations": [],
+                        "statistics": [],
+                    },
+                },
+            },
+        ]
+    )
+    return build_fake_intake_agent(
+        orchestrator_model=orchestrator,
+        decompose_responses=decompose_responses,
+        classify_responses=["ECONOMICS"],
+    )
+
+
+class TestMalformedDecomposeJsonRetryRecovers:
+    """S9/9.20 positive control: if the first decompose LLM response is
+    malformed but the retry returns valid JSON, the pipeline recovers and
+    Phase B runs normally. This pins the retry budget at "exactly one"
+    from the opposite side: if the retry fired zero times the first
+    malformed response would bubble up as NO_FACTUAL_CLAIMS, and this
+    test would fail at the claim-count assertion.
+
+    Together with
+    :class:`TestMalformedDecomposeJsonRetriesOnceThenNoFactualClaims`, this
+    brackets the retry contract: one retry, no more, no fewer.
+    """
+
+    @pytest.mark.asyncio
+    async def test_retry_recovers_with_valid_claims(self, patched_fetch_httpx):
+        """First attempt returns malformed JSON; the retry returns valid
+        JSON with claims. The pipeline proceeds normally and surfaces
+        extracted claims in the structured response -- proving the retry
+        fired and its successful output was consumed."""
+        valid_response = json.dumps({"claims": _CANNED_CLAIMS})
+        agent = _malformed_then_valid_decompose_agent(
+            [_MALFORMED_NOT_JSON, valid_response], _CANNED_CLAIMS
+        )
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        state = result["structured_response"]
+        assert state.get("error") is None or not state.get("error"), (
+            f"unexpected error after successful retry: {state.get('error')!r}"
+        )
+        claims = state["extracted_claims"]
+        assert len(claims) == len(_CANNED_CLAIMS)
+        assert [c["claim_text"] for c in claims] == [c["claim_text"] for c in _CANNED_CLAIMS]
+
+    @pytest.mark.asyncio
+    async def test_retry_recovery_records_claims_in_decompose_tool_message(
+        self, patched_fetch_httpx
+    ):
+        """decompose_claims ToolMessage records the recovered claim set
+        (not NO_FACTUAL_CLAIMS) when the retry succeeds. No ``error`` key
+        is present in its payload on the recovery path."""
+        valid_response = json.dumps({"claims": _CANNED_CLAIMS})
+        agent = _malformed_then_valid_decompose_agent(
+            [_MALFORMED_NOT_JSON, valid_response], _CANNED_CLAIMS
+        )
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        payload = _decompose_claims_payload(result)
+        assert payload["claim_count"] == len(_CANNED_CLAIMS)
+        assert payload["claims"], "recovered claims must appear in the tool payload"
+        assert "error" not in payload or not payload.get("error"), (
+            f"decompose payload unexpectedly carries error {payload.get('error')!r} "
+            "after successful retry"
+        )
