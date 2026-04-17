@@ -25,6 +25,10 @@ S9/9.11: Page with fewer than 50 words of extractable content -> agent returns
 S9/9.12: Opinion article with no factual claims -> agent returns
         ``NO_FACTUAL_CLAIMS`` error; fetch_content succeeds and decompose_claims
         runs but the LLM returns an empty claims list, short-circuiting Phase B.
+S9/9.17: Every extracted claim's ``quote`` field is a verbatim substring of
+        the article text returned by ``fetch_content`` -- locks the
+        design.md §7 invariant that a quote is a single sentence drawn from
+        the article, not a paraphrase or fabrication.
 """
 
 from __future__ import annotations
@@ -1863,3 +1867,165 @@ class TestAllLlmSubCallsReceiveRunnableConfig:
             "classify",
             "extract",
         ]
+
+
+# ---------------------------------------------------------------------------
+# S9/9.17: Every claim's `quote` is a substring of the fetched article text
+# ---------------------------------------------------------------------------
+
+
+def _fetch_content_payload(result: dict) -> dict:
+    """Return the decoded JSON payload from the single ``fetch_content`` ToolMessage."""
+    fetch_messages = [
+        m
+        for m in result["messages"]
+        if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "fetch_content"
+    ]
+    assert len(fetch_messages) == 1, "expected exactly one fetch_content ToolMessage"
+    return json.loads(fetch_messages[0].content)
+
+
+def _decompose_claims_payload(result: dict) -> dict:
+    """Return the decoded JSON payload from the single ``decompose_claims`` ToolMessage."""
+    decompose_messages = [
+        m
+        for m in result["messages"]
+        if getattr(m, "type", None) == "tool" and getattr(m, "name", None) == "decompose_claims"
+    ]
+    assert len(decompose_messages) == 1, "expected exactly one decompose_claims ToolMessage"
+    return json.loads(decompose_messages[0].content)
+
+
+class TestQuoteIsSubstringOfArticleText:
+    """S9/9.17: every extracted claim's ``quote`` field is a verbatim
+    substring of the article text returned by ``fetch_content``.
+
+    The ``quote`` is defined (design.md §7) as the "single best sentence
+    from the article" supporting the claim. A non-substring quote means
+    the LLM fabricated or paraphrased the source text, which breaks the
+    downstream promise that every claim can be traced back to article
+    prose. These tests lock that invariant against the canned
+    ``_CANNED_CLAIMS`` fixtures whose quotes are drawn verbatim from
+    ``NEWS_ARTICLE_HTML``; trafilatura collapses paragraph-internal
+    newlines to spaces, so a byte-for-byte ``in`` check is the correct
+    assertion -- any regression that alters the extraction pipeline or
+    pollutes the quote text will fail this test before downstream
+    consumers see the bad data.
+    """
+
+    @pytest.mark.asyncio
+    async def test_every_structured_response_quote_is_in_article_text(self, patched_fetch_httpx):
+        """Every ``extracted_claims[i].quote`` in the final IntakeOutput is
+        a substring of the text returned by ``fetch_content``."""
+        agent = _scripted_intake_agent(_CANNED_CLAIMS)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        article_text = _fetch_content_payload(result)["text"]
+        assert article_text, "fetch_content must return non-empty article text"
+
+        claims = result["structured_response"]["extracted_claims"]
+        assert claims, "structured_response must carry extracted claims"
+
+        for claim in claims:
+            quote = claim["quote"]
+            assert quote in article_text, (
+                f"quote is not a verbatim substring of article text: "
+                f"quote={quote!r} article_text={article_text!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_every_decompose_tool_message_quote_is_in_article_text(self, patched_fetch_httpx):
+        """Every ``claims[i].quote`` in the ``decompose_claims`` ToolMessage
+        payload is a substring of the text returned by ``fetch_content``.
+
+        Checking at the tool-message layer (not just the structured_response)
+        catches regressions where the decompose tool itself emits bad quotes
+        that a later terminal step would otherwise silently relay."""
+        agent = _scripted_intake_agent(_CANNED_CLAIMS)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        article_text = _fetch_content_payload(result)["text"]
+        decompose_payload = _decompose_claims_payload(result)
+
+        assert decompose_payload["claim_count"] == len(_CANNED_CLAIMS)
+        for claim in decompose_payload["claims"]:
+            quote = claim["quote"]
+            assert quote in article_text, (
+                f"decompose_claims emitted a quote not present in article text: "
+                f"quote={quote!r} article_text={article_text!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_quote_substring_holds_for_single_claim(self, patched_fetch_httpx):
+        """Lower bound: a single-claim article still satisfies the substring
+        invariant end-to-end."""
+        single = [_CANNED_CLAIMS[0]]
+        agent = _scripted_intake_agent(single)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        article_text = _fetch_content_payload(result)["text"]
+        claims = result["structured_response"]["extracted_claims"]
+        assert len(claims) == 1
+        assert claims[0]["quote"] in article_text
+
+    @pytest.mark.asyncio
+    async def test_quote_substring_holds_for_five_claims(self, patched_fetch_httpx):
+        """Upper bound: the 1-5 claim window's maximum case still satisfies
+        the substring invariant for every emitted claim. Indices are
+        rewritten so duplicated fixtures remain well-formed."""
+        five = [{**_CANNED_CLAIMS[i % len(_CANNED_CLAIMS)], "index": i + 1} for i in range(5)]
+        agent = _scripted_intake_agent(five)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        article_text = _fetch_content_payload(result)["text"]
+        claims = result["structured_response"]["extracted_claims"]
+        assert len(claims) == 5
+        for claim in claims:
+            assert claim["quote"] in article_text
+
+    @pytest.mark.asyncio
+    async def test_structured_response_and_tool_message_agree_on_quotes(self, patched_fetch_httpx):
+        """The ``quote`` field carried through the decompose ToolMessage
+        matches the quote surfaced in the final IntakeOutput, so the
+        substring invariant proven on one layer also applies to the other.
+
+        This guards against a regression where either layer rewrites quote
+        text in a way that drifts from the article."""
+        agent = _scripted_intake_agent(_CANNED_CLAIMS)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        structured_quotes = [c["quote"] for c in result["structured_response"]["extracted_claims"]]
+        tool_quotes = [c["quote"] for c in _decompose_claims_payload(result)["claims"]]
+
+        assert structured_quotes == tool_quotes
+
+    @pytest.mark.asyncio
+    async def test_fabricated_quote_is_not_a_substring(self, patched_fetch_httpx):
+        """Sanity control: a quote fabricated to not appear in the article
+        text must fail the substring check. This proves the invariant
+        asserted above is non-vacuous -- if the ``in`` operator were
+        trivially true (e.g. empty-string handling), the positive tests
+        above would pass even on a broken pipeline."""
+        fabricated = [
+            {
+                **_CANNED_CLAIMS[0],
+                "quote": "This sentence does not appear anywhere in the article.",
+            }
+        ]
+        agent = _scripted_intake_agent(fabricated)
+
+        result = await agent.ainvoke({"messages": [("user", f"Process this URL: {NEWS_URL}")]})
+
+        article_text = _fetch_content_payload(result)["text"]
+        claims = result["structured_response"]["extracted_claims"]
+        assert len(claims) == 1
+        assert claims[0]["quote"] not in article_text, (
+            "fabricated sentinel quote unexpectedly appeared in the extracted "
+            "article text -- the NEWS_ARTICLE_HTML fixture or the sentinel "
+            "string needs to be updated so this negative control is meaningful"
+        )
