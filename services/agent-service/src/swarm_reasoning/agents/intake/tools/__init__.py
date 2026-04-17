@@ -1,43 +1,10 @@
-"""Intake agent tools -- reusable functions for claim intake processing.
+"""Intake agent tools.
 
-Each module exposes the core logic for one step of the intake pipeline:
+Each submodule provides a single intake step (fetch, decompose, classify,
+extract). Tool files export only functions and exceptions; constants are
+accessed via ``get_<name>()`` getters.
 
-- ``claim_intake`` -- structural validation (text, URL, date)
-- ``domain_classification`` -- domain vocabulary and prompt builder
-- ``entity_extractor`` -- entity extraction result model
-- ``fetch_content`` -- URL content fetching with trafilatura/BS4 extraction
+Importers should reach into the specific submodule rather than this
+package, so that tool-definition imports are colocated with each
+``@tool``-decorated function in ``agent.py``.
 """
-
-from swarm_reasoning.agents.intake.tools.claim_intake import (
-    ValidationError,
-    normalize_date,
-    validate_claim_text,
-    validate_source_url,
-)
-from swarm_reasoning.agents.intake.tools.domain_classification import (
-    DOMAIN_VOCABULARY,
-    build_prompt,
-)
-from swarm_reasoning.agents.intake.tools.entity_extractor import (
-    EntityExtractionResult,
-)
-from swarm_reasoning.agents.intake.tools.fetch_content import (
-    FetchError,
-    FetchResult,
-    fetch_content,
-    validate_url,
-)
-
-__all__ = [
-    "DOMAIN_VOCABULARY",
-    "EntityExtractionResult",
-    "FetchError",
-    "FetchResult",
-    "ValidationError",
-    "build_prompt",
-    "fetch_content",
-    "normalize_date",
-    "validate_claim_text",
-    "validate_source_url",
-    "validate_url",
-]

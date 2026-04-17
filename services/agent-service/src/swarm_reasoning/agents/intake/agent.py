@@ -11,51 +11,22 @@ is handled by the pipeline node wrapper in ``pipeline/nodes/``, not here.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any
 
 from langchain.agents import create_agent
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
-from langgraph.config import get_stream_writer
 
 from swarm_reasoning.agents.intake.models import IntakeOutput
-from swarm_reasoning.agents.intake.tools.decompose_claims import (
-    decompose_and_parse,
-)
-from swarm_reasoning.agents.intake.tools.domain_classification import (
-    DOMAIN_VOCABULARY,
-    build_prompt,
-)
-from swarm_reasoning.agents.intake.tools.entity_extractor import (
-    _SYSTEM_PROMPT as _ENTITY_SYSTEM_PROMPT,
-)
-from swarm_reasoning.agents.intake.tools.entity_extractor import (
-    EntityExtractionResult,
-)
-from swarm_reasoning.agents.intake.tools.fetch_content import (
-    FetchError,
-)
-from swarm_reasoning.agents.intake.tools.fetch_content import (
-    fetch_content as _fetch_content,
-)
+from swarm_reasoning.agents.messaging import share_progress
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "intake"
-
-_CLASSIFY_SYSTEM_PROMPT = (
-    "You are a domain classifier for a fact-checking system. "
-    "Your task is to categorize the given claim into exactly one of the following domains:\n\n"
-    "HEALTHCARE, ECONOMICS, POLICY, SCIENCE, ELECTION, CRIME, OTHER\n\n"
-    "Respond with exactly one word -- the domain code. "
-    "Do not include punctuation, explanation, or any other text."
-)
 
 # ---------------------------------------------------------------------------
 # Model constants
@@ -104,46 +75,6 @@ After completing all steps, report your findings."""
 
 
 # ---------------------------------------------------------------------------
-# Tool definitions
-# ---------------------------------------------------------------------------
-
-
-@tool
-async def fetch_content(url: str) -> dict[str, Any]:
-    """Fetch and extract content from a source URL.
-
-    Downloads the web page, extracts the main article text using trafilatura
-    (with BeautifulSoup fallback), and returns the title, publication date,
-    extracted text, and word count.
-
-    Args:
-        url: The source URL to fetch content from.
-    """
-    writer = get_stream_writer()
-    writer({"type": "progress", "message": "Fetching article content..."})
-    try:
-        result = await _fetch_content(url)
-        writer(
-            {
-                "type": "progress",
-                "message": f"Content extracted: {result.word_count} words",
-            }
-        )
-        return {
-            "success": True,
-            "url": result.url,
-            "title": result.title,
-            "date": result.date,
-            "text": result.text,
-            "word_count": result.word_count,
-            "extraction_method": result.extraction_method,
-        }
-    except FetchError as fe:
-        writer({"type": "progress", "message": f"Fetch error: {fe.reason}"})
-        return {"success": False, "url": url, "error": fe.reason}
-
-
-# ---------------------------------------------------------------------------
 # Agent construction
 # ---------------------------------------------------------------------------
 
@@ -189,6 +120,37 @@ def build_intake_agent(model=None):
     )
 
     @tool
+    async def fetch_content(url: str) -> dict[str, Any]:
+        """Fetch and extract content from a source URL.
+
+        Downloads the web page, extracts the main article text using trafilatura
+        (with BeautifulSoup fallback), and returns the title, publication date,
+        extracted text, and word count.
+
+        Args:
+            url: The source URL to fetch content from.
+        """
+        from swarm_reasoning.agents.intake.tools import fetch_content
+        from swarm_reasoning.agents.intake.tools.fetch_content import FetchError
+
+        share_progress("Fetching article content...")
+        try:
+            result = await fetch_content.fetch_content(url)
+            share_progress(f"Content extracted: {result.word_count} words")
+            return {
+                "success": True,
+                "url": result.url,
+                "title": result.title,
+                "date": result.date,
+                "text": result.text,
+                "word_count": result.word_count,
+                "extraction_method": result.extraction_method,
+            }
+        except FetchError as fe:
+            share_progress(f"Fetch error: {fe.reason}")
+            return {"success": False, "url": url, "error": fe.reason}
+
+    @tool
     async def decompose_claims(
         article_text: str, article_title: str, config: RunnableConfig
     ) -> dict[str, Any]:
@@ -201,14 +163,16 @@ def build_intake_agent(model=None):
             article_text: The extracted article body text.
             article_title: The article title for context.
         """
-        writer = get_stream_writer()
-        claims = await decompose_and_parse(
+        from swarm_reasoning.agents.intake.tools import decompose_claims
+
+        share_progress("Analyzing article for factual claims...")
+        claims = await decompose_claims.decompose_and_parse(
             article_text=article_text,
             article_title=article_title,
             model=decompose_model,
             config=config,
-            writer=writer,
         )
+        share_progress(f"Found {len(claims)} claims for review")
 
         result: dict[str, Any] = {
             "claims": [claim.model_dump() for claim in claims],
@@ -231,34 +195,10 @@ def build_intake_agent(model=None):
         Args:
             claim_text: The claim text to classify.
         """
-        domain: str | None = None
+        from swarm_reasoning.agents.intake.tools import domain_classification
 
-        for attempt in range(2):
-            try:
-                prompt = build_prompt(claim_text, retry=(attempt > 0))
-                messages = [
-                    SystemMessage(content=_CLASSIFY_SYSTEM_PROMPT),
-                    HumanMessage(content=prompt[0]["content"]),
-                ]
-                response = await classify_model.ainvoke(messages, config=config)
-                result = response.content.strip().upper()
-            except Exception:
-                logger.warning(
-                    "Domain classification error (attempt %d)",
-                    attempt + 1,
-                    exc_info=True,
-                )
-                continue
-
-            if result in DOMAIN_VOCABULARY:
-                domain = result
-                break
-
-        domain = domain or "OTHER"
-
-        writer = get_stream_writer()
-        writer({"type": "progress", "message": f"Domain classified: {domain}"})
-
+        domain = await domain_classification.classify(claim_text, classify_model, config)
+        share_progress(f"Domain classified: {domain}")
         return {"domain": domain}
 
     @tool
@@ -271,42 +211,11 @@ def build_intake_agent(model=None):
         Args:
             claim_text: The normalized claim text to extract entities from.
         """
-        empty = EntityExtractionResult(
-            persons=[], organizations=[], dates=[], locations=[], statistics=[]
-        )
+        from swarm_reasoning.agents.intake.tools import entity_extractor
 
-        messages = [
-            SystemMessage(content=_ENTITY_SYSTEM_PROMPT),
-            HumanMessage(content=f"Claim: {claim_text}"),
-        ]
-        try:
-            response = await entity_model.ainvoke(messages, config=config)
-            raw_text = response.content.strip()
-        except Exception:
-            logger.warning("Entity extraction LLM error", exc_info=True)
-            raw_text = None
-
-        result = empty
-        if raw_text:
-            try:
-                data = json.loads(raw_text)
-                result = EntityExtractionResult.model_validate(data)
-            except (json.JSONDecodeError, Exception):
-                logger.warning("Entity extraction response parse error: %s", raw_text[:200])
-
-        entities = {
-            "persons": result.persons,
-            "organizations": result.organizations,
-            "dates": result.dates,
-            "locations": result.locations,
-            "statistics": result.statistics,
-        }
-
-        writer = get_stream_writer()
-        entity_count = sum(len(v) for v in entities.values())
-        writer({"type": "progress", "message": f"Entities extracted: {entity_count} found"})
-
-        return entities
+        result = await entity_extractor.extract(claim_text, entity_model, config)
+        share_progress(f"Entities extracted: {len(result)} found")
+        return result.to_dict()
 
     if model is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -326,6 +235,12 @@ def build_intake_agent(model=None):
         extract_entities,
     ]
 
+    # Future: create_agent also accepts `store=` (BaseStore-conforming) and
+    # `checkpointer=` (BaseCheckpointSaver-conforming). A Redis-backed BaseStore
+    # could replace bespoke persistence; a checkpointer would give us resume-on-
+    # crash fault tolerance for in-flight runs.
+    #   https://reference.langchain.com/python/langchain-core/stores/BaseStore
+    #   https://reference.langchain.com/python/langgraph.checkpoint/base/BaseCheckpointSaver
     return create_agent(
         model=model,
         tools=tools,
