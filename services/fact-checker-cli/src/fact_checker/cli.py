@@ -2,6 +2,7 @@
 
 Usage:
     fact-checker agents intake --url https://example.com/article
+    fact-checker agents evidence --claim "X causes Y" --domain HEALTHCARE
 """
 
 from __future__ import annotations
@@ -43,6 +44,49 @@ def intake(url: str, no_cache: bool) -> None:
         asyncio.run(_run_intake(url, no_cache=no_cache))
     except KeyboardInterrupt as exc:
         raise click.Abort() from exc
+
+
+@agents.command()
+@click.option("--claim", required=True, help="Selected claim text to gather evidence for.")
+@click.option(
+    "--domain",
+    default="OTHER",
+    show_default=True,
+    help="Claim domain (HEALTHCARE, ECONOMICS, POLICY, SCIENCE, ELECTION, CRIME, OTHER).",
+)
+@click.option("--persons", default="", help="Comma-separated person entities.")
+@click.option("--organizations", default="", help="Comma-separated organization entities.")
+@click.option(
+    "--no-cache",
+    is_flag=True,
+    default=False,
+    help="Bypass the LLM cache; always hit upstream.",
+)
+def evidence(
+    claim: str,
+    domain: str,
+    persons: str,
+    organizations: str,
+    no_cache: bool,
+) -> None:
+    """Run the evidence agent on a selected claim and print the structured output."""
+    try:
+        asyncio.run(
+            _run_evidence(
+                claim=claim,
+                domain=domain,
+                persons=_split_csv(persons),
+                organizations=_split_csv(organizations),
+                no_cache=no_cache,
+            )
+        )
+    except KeyboardInterrupt as exc:
+        raise click.Abort() from exc
+
+
+def _split_csv(value: str) -> list[str]:
+    """Split a comma-separated CLI value into a list of stripped non-empty entries."""
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def _enable_llm_cache() -> None:
@@ -129,6 +173,75 @@ async def _run_intake(url: str, *, no_cache: bool) -> None:
 
     final_state = await graph.ainvoke(Command(resume=selected_index), config=config)
     _print_intake_output(final_state)
+
+
+_EVIDENCE_OUTPUT_KEYS: tuple[str, ...] = (
+    "claimreview_matches",
+    "domain_sources",
+    "evidence_confidence",
+    "errors",
+)
+
+
+async def _run_evidence(
+    *,
+    claim: str,
+    domain: str,
+    persons: list[str],
+    organizations: list[str],
+    no_cache: bool,
+) -> None:
+    """Run evidence in isolation: skips intake, drives evidence_node directly.
+
+    Builds an evidence-scoped StateGraph (just ``evidence_node`` + an
+    in-memory checkpointer) seeded with the user-supplied claim/domain/
+    entities so the agent's full ainvoke path (including observation
+    publishing in the pipeline node) runs end-to-end without intake.
+    """
+    if not no_cache:
+        _enable_llm_cache()
+
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.graph import END, StateGraph
+    from swarm_reasoning.pipeline.nodes.evidence import evidence_node
+    from swarm_reasoning.pipeline.state import PipelineState
+
+    thread_id = str(uuid.uuid4())
+
+    builder = StateGraph(PipelineState)
+    builder.add_node("evidence", evidence_node)
+    builder.set_entry_point("evidence")
+    builder.add_edge("evidence", END)
+    graph = builder.compile(checkpointer=InMemorySaver())
+
+    ctx = _build_cli_context(run_id=thread_id, session_id=f"cli-{thread_id}")
+    config = {
+        "configurable": {
+            "pipeline_context": ctx,
+            "heartbeat_callback": ctx.heartbeat_callback,
+            "run_id": thread_id,
+            "session_id": ctx.session_id,
+            "thread_id": thread_id,
+        }
+    }
+
+    initial_state: dict[str, Any] = {
+        "claim_text": claim,
+        "claim_domain": domain,
+        "selected_claim": {"claim_text": claim},
+        "entities": {"persons": persons, "organizations": organizations},
+        "run_id": thread_id,
+        "session_id": ctx.session_id,
+    }
+
+    final_state = await graph.ainvoke(initial_state, config=config)
+    _print_evidence_output(final_state)
+
+
+def _print_evidence_output(state: dict[str, Any]) -> None:
+    """Print the evidence-relevant slice of pipeline state as JSON."""
+    output = {k: state[k] for k in _EVIDENCE_OUTPUT_KEYS if k in state}
+    click.echo(json.dumps(output, indent=2, default=str, ensure_ascii=False))
 
 
 def _interrupt_payload(interrupts: Any) -> dict[str, Any]:

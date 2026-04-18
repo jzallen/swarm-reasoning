@@ -22,7 +22,6 @@ LangGraph performs on resume does not double-publish observations (sr-ld49).
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any
 
 from langgraph.types import RunnableConfig, interrupt
@@ -30,6 +29,7 @@ from langgraph.types import RunnableConfig, interrupt
 from swarm_reasoning.agents.intake import build_intake_agent
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
+from swarm_reasoning.pipeline.nodes._inner_config import inner_agent_config
 from swarm_reasoning.pipeline.state import PipelineState
 
 logger = logging.getLogger(__name__)
@@ -45,27 +45,6 @@ _ENTITY_ORDER: list[tuple[str, ObservationCode]] = [
 ]
 
 
-def _inner_agent_config(config: RunnableConfig) -> RunnableConfig:
-    """Build a config for the inner agent invocation, isolated from the outer graph.
-
-    The outer pipeline graph's checkpointer leaks into the inner
-    ``create_agent`` invocation via subgraph inheritance. On node
-    re-execution after ``Command(resume=)``, reusing the outer
-    thread_id and checkpoint_ns causes the inner agent to load stale
-    intermediate state from the first run's checkpoints and short-circuit
-    its tool loop (empty ``structured_response``). Mint a unique
-    thread_id + fresh checkpoint_ns per inner call so its namespace is
-    independent and every invocation starts fresh. ``pipeline_context``
-    and progress-stream hooks are preserved so the tools still see the
-    caller's observation sinks.
-    """
-    configurable = dict(config.get("configurable", {}) or {})
-    configurable["thread_id"] = f"intake-inner-{uuid.uuid4()}"
-    configurable["checkpoint_ns"] = ""
-    configurable.pop("checkpoint_id", None)
-    return {"configurable": configurable}
-
-
 async def _phase_a_extract(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
     """Pure: URL → IntakeOutput dict (article meta + claims). No observation writes.
 
@@ -76,7 +55,7 @@ async def _phase_a_extract(state: PipelineState, config: RunnableConfig) -> dict
     agent = build_intake_agent()
     result = await agent.ainvoke(
         {"messages": [("user", f"Process this URL: {url}")]},
-        config=_inner_agent_config(config),
+        config=inner_agent_config(config, agent=AGENT_NAME),
     )
     return result.get("structured_response", {}) or {}
 
@@ -91,7 +70,7 @@ async def _phase_b_analyze(
     agent = build_intake_agent()
     result = await agent.ainvoke(
         {"messages": [("user", f"Classify and extract entities for this claim: {claim_text}")]},
-        config=_inner_agent_config(config),
+        config=inner_agent_config(config, agent=AGENT_NAME),
     )
     structured = result.get("structured_response", {}) or {}
     return {
