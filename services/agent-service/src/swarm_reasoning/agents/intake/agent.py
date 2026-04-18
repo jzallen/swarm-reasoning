@@ -351,7 +351,7 @@ def build_intake_agent(model: ChatAnthropic | None = None) -> _IntakeAgent:
 
     classify_model = ChatAnthropic(
         model=CLASSIFY_MODEL,
-        max_tokens=10,
+        max_tokens=256,
         temperature=0,
     )
 
