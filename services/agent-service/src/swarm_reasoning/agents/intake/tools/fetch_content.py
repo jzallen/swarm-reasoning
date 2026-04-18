@@ -7,6 +7,7 @@ metadata (title, publication date, word count, extracted text).
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 import httpx
 import trafilatura
@@ -66,7 +68,11 @@ def _get_cached_fetch(url: str) -> FetchResult | None:
         return None
     if not row:
         return None
-    return FetchResult(**json.loads(row[0]))
+    try:
+        return FetchResult(**json.loads(row[0]))
+    except (TypeError, ValueError):
+        logger.info("Fetch cache schema mismatch for %s; treating as miss", url)
+        return None
 
 
 def _put_cached_fetch(result: FetchResult) -> None:
@@ -96,10 +102,13 @@ class FetchResult:
 
     url: str
     title: str | None
-    date: str | None
     text: str
     word_count: int
     extraction_method: str  # "trafilatura" or "beautifulsoup"
+    author: str | None
+    publisher: str | None
+    published_at: str | None  # ISO-8601 if extractable, else None
+    accessed_at: str  # ISO-8601 UTC, stamped at original network fetch time
 
 
 class _ExtractedContent(NamedTuple):
@@ -108,6 +117,8 @@ class _ExtractedContent(NamedTuple):
     text: str | None
     title: str | None
     date: str | None
+    author: str | None
+    publisher: str | None
 
 
 def _validate_url(url: str) -> None:
@@ -153,7 +164,7 @@ async def _fetch_html(url: str) -> str:
 
 
 def _extract_with_trafilatura(html: str, url: str) -> _ExtractedContent:
-    """Extract main text, title, and date using trafilatura.
+    """Extract main text, title, author, publisher, and date using trafilatura.
 
     Returns an empty :class:`_ExtractedContent` if trafilatura raises
     internally, so the caller can fall back to BeautifulSoup.
@@ -163,10 +174,12 @@ def _extract_with_trafilatura(html: str, url: str) -> _ExtractedContent:
         metadata = trafilatura.extract_metadata(html, default_url=url)
     except Exception:
         logger.exception("Trafilatura extraction raised; falling back to BeautifulSoup")
-        return _ExtractedContent(None, None, None)
+        return _ExtractedContent(None, None, None, None, None)
     title = metadata.title if metadata else None
     date = metadata.date if metadata else None
-    return _ExtractedContent(text=text, title=title, date=date)
+    author = metadata.author if metadata else None
+    publisher = metadata.sitename if metadata else None
+    return _ExtractedContent(text=text, title=title, date=date, author=author, publisher=publisher)
 
 
 def _extract_title_tag(html: str) -> str | None:
@@ -175,6 +188,45 @@ def _extract_title_tag(html: str) -> str | None:
     tag = soup.find("title")
     if tag:
         return tag.get_text(strip=True) or None
+    return None
+
+
+def _jsonld_blocks(soup: BeautifulSoup) -> list[dict | list]:
+    """Return parsed JSON-LD script contents; tolerant of malformed JSON."""
+    blocks: list[dict | list] = []
+    for tag in soup.find_all("script", type="application/ld+json"):
+        raw = tag.string or tag.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            blocks.append(json.loads(raw))
+        except (ValueError, TypeError):
+            continue
+    return blocks
+
+
+def _jsonld_find(blocks: list[dict | list], key: str) -> str | None:
+    """Shallow scan JSON-LD blocks for a named field; returns first string hit."""
+    for block in blocks:
+        items = block if isinstance(block, list) else [block]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            val = item.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+            if isinstance(val, dict):
+                name = val.get("name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+            if isinstance(val, list) and val:
+                first = val[0]
+                if isinstance(first, str) and first.strip():
+                    return first.strip()
+                if isinstance(first, dict):
+                    name = first.get("name")
+                    if isinstance(name, str) and name.strip():
+                        return name.strip()
     return None
 
 
@@ -190,15 +242,40 @@ def _extract_with_beautifulsoup(html: str) -> _ExtractedContent:
     title_tag = soup.find("title")
     title = title_tag.get_text(strip=True) or None if title_tag else None
 
+    # Re-parse for meta / JSON-LD since decompose() stripped <script>.
+    meta_soup = BeautifulSoup(html, "html.parser")
+
     date = None
-    for meta in soup.find_all("meta"):
+    for meta in meta_soup.find_all("meta"):
         prop = meta.get("property", "") or meta.get("name", "")
         if any(d in prop.lower() for d in ("published", "date", "pubdate")):
             date = meta.get("content")
             if date:
                 break
 
-    return _ExtractedContent(text=text, title=title, date=date)
+    author = None
+    for selector in (
+        {"name": "author"},
+        {"property": "article:author"},
+    ):
+        tag = meta_soup.find("meta", attrs=selector)
+        if tag and tag.get("content"):
+            author = tag["content"].strip() or None
+            if author:
+                break
+
+    publisher = None
+    og_site = meta_soup.find("meta", attrs={"property": "og:site_name"})
+    if og_site and og_site.get("content"):
+        publisher = og_site["content"].strip() or None
+
+    jsonld = _jsonld_blocks(meta_soup)
+    if not author:
+        author = _jsonld_find(jsonld, "author")
+    if not publisher:
+        publisher = _jsonld_find(jsonld, "publisher")
+
+    return _ExtractedContent(text=text, title=title, date=date, author=author, publisher=publisher)
 
 
 def _extract_content(html: str, url: str) -> tuple[_ExtractedContent, str]:
@@ -221,20 +298,35 @@ def _extract_content(html: str, url: str) -> tuple[_ExtractedContent, str]:
         text=bs_content.text,
         title=trafilatura_content.title or bs_content.title,
         date=trafilatura_content.date or bs_content.date,
+        author=trafilatura_content.author or bs_content.author,
+        publisher=trafilatura_content.publisher or bs_content.publisher,
     )
     return merged, "beautifulsoup"
 
 
-def _normalize_date(date_str: str | None) -> str | None:
-    """Normalize a date string to YYYYMMDD format; ``None`` if falsy or unparseable."""
+def _normalize_to_iso(date_str: str | None) -> str | None:
+    """Normalize a date string to ISO-8601; ``None`` if falsy or unparseable.
+
+    Preserves timezone when the source string carries one. Bare date strings
+    (no time) round-trip as ``YYYY-MM-DDT00:00:00``, which is still valid
+    ISO-8601 and matches what trafilatura typically emits.
+    """
     if not date_str:
         return None
     try:
-        dt = dateutil_parser.parse(date_str)
+        parsed = dateutil_parser.parse(date_str)
     except (ValueError, OverflowError):
         logger.debug("Could not parse date: %s", date_str)
         return None
-    return dt.strftime("%Y%m%d")
+    return parsed.isoformat()
+
+
+def _hostname_fallback(url: str) -> str | None:
+    """Return URL hostname stripped of a leading ``www.``."""
+    host = urlparse(url).hostname
+    if not host:
+        return None
+    return host[4:] if host.startswith("www.") else host
 
 
 async def fetch_content(url: str) -> FetchResult:
@@ -267,13 +359,19 @@ async def fetch_content(url: str) -> FetchResult:
 
     logger.info("Extracted %d words from %s via %s", word_count, url, method)
 
+    publisher = content.publisher or _hostname_fallback(url)
+    accessed_at = dt.datetime.now(dt.timezone.utc).isoformat()
+
     result = FetchResult(
         url=url,
         title=content.title,
-        date=_normalize_date(content.date),
         text=content.text,
         word_count=word_count,
         extraction_method=method,
+        author=content.author,
+        publisher=publisher,
+        published_at=_normalize_to_iso(content.date),
+        accessed_at=accessed_at,
     )
     _put_cached_fetch(result)
     return result

@@ -1,7 +1,10 @@
 """LLM-powered claim decomposition from article text.
 
-Extracts up to 5 core factual claims from article content, each with
-a standalone claim sentence, supporting quote, and source citation.
+Extracts up to 5 core factual claims from article content. Each claim
+carries a standalone claim sentence, a supporting quote, and (when the
+article body attributes the claim to a named external source) a
+rhetorical attribution. Article-level metadata (publisher, author,
+date) is handled separately by ``fetch_content``, not the LLM.
 """
 
 from __future__ import annotations
@@ -29,11 +32,17 @@ sentence. This is what the system will attempt to validate.
 2. **quote**: The single best sentence from the article that makes or supports the claim. \
 Choose one sentence even if multiple examples exist. This must be an exact quote from the \
 source text.
-3. **citation**: Attribution for the claim \u2014 who said it, where it was published, and when.
-   - author: The person or organization the claim is attributed to (null if the article \
-makes the claim without attribution)
-   - publisher: The name of the publication (provided in article metadata)
-   - date: The publication date (provided in article metadata, YYYYMMDD format)
+3. **attribution**: ONLY if the article attributes this specific claim to a named external \
+source in its body text (e.g. "CNBC noted", "according to Associated Press", "JPMorgan \
+estimated"). Return null if the article makes the claim without such in-text attribution.
+   - attributed_source: The name of the external source cited (e.g. "CNBC", "JPMorgan", \
+"Associated Press").
+   - attribution_phrase: The verbatim phrase from the article (e.g. "according to \
+Associated Press").
+
+DO NOT put article-level metadata (the publication you are reading, its author, its \
+publication date) into the attribution field. Those are captured separately at the article \
+level. Attribution is ONLY for external sources the article itself cites.
 
 Prioritize claims that are:
 - Specific and measurable (contains numbers, dates, named entities)
@@ -48,17 +57,18 @@ Do NOT include:
 If the article contains no verifiable factual claims, return an empty claims list."""
 
 
-class Citation(BaseModel):
-    """Attribution for an extracted claim."""
+class Attribution(BaseModel):
+    """In-text attribution of a claim to a named external source.
 
-    publisher: str = Field(min_length=1)
-    """Publication name (e.g. "Reuters", "CDC")."""
+    Distinct from article-level metadata. Populate only when the article
+    body uses an attribution phrase for the specific claim.
+    """
 
-    author: str | None = None
-    """Person or organization the claim is attributed to (None if unattributed)."""
+    attributed_source: str | None = None
+    """Named external source credited within the article (e.g. 'CNBC')."""
 
-    date: str | None = None
-    """Publication date in YYYYMMDD format if known."""
+    attribution_phrase: str | None = None
+    """Verbatim attribution clause from the article body."""
 
 
 class ExtractedClaim(BaseModel):
@@ -73,8 +83,9 @@ class ExtractedClaim(BaseModel):
     quote: str = Field(min_length=1)
     """Single best sentence from the article making or supporting the claim."""
 
-    citation: Citation
-    """Who said it, where it was published, and when."""
+    attribution: Attribution | None = None
+    """In-text attribution to an external source, or None when the article
+    makes the claim without citing one."""
 
 
 class _DecomposeResult(BaseModel):

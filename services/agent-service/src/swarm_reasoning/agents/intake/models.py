@@ -22,6 +22,21 @@ class IntakeInput(TypedDict):
     """Source URL submitted by the user."""
 
 
+class Attribution(TypedDict, total=False):
+    """Per-claim in-text attribution (rhetorical, not publisher).
+
+    Populated only when the article body attributes a specific claim to a
+    named external source (e.g. 'according to CNBC'). Absent when the
+    article simply makes the claim itself.
+    """
+
+    attributed_source: str | None
+    """Named source credited within the article (e.g. 'CNBC', 'Associated Press')."""
+
+    attribution_phrase: str | None
+    """Verbatim attribution clause from the article body."""
+
+
 class ExtractedClaimDict(TypedDict):
     """A single factual claim extracted from article text (dict form)."""
 
@@ -34,8 +49,9 @@ class ExtractedClaimDict(TypedDict):
     quote: str
     """Single best sentence from the article making or supporting the claim."""
 
-    citation: dict[str, str | None]
-    """Attribution: author (str|None), publisher (str), date (str|None)."""
+    attribution: Attribution | None
+    """In-text attribution to an external source, or None if the article makes
+    the claim without such attribution. Never the article's own publisher."""
 
 
 class IntakeOutput(TypedDict, total=False):
@@ -56,8 +72,18 @@ class IntakeOutput(TypedDict, total=False):
     article_title: str
     """Title of the source article."""
 
-    article_date: str | None
-    """Publication date in YYYYMMDD format, if extractable."""
+    article_author: str | None
+    """Byline of the article, if extractable."""
+
+    article_publisher: str
+    """Name of the publication (sitename, JSON-LD publisher, or hostname fallback)."""
+
+    article_published_at: str | None
+    """Publication timestamp (ISO-8601), if extractable."""
+
+    article_accessed_at: str
+    """ISO-8601 UTC timestamp of the original network fetch. Cache hits
+    replay this original stamp rather than the replay time."""
 
     extracted_claims: list[ExtractedClaimDict]
     """Up to 5 factual claims extracted from the article."""

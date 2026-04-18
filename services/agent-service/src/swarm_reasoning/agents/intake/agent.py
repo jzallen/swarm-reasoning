@@ -54,8 +54,8 @@ Follow this workflow IN ORDER:
 **Phase A: URL to claims**
 
 1. **Fetch content** using the fetch_content tool. Pass the URL to retrieve the \
-article text, title, and publication date. If fetching fails, stop immediately \
--- the URL is rejected.
+article text, title, author, publisher, publication timestamp, and access \
+timestamp. If fetching fails, stop immediately -- the URL is rejected.
 
 2. **Decompose claims** using the decompose_claims tool. Pass the article text \
 and title from the fetch result. This extracts up to 5 factual claims suitable \
@@ -63,7 +63,7 @@ for fact-checking. If no claims are found, stop -- the article has no verifiable
 factual content.
 
 3. **Return claims** to the user for selection. Report the extracted claims with \
-their supporting quotes and citations.
+their supporting quotes and any in-text attribution.
 
 **Phase B: Selected claim analysis**
 
@@ -100,7 +100,11 @@ def _assemble_output(acc: dict[str, Any]) -> IntakeOutput:
         out["article_text"] = fetch["text"]
         if fetch.get("title") is not None:
             out["article_title"] = fetch["title"]
-        out["article_date"] = fetch.get("date")
+        out["article_author"] = fetch.get("author")
+        if fetch.get("publisher") is not None:
+            out["article_publisher"] = fetch["publisher"]
+        out["article_published_at"] = fetch.get("published_at")
+        out["article_accessed_at"] = fetch["accessed_at"]
     if "extracted_claims" in acc:
         out["extracted_claims"] = acc["extracted_claims"]
     if "domain" in acc:
@@ -148,7 +152,8 @@ class _IntakeAgent:
 
             Downloads the web page, extracts the main article text using
             trafilatura (with BeautifulSoup fallback), and returns the
-            title, publication date, extracted text, and word count.
+            article text, title, author, publisher, publication timestamp
+            (ISO-8601), access timestamp (ISO-8601 UTC), and word count.
 
             Args:
                 url: The source URL to fetch content from.
@@ -168,17 +173,23 @@ class _IntakeAgent:
             acc["fetch"] = {
                 "url": result.url,
                 "title": result.title,
-                "date": result.date,
                 "text": result.text,
+                "author": result.author,
+                "publisher": result.publisher,
+                "published_at": result.published_at,
+                "accessed_at": result.accessed_at,
             }
             return {
                 "success": True,
                 "url": result.url,
                 "title": result.title,
-                "date": result.date,
                 "text": result.text,
                 "word_count": result.word_count,
                 "extraction_method": result.extraction_method,
+                "article_author": result.author,
+                "article_publisher": result.publisher,
+                "article_published_at": result.published_at,
+                "article_accessed_at": result.accessed_at,
             }
 
         @tool
@@ -189,7 +200,8 @@ class _IntakeAgent:
 
             Analyzes the article content using LLM-powered claim
             extraction. Returns structured claims with supporting quotes
-            and citations.
+            and optional in-text attribution (when the article body
+            credits a named external source).
 
             Args:
                 article_text: The extracted article body text.
