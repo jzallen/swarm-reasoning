@@ -26,6 +26,15 @@ from langgraph.types import Command
 from typing_extensions import NotRequired
 
 from swarm_reasoning.agents.messaging import share_progress
+from swarm_reasoning.agents.web import (
+    BeautifulSoupStrategy,
+    FetchCache,
+    FetchErr,
+    FetchOk,
+    TrafilaturaStrategy,
+    WebContentExtractor,
+    hostname_fallback,
+)
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)
@@ -161,6 +170,12 @@ def build_intake_agent(model: ChatAnthropic | None = None) -> Any:
             api_key=api_key,
         )
 
+    extractor = WebContentExtractor(
+        strategies=[TrafilaturaStrategy(), BeautifulSoupStrategy()],
+        cache=FetchCache(),
+    )
+    min_word_count = 50
+
     @tool
     async def fetch_content(url: str, runtime: ToolRuntime) -> Command:
         """Fetch and extract content from a source URL.
@@ -173,46 +188,58 @@ def build_intake_agent(model: ChatAnthropic | None = None) -> Any:
         Args:
             url: The source URL to fetch content from.
         """
-        from swarm_reasoning.agents.intake.tools import fetch_content as fetch_mod
-        from swarm_reasoning.agents.intake.tools.fetch_content import FetchError
-
         share_progress("Fetching article content...")
-        try:
-            result = await fetch_mod.fetch_content(url)
-        except FetchError as fe:
-            share_progress(f"Fetch error: {fe.reason}")
-            return Command(
-                update={
-                    "error": fe.reason,
-                    "messages": [
-                        ToolMessage(
-                            content=f"Fetch failed: {fe.reason}",
-                            tool_call_id=runtime.tool_call_id,
-                        )
-                    ],
-                }
-            )
-
-        share_progress(f"Content extracted: {result.word_count} words")
-        return Command(
-            update={
-                "article_text": result.text,
-                "article_title": result.title or "",
-                "article_author": result.author,
-                "article_publisher": result.publisher or "",
-                "article_published_at": result.published_at,
-                "article_accessed_at": result.accessed_at,
-                "messages": [
-                    ToolMessage(
-                        content=(
-                            f"Fetched {result.word_count} words from "
-                            f"{result.url} (title: {result.title!r})."
-                        ),
-                        tool_call_id=runtime.tool_call_id,
+        result = await extractor.fetch(url)
+        match result:
+            case FetchErr(reason=code):
+                share_progress(f"Fetch error: {code}")
+                return Command(
+                    update={
+                        "error": code,
+                        "messages": [
+                            ToolMessage(
+                                content=f"Fetch failed: {code}",
+                                tool_call_id=runtime.tool_call_id,
+                            )
+                        ],
+                    }
+                )
+            case FetchOk(document=doc):
+                word_count = len(doc.text.split())
+                if word_count < min_word_count:
+                    code = f"CONTENT_TOO_SHORT:{word_count}"
+                    share_progress(f"Fetch error: {code}")
+                    return Command(
+                        update={
+                            "error": code,
+                            "messages": [
+                                ToolMessage(
+                                    content=f"Fetch failed: {code}",
+                                    tool_call_id=runtime.tool_call_id,
+                                )
+                            ],
+                        }
                     )
-                ],
-            }
-        )
+                share_progress(f"Content extracted: {word_count} words")
+                return Command(
+                    update={
+                        "article_text": doc.text,
+                        "article_title": doc.title or "",
+                        "article_author": doc.author,
+                        "article_publisher": doc.publisher or hostname_fallback(url) or "",
+                        "article_published_at": doc.published_at,
+                        "article_accessed_at": doc.accessed_at,
+                        "messages": [
+                            ToolMessage(
+                                content=(
+                                    f"Fetched {word_count} words from "
+                                    f"{doc.url} (title: {doc.title!r})."
+                                ),
+                                tool_call_id=runtime.tool_call_id,
+                            )
+                        ],
+                    }
+                )
 
     @tool
     async def decompose_claims(

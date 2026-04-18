@@ -27,6 +27,15 @@ from langgraph.types import Command
 from typing_extensions import NotRequired
 
 from swarm_reasoning.agents.evidence.models import EvidenceInput
+from swarm_reasoning.agents.web import (
+    BeautifulSoupStrategy,
+    FetchCache,
+    FetchErr,
+    FetchOk,
+    RawTextStrategy,
+    TrafilaturaStrategy,
+    WebContentExtractor,
+)
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)
@@ -137,6 +146,11 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
     """
     from swarm_reasoning.agents.messaging import share_heartbeat, share_progress
 
+    extractor = WebContentExtractor(
+        strategies=[TrafilaturaStrategy(), BeautifulSoupStrategy(), RawTextStrategy()],
+        cache=FetchCache(),
+    )
+
     if model is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
@@ -216,15 +230,15 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
         Args:
             url: The full URL to fetch (use URLs from lookup_domain_sources).
         """
-        from swarm_reasoning.agents.evidence.tools import fetch_source_content
-
         share_progress(f"Fetching source: {url}")
         share_heartbeat(AGENT_NAME)
-        result = await fetch_source_content.fetch_source_content(url)
+        result = await extractor.fetch(url)
         share_heartbeat(AGENT_NAME)
-        if result.error:
-            return f"Error fetching {url}: {result.error}"
-        return result.content
+        match result:
+            case FetchErr(reason=code):
+                return f"Error fetching {url}: {code}"
+            case FetchOk(document=doc):
+                return doc.text
 
     @tool
     def score_evidence(
@@ -241,7 +255,9 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
 
         state = runtime.state
         share_progress(f"Scoring evidence from {source_name}...")
-        alignment_result = score_evidence.score_claim_alignment(content, state.get("claim_text", ""))
+        alignment_result = score_evidence.score_claim_alignment(
+            content, state.get("claim_text", "")
+        )
         confidence = score_evidence.compute_evidence_confidence(alignment_result.alignment)
 
         entry = {
