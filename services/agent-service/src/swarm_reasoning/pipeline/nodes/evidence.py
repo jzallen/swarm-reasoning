@@ -26,7 +26,7 @@ def _extract_input(state: PipelineState) -> EvidenceInput:
         normalized_claim=state.get("normalized_claim") or state.get("claim_text", ""),
         claim_domain=state.get("claim_domain") or "OTHER",
         persons=entities.get("persons", []),
-        organizations=entities.get("orgs", []),
+        organizations=entities.get("organizations", []),
     )
 
 
