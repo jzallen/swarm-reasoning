@@ -5,9 +5,7 @@ Uses LangChain v1's ``state_schema`` + ``Command(update=...)`` pattern.
 Tools write typed fields directly into the agent's ``IntakeAgentState``
 via ``Command``; the LLM never re-serializes the structured result, so
 there is no truncation risk from ``max_tokens`` echoing tool payloads
-back as JSON. A small free function (``intake_output_from_state``)
-projects the final state into the existing :class:`IntakeOutput`
-TypedDict for pipeline-node consumption.
+back as JSON.
 
 Pipeline integration (PipelineState translation, observation publishing)
 lives in the pipeline node wrapper in ``pipeline/nodes/``, not here.
@@ -27,7 +25,6 @@ from langchain_core.tools import tool
 from langgraph.types import Command
 from typing_extensions import NotRequired
 
-from swarm_reasoning.agents.intake.models import IntakeOutput
 from swarm_reasoning.agents.messaging import share_progress
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
@@ -110,52 +107,60 @@ class IntakeAgentState(AgentState):
 
 
 # ---------------------------------------------------------------------------
-# State -> IntakeOutput projection
+# Agent construction
 # ---------------------------------------------------------------------------
 
 
-def intake_output_from_state(state: dict[str, Any]) -> IntakeOutput:
-    """Project captured intake state into an :class:`IntakeOutput`.
+def build_intake_agent(model: ChatAnthropic | None = None) -> Any:
+    """Build the intake agent as a compiled LangGraph.
 
-    Only fields the tools populated are included (``IntakeOutput`` is
-    ``total=False``). On error, returns ``{"error": <code>}`` matching
-    the prior rejection contract.
+    Tools that require LLM sub-calls (``decompose_claims``,
+    ``classify_domain``, ``extract_entities``) receive their
+    ``ChatAnthropic`` instance via closure; they read their per-call
+    ``RunnableConfig`` from the injected ``ToolRuntime``.
+
+    Args:
+        model: Optional ChatAnthropic instance for the orchestrator. If
+            ``None``, one is created from the ``ANTHROPIC_API_KEY``
+            environment variable.
+
+    Returns:
+        A compiled LangGraph whose state is ``IntakeAgentState``. Invoke
+        with::
+
+            result = await agent.ainvoke({
+                "messages": [("user", "Process this URL: ...")]
+            })
     """
-    if "error" in state:
-        return {"error": state["error"]}  # type: ignore[typeddict-item]
+    decompose_model = ChatAnthropic(
+        model=DECOMPOSE_MODEL,
+        max_tokens=2048,
+        temperature=0,
+    )
 
-    out: IntakeOutput = {}
-    if "article_text" in state:
-        out["article_text"] = state["article_text"]
-    if "article_title" in state:
-        out["article_title"] = state["article_title"]
-    if "article_author" in state:
-        out["article_author"] = state["article_author"]
-    if "article_publisher" in state:
-        out["article_publisher"] = state["article_publisher"]
-    if "article_published_at" in state:
-        out["article_published_at"] = state["article_published_at"]
-    if "article_accessed_at" in state:
-        out["article_accessed_at"] = state["article_accessed_at"]
-    if "extracted_claims" in state:
-        out["extracted_claims"] = state["extracted_claims"]
-    if "domain" in state:
-        out["domain"] = state["domain"]
-    if "entities" in state:
-        out["entities"] = state["entities"]
-    return out
+    classify_model = ChatAnthropic(
+        model=CLASSIFY_MODEL,
+        max_tokens=256,
+        temperature=0,
+    )
 
+    entity_model = ChatAnthropic(
+        model=ENTITY_MODEL,
+        max_tokens=512,
+        temperature=0,
+    )
 
-# ---------------------------------------------------------------------------
-# Tool factory
-# ---------------------------------------------------------------------------
+    if model is None:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise MissingApiKeyError("ANTHROPIC_API_KEY is required for intake agent")
+        model = ChatAnthropic(
+            model=AGENT_MODEL,
+            max_tokens=1024,
+            temperature=0,
+            api_key=api_key,
+        )
 
-
-def _build_tools(
-    decompose_model: ChatAnthropic,
-    classify_model: ChatAnthropic,
-    entity_model: ChatAnthropic,
-) -> list[Any]:
     @tool
     async def fetch_content(url: str, runtime: ToolRuntime) -> Command:
         """Fetch and extract content from a source URL.
@@ -315,69 +320,9 @@ def _build_tools(
             }
         )
 
-    return [fetch_content, decompose_claims, classify_domain, extract_entities]
-
-
-# ---------------------------------------------------------------------------
-# Agent construction
-# ---------------------------------------------------------------------------
-
-
-def build_intake_agent(model: ChatAnthropic | None = None) -> Any:
-    """Build the intake agent as a compiled LangGraph.
-
-    Tools that require LLM sub-calls (``decompose_claims``,
-    ``classify_domain``, ``extract_entities``) receive their
-    ``ChatAnthropic`` instance via closure; they read their per-call
-    ``RunnableConfig`` from the injected ``ToolRuntime``.
-
-    Args:
-        model: Optional ChatAnthropic instance for the orchestrator. If
-            ``None``, one is created from the ``ANTHROPIC_API_KEY``
-            environment variable.
-
-    Returns:
-        A compiled LangGraph whose state is ``IntakeAgentState``. Invoke
-        with::
-
-            result = await agent.ainvoke({
-                "messages": [("user", "Process this URL: ...")]
-            })
-
-        and project the final state with ``intake_output_from_state(result)``.
-    """
-    decompose_model = ChatAnthropic(
-        model=DECOMPOSE_MODEL,
-        max_tokens=2048,
-        temperature=0,
-    )
-
-    classify_model = ChatAnthropic(
-        model=CLASSIFY_MODEL,
-        max_tokens=256,
-        temperature=0,
-    )
-
-    entity_model = ChatAnthropic(
-        model=ENTITY_MODEL,
-        max_tokens=512,
-        temperature=0,
-    )
-
-    if model is None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise MissingApiKeyError("ANTHROPIC_API_KEY is required for intake agent")
-        model = ChatAnthropic(
-            model=AGENT_MODEL,
-            max_tokens=1024,
-            temperature=0,
-            api_key=api_key,
-        )
-
     return create_agent(
         model=model,
-        tools=_build_tools(decompose_model, classify_model, entity_model),
+        tools=[fetch_content, decompose_claims, classify_domain, extract_entities],
         system_prompt=SYSTEM_PROMPT,
         state_schema=IntakeAgentState,
         name=AGENT_NAME,

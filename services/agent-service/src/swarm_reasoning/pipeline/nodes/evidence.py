@@ -23,7 +23,6 @@ from swarm_reasoning.agents.evidence import (
     EvidenceInput,
     EvidenceOutput,
     build_evidence_agent,
-    evidence_output_from_state,
     initial_state_from_input,
 )
 from swarm_reasoning.models.observation import ObservationCode, ValueType
@@ -78,7 +77,11 @@ async def evidence_node(state: PipelineState, config: RunnableConfig) -> dict[st
         initial_state_from_input(evidence_input),
         config=inner_agent_config(config, agent=AGENT_NAME),
     )
-    evidence_output: EvidenceOutput = evidence_output_from_state(result)
+    evidence_output: EvidenceOutput = EvidenceOutput(
+        claimreview_matches=list(result.get("claimreview_matches") or []),
+        domain_sources=list(result.get("domain_sources") or []),
+        evidence_confidence=float(result.get("best_confidence") or 0.0),
+    )
 
     ctx.heartbeat(AGENT_NAME)
     await _publish_claimreview_observations(evidence_output, ctx)

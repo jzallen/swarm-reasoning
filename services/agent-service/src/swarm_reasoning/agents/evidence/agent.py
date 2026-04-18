@@ -3,9 +3,7 @@
 Uses LangChain v1's ``state_schema`` + ``Command(update=...)`` pattern.
 Tools write structured results directly into ``EvidenceAgentState``
 (list-append fields use an ``operator.add`` reducer; ``best_confidence``
-uses read-modify-write for max semantics). A free function
-``evidence_output_from_state`` projects the final state into the
-existing :class:`EvidenceOutput` TypedDict so the LLM never re-serializes
+uses read-modify-write for max semantics), so the LLM never re-serializes
 structured payloads.
 
 Pipeline integration (PipelineContext, observation publishing,
@@ -29,7 +27,7 @@ from langchain_core.tools import tool
 from langgraph.types import Command
 from typing_extensions import NotRequired
 
-from swarm_reasoning.agents.evidence.models import EvidenceInput, EvidenceOutput
+from swarm_reasoning.agents.evidence.models import EvidenceInput
 from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)
@@ -86,20 +84,6 @@ class EvidenceAgentState(AgentState):
 
 
 # ---------------------------------------------------------------------------
-# State -> EvidenceOutput projection
-# ---------------------------------------------------------------------------
-
-
-def evidence_output_from_state(state: dict[str, Any]) -> EvidenceOutput:
-    """Project captured evidence state into an :class:`EvidenceOutput`."""
-    return EvidenceOutput(
-        claimreview_matches=list(state.get("claimreview_matches") or []),
-        domain_sources=list(state.get("domain_sources") or []),
-        evidence_confidence=float(state.get("best_confidence") or 0.0),
-    )
-
-
-# ---------------------------------------------------------------------------
 # User-message formatting (re-used by pipeline node + CLI)
 # ---------------------------------------------------------------------------
 
@@ -136,168 +120,6 @@ def initial_state_from_input(evidence_input: EvidenceInput) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Tool definitions
-# ---------------------------------------------------------------------------
-
-
-@tool
-async def search_factchecks(reason: str, runtime: ToolRuntime) -> Command:
-    """Search Google Fact Check Tools API for existing reviews of the claim.
-
-    Args:
-        reason: Short rationale for issuing the search; ignored by the tool.
-    """
-    from swarm_reasoning.agents.evidence.tools import (
-        search_factchecks as search_mod,
-    )
-    from swarm_reasoning.agents.messaging import (
-        share_heartbeat,
-        share_progress,
-    )
-
-    del reason
-    state = runtime.state
-    share_progress("Searching fact-check databases...")
-    share_heartbeat(AGENT_NAME)
-    result = await search_mod.search_factchecks(
-        claim=state.get("claim_text", ""),
-        persons=state.get("persons"),
-        organizations=state.get("organizations"),
-    )
-    share_heartbeat(AGENT_NAME)
-
-    if result.error:
-        content = f"Error: {result.error}"
-        update: dict[str, Any] = {}
-    elif not result.matched:
-        content = "No matching fact-checks found."
-        update = {}
-    else:
-        match = {
-            "source": result.source,
-            "rating": result.rating,
-            "url": result.url,
-            "score": round(result.score, 2),
-        }
-        update = {"claimreview_matches": [match]}
-        content = (
-            f"Match found (score: {result.score:.2f}):\n"
-            f"  Rating: {result.rating}\n"
-            f"  Source: {result.source}\n"
-            f"  URL: {result.url}"
-        )
-
-    update["messages"] = [ToolMessage(content=content, tool_call_id=runtime.tool_call_id)]
-    return Command(update=update)
-
-
-@tool
-def lookup_domain_sources(reason: str, runtime: ToolRuntime) -> str:
-    """Look up authoritative sources for the claim's domain.
-
-    Returns a JSON list of sources with name and pre-formatted URL.
-
-    Args:
-        reason: Short rationale for the lookup; ignored by the tool.
-    """
-    from swarm_reasoning.agents.evidence.tools import lookup_domain_sources as lookup_mod
-    from swarm_reasoning.agents.messaging import share_progress
-
-    del reason
-    state = runtime.state
-    share_progress("Looking up domain-authoritative sources...")
-    domain = state.get("domain", "OTHER")
-    sources = lookup_mod.lookup_domain_sources(domain)
-    search_query = lookup_mod.derive_search_query(
-        state.get("claim_text", ""),
-        state.get("persons"),
-        state.get("organizations"),
-        state.get("statistics"),
-        state.get("dates"),
-    )
-    return json.dumps(
-        [
-            {
-                "name": s.name,
-                "url": lookup_mod.format_source_url(s.url_template, search_query),
-            }
-            for s in sources
-        ]
-    )
-
-
-@tool
-async def fetch_source_content(url: str) -> str:
-    """Fetch text content from a source URL.
-
-    Args:
-        url: The full URL to fetch (use URLs from lookup_domain_sources).
-    """
-    from swarm_reasoning.agents.evidence.tools import (
-        fetch_source_content as fetch_mod,
-    )
-    from swarm_reasoning.agents.messaging import (
-        share_heartbeat,
-        share_progress,
-    )
-
-    share_progress(f"Fetching source: {url}")
-    share_heartbeat(AGENT_NAME)
-    result = await fetch_mod.fetch_source_content(url)
-    share_heartbeat(AGENT_NAME)
-    if result.error:
-        return f"Error fetching {url}: {result.error}"
-    return result.content
-
-
-@tool
-def score_evidence(
-    content: str, source_name: str, source_url: str, runtime: ToolRuntime
-) -> Command:
-    """Score how well fetched content aligns with the claim.
-
-    Args:
-        content: The fetched source content to evaluate.
-        source_name: Name of the source (e.g. CDC, WHO).
-        source_url: URL the content was fetched from.
-    """
-    from swarm_reasoning.agents.evidence.tools import score_evidence as score_mod
-    from swarm_reasoning.agents.messaging import share_progress
-
-    state = runtime.state
-    share_progress(f"Scoring evidence from {source_name}...")
-    alignment_result = score_mod.score_claim_alignment(content, state.get("claim_text", ""))
-    confidence = score_mod.compute_evidence_confidence(alignment_result.alignment)
-
-    entry = {
-        "name": source_name,
-        "url": source_url,
-        "alignment": alignment_result.alignment.value,
-        "confidence": confidence,
-    }
-    update: dict[str, Any] = {"domain_sources": [entry]}
-    prev_best = float(state.get("best_confidence") or 0.0)
-    if confidence > prev_best:
-        update["best_confidence"] = confidence
-
-    text = (
-        f"Alignment: {alignment_result.alignment.value} "
-        f"({alignment_result.description})\n"
-        f"Confidence: {confidence:.2f}"
-    )
-    update["messages"] = [ToolMessage(content=text, tool_call_id=runtime.tool_call_id)]
-    return Command(update=update)
-
-
-_TOOLS: list[Any] = [
-    search_factchecks,
-    lookup_domain_sources,
-    fetch_source_content,
-    score_evidence,
-]
-
-
-# ---------------------------------------------------------------------------
 # Agent construction
 # ---------------------------------------------------------------------------
 
@@ -312,8 +134,7 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
 
     Returns:
         A compiled LangGraph whose state is ``EvidenceAgentState``. Invoke
-        with an initial state built by ``initial_state_from_input(...)``
-        and project the final state with ``evidence_output_from_state``.
+        with an initial state built by ``initial_state_from_input(...)``.
     """
     if model is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -326,9 +147,154 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
             api_key=api_key,
         )
 
+    @tool
+    async def search_factchecks(reason: str, runtime: ToolRuntime) -> Command:
+        """Search Google Fact Check Tools API for existing reviews of the claim.
+
+        Args:
+            reason: Short rationale for issuing the search; ignored by the tool.
+        """
+        from swarm_reasoning.agents.evidence.tools import (
+            search_factchecks as search_mod,
+        )
+        from swarm_reasoning.agents.messaging import (
+            share_heartbeat,
+            share_progress,
+        )
+
+        del reason
+        state = runtime.state
+        share_progress("Searching fact-check databases...")
+        share_heartbeat(AGENT_NAME)
+        result = await search_mod.search_factchecks(
+            claim=state.get("claim_text", ""),
+            persons=state.get("persons"),
+            organizations=state.get("organizations"),
+        )
+        share_heartbeat(AGENT_NAME)
+
+        if result.error:
+            content = f"Error: {result.error}"
+            update: dict[str, Any] = {}
+        elif not result.matched:
+            content = "No matching fact-checks found."
+            update = {}
+        else:
+            match = {
+                "source": result.source,
+                "rating": result.rating,
+                "url": result.url,
+                "score": round(result.score, 2),
+            }
+            update = {"claimreview_matches": [match]}
+            content = (
+                f"Match found (score: {result.score:.2f}):\n"
+                f"  Rating: {result.rating}\n"
+                f"  Source: {result.source}\n"
+                f"  URL: {result.url}"
+            )
+
+        update["messages"] = [ToolMessage(content=content, tool_call_id=runtime.tool_call_id)]
+        return Command(update=update)
+
+    @tool
+    def lookup_domain_sources(reason: str, runtime: ToolRuntime) -> str:
+        """Look up authoritative sources for the claim's domain.
+
+        Returns a JSON list of sources with name and pre-formatted URL.
+
+        Args:
+            reason: Short rationale for the lookup; ignored by the tool.
+        """
+        from swarm_reasoning.agents.evidence.tools import lookup_domain_sources as lookup_mod
+        from swarm_reasoning.agents.messaging import share_progress
+
+        del reason
+        state = runtime.state
+        share_progress("Looking up domain-authoritative sources...")
+        domain = state.get("domain", "OTHER")
+        sources = lookup_mod.lookup_domain_sources(domain)
+        search_query = lookup_mod.derive_search_query(
+            state.get("claim_text", ""),
+            state.get("persons"),
+            state.get("organizations"),
+            state.get("statistics"),
+            state.get("dates"),
+        )
+        return json.dumps(
+            [
+                {
+                    "name": s.name,
+                    "url": lookup_mod.format_source_url(s.url_template, search_query),
+                }
+                for s in sources
+            ]
+        )
+
+    @tool
+    async def fetch_source_content(url: str) -> str:
+        """Fetch text content from a source URL.
+
+        Args:
+            url: The full URL to fetch (use URLs from lookup_domain_sources).
+        """
+        from swarm_reasoning.agents.evidence.tools import (
+            fetch_source_content as fetch_mod,
+        )
+        from swarm_reasoning.agents.messaging import (
+            share_heartbeat,
+            share_progress,
+        )
+
+        share_progress(f"Fetching source: {url}")
+        share_heartbeat(AGENT_NAME)
+        result = await fetch_mod.fetch_source_content(url)
+        share_heartbeat(AGENT_NAME)
+        if result.error:
+            return f"Error fetching {url}: {result.error}"
+        return result.content
+
+    @tool
+    def score_evidence(
+        content: str, source_name: str, source_url: str, runtime: ToolRuntime
+    ) -> Command:
+        """Score how well fetched content aligns with the claim.
+
+        Args:
+            content: The fetched source content to evaluate.
+            source_name: Name of the source (e.g. CDC, WHO).
+            source_url: URL the content was fetched from.
+        """
+        from swarm_reasoning.agents.evidence.tools import score_evidence as score_mod
+        from swarm_reasoning.agents.messaging import share_progress
+
+        state = runtime.state
+        share_progress(f"Scoring evidence from {source_name}...")
+        alignment_result = score_mod.score_claim_alignment(content, state.get("claim_text", ""))
+        confidence = score_mod.compute_evidence_confidence(alignment_result.alignment)
+
+        entry = {
+            "name": source_name,
+            "url": source_url,
+            "alignment": alignment_result.alignment.value,
+            "confidence": confidence,
+        }
+        update: dict[str, Any] = {"domain_sources": [entry]}
+        prev_best = float(state.get("best_confidence") or 0.0)
+        if confidence > prev_best:
+            update["best_confidence"] = confidence
+
+        text = (
+            f"Alignment: {alignment_result.alignment.value} "
+            f"({alignment_result.description})\n"
+            f"Confidence: {confidence:.2f}"
+        )
+        update["messages"] = [ToolMessage(content=text, tool_call_id=runtime.tool_call_id)]
+        return Command(update=update)
+
     return create_agent(
         model=model,
-        tools=_TOOLS,
+        tools=[search_factchecks, lookup_domain_sources, fetch_source_content, score_evidence],
         system_prompt=SYSTEM_PROMPT,
         state_schema=EvidenceAgentState,
         name=AGENT_NAME,
