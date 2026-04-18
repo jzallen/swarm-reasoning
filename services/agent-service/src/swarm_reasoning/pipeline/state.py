@@ -32,6 +32,10 @@ class PipelineState(TypedDict, total=False):
     # --- Intake Phase A output (URL → claims) ---
     article_text: str
     article_title: str
+    article_author: str | None
+    article_publisher: str | None
+    article_published_at: str | None
+    article_accessed_at: str | None
     extracted_claims: list[dict]  # up to 5 ExtractedClaimDict items
 
     # --- Intake Phase B input (user selection) ---

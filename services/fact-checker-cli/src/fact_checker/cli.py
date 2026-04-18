@@ -2,7 +2,6 @@
 
 Usage:
     fact-checker agents intake --url https://example.com/article
-    fact-checker pipeline run --url https://example.com/article
 """
 
 from __future__ import annotations
@@ -30,11 +29,6 @@ def agents() -> None:
     """Run individual agents."""
 
 
-@main.group()
-def pipeline() -> None:
-    """Run the full claim-verification pipeline."""
-
-
 @agents.command()
 @click.option("--url", required=True, help="Article URL to ingest.")
 @click.option(
@@ -51,32 +45,6 @@ def intake(url: str, no_cache: bool) -> None:
         raise click.Abort() from exc
 
 
-@pipeline.command("run")
-@click.option("--url", required=True, help="Article URL to verify.")
-@click.option(
-    "--thread-id",
-    default=None,
-    help="LangGraph thread_id for the checkpointer. Auto-generated if omitted.",
-)
-@click.option(
-    "--no-cache",
-    is_flag=True,
-    default=False,
-    help="Bypass the LLM and fetch caches; always hit upstream.",
-)
-def pipeline_run(url: str, thread_id: str | None, no_cache: bool) -> None:
-    """Run the pipeline through intake's human-in-the-loop interrupt.
-
-    Builds the compiled pipeline graph with an in-memory checkpointer,
-    drives intake Phase A, prompts for claim selection at the interrupt,
-    resumes with ``Command(resume=<index>)``, and prints the final state.
-    """
-    try:
-        asyncio.run(_run_pipeline(url, thread_id=thread_id, no_cache=no_cache))
-    except KeyboardInterrupt as exc:
-        raise click.Abort() from exc
-
-
 def _enable_llm_cache() -> None:
     from langchain_community.cache import SQLiteCache
     from langchain_core.globals import set_llm_cache
@@ -85,65 +53,51 @@ def _enable_llm_cache() -> None:
     set_llm_cache(SQLiteCache(database_path=str(LLM_CACHE_PATH)))
 
 
+_INTAKE_OUTPUT_KEYS: tuple[str, ...] = (
+    "article_text",
+    "article_title",
+    "article_author",
+    "article_publisher",
+    "article_published_at",
+    "article_accessed_at",
+    "extracted_claims",
+    "selected_claim",
+    "claim_text",
+    "claim_domain",
+    "entities",
+    "is_check_worthy",
+    "errors",
+)
+
+
 async def _run_intake(url: str, *, no_cache: bool) -> None:
+    """Run intake in isolation: Phase A → human claim selection → Phase B.
+
+    Builds an intake-scoped StateGraph (just ``intake_node`` + an in-memory
+    checkpointer) so the agent's ``interrupt()``-based HITL works without
+    pulling in the full pipeline. Evidence / coverage / validation /
+    synthesizer are not touched.
+    """
     if no_cache:
         os.environ["INTAKE_FETCH_CACHE"] = "bypass"
     else:
         _enable_llm_cache()
 
-    # Imported lazily so `fact-checker --help` works without the agent
-    # service installed in the current environment, and so the fetch cache
-    # bypass env var is set before the tools module reads it.
-    from swarm_reasoning.agents.intake.agent import build_intake_agent
-
-    agent = build_intake_agent()
-    inputs = {"messages": [("user", f"Process this URL: {url}")]}
-
-    final_state = None
-    async for mode, payload in agent.astream(inputs, stream_mode=["custom", "values"]):
-        if mode == "custom":
-            message = payload.get("message") if isinstance(payload, dict) else None
-            if message:
-                click.echo(click.style(f"• {message}", fg="cyan"), err=True)
-        elif mode == "values":
-            final_state = payload
-
-    if not final_state:
-        click.echo(click.style("No result returned.", fg="red"), err=True)
-        raise click.Abort()
-
-    structured = final_state.get("structured_response")
-    if structured is None:
-        click.echo(
-            click.style("No structured_response in final state.", fg="yellow"),
-            err=True,
-        )
-        click.echo(json.dumps(final_state, indent=2, default=str, ensure_ascii=False))
-        return
-
-    output = structured.model_dump() if hasattr(structured, "model_dump") else structured
-    click.echo(json.dumps(output, indent=2, ensure_ascii=False))
-
-
-# ---------------------------------------------------------------------------
-# Pipeline run: interrupt/resume driver
-# ---------------------------------------------------------------------------
-
-
-async def _run_pipeline(url: str, *, thread_id: str | None, no_cache: bool) -> None:
-    if no_cache:
-        os.environ["INTAKE_FETCH_CACHE"] = "bypass"
-    else:
-        _enable_llm_cache()
-
-    # Lazy imports: keep `fact-checker --help` fast and let the cache env
-    # flag propagate before the intake tools module caches its own config.
+    # Lazy imports keep `fact-checker --help` fast and ensure the cache env
+    # flag propagates before the intake tools module caches its own config.
     from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.graph import END, StateGraph
     from langgraph.types import Command
-    from swarm_reasoning.pipeline.graph import build_pipeline_graph
+    from swarm_reasoning.pipeline.nodes.intake import intake_node
+    from swarm_reasoning.pipeline.state import PipelineState
 
-    thread_id = thread_id or str(uuid.uuid4())
-    graph = build_pipeline_graph(checkpointer=InMemorySaver())
+    thread_id = str(uuid.uuid4())
+
+    builder = StateGraph(PipelineState)
+    builder.add_node("intake", intake_node)
+    builder.set_entry_point("intake")
+    builder.add_edge("intake", END)
+    graph = builder.compile(checkpointer=InMemorySaver())
 
     ctx = _build_cli_context(run_id=thread_id, session_id=f"cli-{thread_id}")
     config = {
@@ -167,14 +121,14 @@ async def _run_pipeline(url: str, *, thread_id: str | None, no_cache: bool) -> N
 
     interrupts = result.get("__interrupt__")
     if not interrupts:
-        _print_final(result)
+        _print_intake_output(result)
         return
 
     payload = _interrupt_payload(interrupts)
     selected_index = _prompt_claim_selection(payload)
 
     final_state = await graph.ainvoke(Command(resume=selected_index), config=config)
-    _print_final(final_state)
+    _print_intake_output(final_state)
 
 
 def _interrupt_payload(interrupts: Any) -> dict[str, Any]:
@@ -214,8 +168,15 @@ def _prompt_claim_selection(payload: dict[str, Any]) -> int:
     return int(choice)
 
 
-def _print_final(state: dict[str, Any]) -> None:
-    click.echo(json.dumps(state, indent=2, default=str, ensure_ascii=False))
+def _print_intake_output(state: dict[str, Any]) -> None:
+    """Print the intake-relevant slice of pipeline state as JSON.
+
+    Filters out internal fields (run_id, session_id, thread_id, claim_url
+    duplicate) so the output matches the pre-HITL ``agents intake`` shape
+    plus the new Phase B fields (selected_claim, claim_domain, entities).
+    """
+    output = {k: state[k] for k in _INTAKE_OUTPUT_KEYS if k in state}
+    click.echo(json.dumps(output, indent=2, default=str, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------

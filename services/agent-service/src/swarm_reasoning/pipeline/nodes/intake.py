@@ -22,6 +22,7 @@ LangGraph performs on resume does not double-publish observations (sr-ld49).
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from langgraph.types import RunnableConfig, interrupt
@@ -44,6 +45,27 @@ _ENTITY_ORDER: list[tuple[str, ObservationCode]] = [
 ]
 
 
+def _inner_agent_config(config: RunnableConfig) -> RunnableConfig:
+    """Build a config for the inner agent invocation, isolated from the outer graph.
+
+    The outer pipeline graph's checkpointer leaks into the inner
+    ``create_agent`` invocation via subgraph inheritance. On node
+    re-execution after ``Command(resume=)``, reusing the outer
+    thread_id and checkpoint_ns causes the inner agent to load stale
+    intermediate state from the first run's checkpoints and short-circuit
+    its tool loop (empty ``structured_response``). Mint a unique
+    thread_id + fresh checkpoint_ns per inner call so its namespace is
+    independent and every invocation starts fresh. ``pipeline_context``
+    and progress-stream hooks are preserved so the tools still see the
+    caller's observation sinks.
+    """
+    configurable = dict(config.get("configurable", {}) or {})
+    configurable["thread_id"] = f"intake-inner-{uuid.uuid4()}"
+    configurable["checkpoint_ns"] = ""
+    configurable.pop("checkpoint_id", None)
+    return {"configurable": configurable}
+
+
 async def _phase_a_extract(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
     """Pure: URL → IntakeOutput dict (article meta + claims). No observation writes.
 
@@ -54,7 +76,7 @@ async def _phase_a_extract(state: PipelineState, config: RunnableConfig) -> dict
     agent = build_intake_agent()
     result = await agent.ainvoke(
         {"messages": [("user", f"Process this URL: {url}")]},
-        config=config,
+        config=_inner_agent_config(config),
     )
     return result.get("structured_response", {}) or {}
 
@@ -69,7 +91,7 @@ async def _phase_b_analyze(
     agent = build_intake_agent()
     result = await agent.ainvoke(
         {"messages": [("user", f"Classify and extract entities for this claim: {claim_text}")]},
-        config=config,
+        config=_inner_agent_config(config),
     )
     structured = result.get("structured_response", {}) or {}
     return {
@@ -186,6 +208,10 @@ async def intake_node(state: PipelineState, config: RunnableConfig) -> dict[str,
         "extracted_claims": claims,
         "article_text": phase_a.get("article_text", ""),
         "article_title": phase_a.get("article_title", ""),
+        "article_author": phase_a.get("article_author"),
+        "article_publisher": phase_a.get("article_publisher"),
+        "article_published_at": phase_a.get("article_published_at"),
+        "article_accessed_at": phase_a.get("article_accessed_at"),
         "selected_claim": selected,
         "claim_text": selected.get("claim_text", ""),
         "claim_domain": phase_b["domain"],
