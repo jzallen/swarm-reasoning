@@ -8,6 +8,6 @@ Each module exposes one aspect of evidence collection:
 
 URL fetching is shared via ``swarm_reasoning.agents.web``.
 
-Callers import the submodules directly so the ``@tool`` definitions in
-``agents/evidence/agent.py`` can import lazily inside their bodies.
+Callers import the submodules directly; the StateGraph nodes in
+``agents/evidence/agent.py`` wrap these pure functions without an LLM.
 """

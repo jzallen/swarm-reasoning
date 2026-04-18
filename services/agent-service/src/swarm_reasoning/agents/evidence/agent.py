@@ -1,13 +1,20 @@
 """Evidence agent -- ClaimReview lookup + domain-source evidence gathering.
 
-Uses LangChain v1's ``state_schema`` + ``Command(update=...)`` pattern.
-Tools write structured results directly into ``EvidenceAgentState``
-(list-append fields use an ``operator.add`` reducer; ``best_confidence``
-uses read-modify-write for max semantics), so the LLM never re-serializes
-structured payloads.
+Implemented as a deterministic LangGraph ``StateGraph``: no LLM decides the
+sequence, no tools, no system prompt. Each node wraps one pure function
+from ``agents.evidence.tools``.
+
+Topology::
+
+    START -> search_factchecks -> lookup_domain_sources -> fetch_source_content
+                                                             |  ^
+                                                             |  | retry (<3)
+                                                             v  |
+                                                          score_evidence -> END
+                                                             (or give_up -> END)
 
 Pipeline integration (PipelineContext, observation publishing,
-PipelineState ↔ EvidenceInput translation) lives in the pipeline node
+PipelineState <-> EvidenceInput translation) lives in the pipeline node
 wrapper, not here.
 """
 
@@ -15,18 +22,23 @@ from __future__ import annotations
 
 import logging
 import operator
-import os
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from langchain.agents import AgentState, create_agent
-from langchain.tools import ToolRuntime
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import ToolMessage
-from langchain_core.tools import tool
-from langgraph.types import Command
-from typing_extensions import NotRequired
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from typing_extensions import NotRequired, TypedDict
 
 from swarm_reasoning.agents.evidence.models import EvidenceInput
+from swarm_reasoning.agents.evidence.tools import (
+    lookup_domain_sources as lookup_module,
+)
+from swarm_reasoning.agents.evidence.tools import (
+    score_evidence as score_module,
+)
+from swarm_reasoning.agents.evidence.tools import (
+    search_factchecks as search_module,
+)
+from swarm_reasoning.agents.messaging import share_heartbeat, share_progress
 from swarm_reasoning.agents.web import (
     BeautifulSoupStrategy,
     FetchCache,
@@ -36,28 +48,12 @@ from swarm_reasoning.agents.web import (
     TrafilaturaStrategy,
     WebContentExtractor,
 )
-from swarm_reasoning.temporal.errors import MissingApiKeyError
 
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "evidence"
-AGENT_MODEL = "claude-haiku-4-5"
 
-SYSTEM_PROMPT = (
-    "You are an evidence-gathering agent in a fact-checking pipeline. "
-    "Gather evidence for or against the given claim using your tools.\n\n"
-    "Workflow:\n"
-    "1. Search for existing fact-checks with search_factchecks\n"
-    "2. Look up domain-authoritative sources with lookup_domain_sources\n"
-    "3. Fetch content from the top source with fetch_source_content\n"
-    "4. Score the fetched content with score_evidence\n\n"
-    "Always start with the fact-check lookup. Then proceed to domain "
-    "sources. Try up to 3 domain source URLs if the first returns an "
-    "error. Stop after scoring evidence from one successful source.\n\n"
-    "After completing the workflow, reply with a one-line confirmation. "
-    "Do NOT attempt to echo tool outputs back as JSON -- the system "
-    "captures tool results directly."
-)
+MAX_FETCH_ATTEMPTS = 3
 
 
 # ---------------------------------------------------------------------------
@@ -65,15 +61,14 @@ SYSTEM_PROMPT = (
 # ---------------------------------------------------------------------------
 
 
-class EvidenceAgentState(AgentState):
-    """State schema carrying evidence input fields and tool outputs.
+class EvidenceAgentState(TypedDict, total=False):
+    """State schema carrying evidence input fields, transient orchestration
+    fields, and structured outputs.
 
-    Input fields (``claim_text``, ``domain``, entity lists) are seeded
-    by the caller and read by tools via ``runtime.state``. Output fields
-    (``claimreview_matches``, ``domain_sources``, ``best_confidence``)
-    are written by tools via ``Command(update=...)``; the list fields
-    use an ``operator.add`` reducer so repeat calls append rather than
-    replace.
+    List outputs (``claimreview_matches``, ``domain_sources``) use an
+    ``operator.add`` reducer so node writes append rather than replace.
+    Transient orchestration fields are underscore-prefixed; they drive the
+    fetch-retry loop and are not projected by the pipeline node wrapper.
     """
 
     # Input fields (seeded by caller)
@@ -85,38 +80,22 @@ class EvidenceAgentState(AgentState):
     locations: NotRequired[list[str]]
     statistics: NotRequired[list[str]]
 
-    # Output fields (written by tools)
+    # Output fields
     claimreview_matches: NotRequired[Annotated[list[dict], operator.add]]
     domain_sources: NotRequired[Annotated[list[dict], operator.add]]
     best_confidence: NotRequired[float]
 
-
-# ---------------------------------------------------------------------------
-# User-message formatting (re-used by pipeline node + CLI)
-# ---------------------------------------------------------------------------
-
-
-def format_claim_message(evidence_input: EvidenceInput) -> str:
-    """Render the user message that frames the gathering task for the LLM."""
-    persons = ", ".join(evidence_input.get("persons", []) or [])
-    organizations = ", ".join(evidence_input.get("organizations", []) or [])
-    return (
-        "Gather evidence for this claim:\n\n"
-        f"Claim: {evidence_input.get('claim_text', '')}\n"
-        f"Domain: {evidence_input.get('domain', 'OTHER')}\n"
-        f"Persons: {persons}\n"
-        f"Organizations: {organizations}"
-    )
+    # Transient orchestration fields (internal; not exposed externally)
+    _candidate_sources: NotRequired[list[dict]]
+    _fetched_content: NotRequired[str]
+    _fetched_source_name: NotRequired[str]
+    _fetched_source_url: NotRequired[str]
+    _fetch_attempts: NotRequired[int]
 
 
 def initial_state_from_input(evidence_input: EvidenceInput) -> dict[str, Any]:
-    """Build the initial ``EvidenceAgentState`` dict for an invocation.
-
-    Seeds input fields on state so tools can read them via
-    ``runtime.state`` and attaches the user-facing claim message.
-    """
+    """Build the initial ``EvidenceAgentState`` dict for an invocation."""
     return {
-        "messages": [("user", format_claim_message(evidence_input))],
         "claim_text": evidence_input.get("claim_text", ""),
         "domain": evidence_input.get("domain", "OTHER"),
         "persons": list(evidence_input.get("persons", []) or []),
@@ -132,137 +111,105 @@ def initial_state_from_input(evidence_input: EvidenceInput) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
-    """Build the evidence agent as a compiled LangGraph.
-
-    Args:
-        model: Optional ChatAnthropic instance for the orchestrator. If
-            ``None``, one is created from the ``ANTHROPIC_API_KEY``
-            environment variable.
+def build_evidence_agent() -> CompiledStateGraph:
+    """Build the evidence agent as a compiled deterministic ``StateGraph``.
 
     Returns:
-        A compiled LangGraph whose state is ``EvidenceAgentState``. Invoke
-        with an initial state built by ``initial_state_from_input(...)``.
+        Compiled ``StateGraph`` whose state is :class:`EvidenceAgentState`.
+        Invoke with an initial state dict from :func:`initial_state_from_input`.
     """
-    from swarm_reasoning.agents.messaging import share_heartbeat, share_progress
-
     extractor = WebContentExtractor(
         strategies=[TrafilaturaStrategy(), BeautifulSoupStrategy(), RawTextStrategy()],
         cache=FetchCache(),
     )
 
-    if model is None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise MissingApiKeyError("ANTHROPIC_API_KEY is required for evidence agent")
-        model = ChatAnthropic(
-            model=AGENT_MODEL,
-            max_tokens=1024,
-            temperature=0,
-            api_key=api_key,
-        )
-
-    @tool
-    async def search_factchecks(runtime: ToolRuntime) -> Command:
-        """Search Google Fact Check Tools API for existing reviews of the claim."""
-        from swarm_reasoning.agents.evidence.tools import search_factchecks
-
-        state = runtime.state
+    async def _search_factchecks_node(state: EvidenceAgentState) -> dict[str, Any]:
         share_progress("Searching fact-check databases...")
         share_heartbeat(AGENT_NAME)
-        result = await search_factchecks.search_factchecks(
-            claim=state.get("claim_text", ""),
-            persons=state.get("persons"),
-            organizations=state.get("organizations"),
-        )
+        try:
+            result = await search_module.search_factchecks(
+                claim=state.get("claim_text", ""),
+                persons=state.get("persons"),
+                organizations=state.get("organizations"),
+            )
+        except Exception as exc:
+            logger.warning("search_factchecks raised: %s", exc)
+            return {}
         share_heartbeat(AGENT_NAME)
 
-        if result.error:
-            content = f"Error: {result.error}"
-            update: dict[str, Any] = {}
-        elif not result.matched:
-            content = "No matching fact-checks found."
-            update = {}
-        else:
-            match = {
-                "source": result.source,
-                "rating": result.rating,
-                "url": result.url,
-                "score": round(result.score, 2),
-            }
-            update = {"claimreview_matches": [match]}
-            content = (
-                f"Match found (score: {result.score:.2f}):\n"
-                f"  Rating: {result.rating}\n"
-                f"  Source: {result.source}\n"
-                f"  URL: {result.url}"
-            )
+        if result.error or not result.matched:
+            return {}
+        return {
+            "claimreview_matches": [
+                {
+                    "source": result.source,
+                    "rating": result.rating,
+                    "url": result.url,
+                    "score": round(result.score, 2),
+                }
+            ]
+        }
 
-        update["messages"] = [ToolMessage(content=content, tool_call_id=runtime.tool_call_id)]
-        return Command(update=update)
-
-    @tool
-    def lookup_domain_sources(runtime: ToolRuntime) -> str:
-        """Look up authoritative sources for the claim's domain.
-
-        Returns a JSON list of sources with name and pre-formatted URL.
-        """
-        from swarm_reasoning.agents.evidence.tools import lookup_domain_sources
-
-        state = runtime.state
+    def _lookup_domain_sources_node(state: EvidenceAgentState) -> dict[str, Any]:
         share_progress("Looking up domain-authoritative sources...")
-        search_query = lookup_domain_sources.derive_search_query(
+        query = lookup_module.derive_search_query(
             state.get("claim_text", ""),
             state.get("persons"),
             state.get("organizations"),
             state.get("statistics"),
             state.get("dates"),
         )
-        sources = lookup_domain_sources.lookup_domain_sources(
-            state.get("domain", "OTHER"), search_query
-        )
-        return sources.to_json()
+        sources = lookup_module.lookup_domain_sources(state.get("domain", "OTHER"), query)
+        return {
+            "_candidate_sources": [{"name": s.name, "url": s.url} for s in sources.sources],
+        }
 
-    @tool
-    async def fetch_source_content(url: str) -> str:
-        """Fetch text content from a source URL.
+    async def _fetch_source_content_node(state: EvidenceAgentState) -> dict[str, Any]:
+        candidates = list(state.get("_candidate_sources") or [])
+        attempts = int(state.get("_fetch_attempts") or 0)
+        if not candidates:
+            return {}
 
-        Args:
-            url: The full URL to fetch (use URLs from lookup_domain_sources).
-        """
+        candidate = candidates.pop(0)
+        url = candidate["url"]
         share_progress(f"Fetching source: {url}")
         share_heartbeat(AGENT_NAME)
         result = await extractor.fetch(url)
         share_heartbeat(AGENT_NAME)
+
+        update: dict[str, Any] = {
+            "_candidate_sources": candidates,
+            "_fetch_attempts": attempts + 1,
+        }
         match result:
-            case FetchErr(reason=code):
-                return f"Error fetching {url}: {code}"
             case FetchOk(document=doc):
-                return doc.text
+                update["_fetched_content"] = doc.text
+                update["_fetched_source_name"] = candidate["name"]
+                update["_fetched_source_url"] = url
+            case FetchErr(reason=code):
+                logger.info("fetch failed for %s: %s", url, code)
+        return update
 
-    @tool
-    def score_evidence(
-        content: str, source_name: str, source_url: str, runtime: ToolRuntime
-    ) -> Command:
-        """Score how well fetched content aligns with the claim.
+    def _fetch_outcome(state: EvidenceAgentState) -> Literal["score", "retry", "give_up"]:
+        if state.get("_fetched_content"):
+            return "score"
+        if int(state.get("_fetch_attempts") or 0) >= MAX_FETCH_ATTEMPTS:
+            return "give_up"
+        if not state.get("_candidate_sources"):
+            return "give_up"
+        return "retry"
 
-        Args:
-            content: The fetched source content to evaluate.
-            source_name: Name of the source (e.g. CDC, WHO).
-            source_url: URL the content was fetched from.
-        """
-        from swarm_reasoning.agents.evidence.tools import score_evidence
-
-        state = runtime.state
-        share_progress(f"Scoring evidence from {source_name}...")
-        alignment_result = score_evidence.score_claim_alignment(
-            content, state.get("claim_text", "")
-        )
-        confidence = score_evidence.compute_evidence_confidence(alignment_result.alignment)
+    def _score_evidence_node(state: EvidenceAgentState) -> dict[str, Any]:
+        name = state.get("_fetched_source_name", "")
+        url = state.get("_fetched_source_url", "")
+        content = state.get("_fetched_content", "")
+        share_progress(f"Scoring evidence from {name}...")
+        alignment_result = score_module.score_claim_alignment(content, state.get("claim_text", ""))
+        confidence = score_module.compute_evidence_confidence(alignment_result.alignment)
 
         entry = {
-            "name": source_name,
-            "url": source_url,
+            "name": name,
+            "url": url,
             "alignment": alignment_result.alignment.value,
             "confidence": confidence,
         }
@@ -270,19 +217,25 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
         prev_best = float(state.get("best_confidence") or 0.0)
         if confidence > prev_best:
             update["best_confidence"] = confidence
+        return update
 
-        text = (
-            f"Alignment: {alignment_result.alignment.value} "
-            f"({alignment_result.description})\n"
-            f"Confidence: {confidence:.2f}"
-        )
-        update["messages"] = [ToolMessage(content=text, tool_call_id=runtime.tool_call_id)]
-        return Command(update=update)
+    builder: StateGraph = StateGraph(EvidenceAgentState)
+    builder.add_node("search_factchecks", _search_factchecks_node)
+    builder.add_node("lookup_domain_sources", _lookup_domain_sources_node)
+    builder.add_node("fetch_source_content", _fetch_source_content_node)
+    builder.add_node("score_evidence", _score_evidence_node)
 
-    return create_agent(
-        model=model,
-        tools=[search_factchecks, lookup_domain_sources, fetch_source_content, score_evidence],
-        system_prompt=SYSTEM_PROMPT,
-        state_schema=EvidenceAgentState,
-        name=AGENT_NAME,
+    builder.add_edge(START, "search_factchecks")
+    builder.add_edge("search_factchecks", "lookup_domain_sources")
+    builder.add_edge("lookup_domain_sources", "fetch_source_content")
+    builder.add_conditional_edges(
+        "fetch_source_content",
+        _fetch_outcome,
+        {
+            "score": "score_evidence",
+            "retry": "fetch_source_content",
+            "give_up": END,
+        },
     )
+    builder.add_edge("score_evidence", END)
+    return builder.compile()
