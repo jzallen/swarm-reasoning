@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from pathlib import Path
 
 import click
+
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "fact-checker"
+LLM_CACHE_PATH = CACHE_DIR / "llm.db"
 
 
 @click.group()
@@ -24,17 +29,37 @@ def agents() -> None:
 
 @agents.command()
 @click.option("--url", required=True, help="Article URL to ingest.")
-def intake(url: str) -> None:
+@click.option(
+    "--no-cache",
+    is_flag=True,
+    default=False,
+    help="Bypass the LLM and fetch caches; always hit upstream.",
+)
+def intake(url: str, no_cache: bool) -> None:
     """Run the intake agent on a URL and print the structured output."""
     try:
-        asyncio.run(_run_intake(url))
+        asyncio.run(_run_intake(url, no_cache=no_cache))
     except KeyboardInterrupt as exc:
         raise click.Abort() from exc
 
 
-async def _run_intake(url: str) -> None:
+def _enable_llm_cache() -> None:
+    from langchain_community.cache import SQLiteCache
+    from langchain_core.globals import set_llm_cache
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    set_llm_cache(SQLiteCache(database_path=str(LLM_CACHE_PATH)))
+
+
+async def _run_intake(url: str, *, no_cache: bool) -> None:
+    if no_cache:
+        os.environ["INTAKE_FETCH_CACHE"] = "bypass"
+    else:
+        _enable_llm_cache()
+
     # Imported lazily so `fact-checker --help` works without the agent
-    # service installed in the current environment.
+    # service installed in the current environment, and so the fetch cache
+    # bypass env var is set before the tools module reads it.
     from swarm_reasoning.agents.intake.agent import build_intake_agent
 
     agent = build_intake_agent()
