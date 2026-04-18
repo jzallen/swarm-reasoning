@@ -13,7 +13,6 @@ wrapper, not here.
 
 from __future__ import annotations
 
-import json
 import logging
 import operator
 import os
@@ -136,6 +135,8 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
         A compiled LangGraph whose state is ``EvidenceAgentState``. Invoke
         with an initial state built by ``initial_state_from_input(...)``.
     """
+    from swarm_reasoning.agents.messaging import share_heartbeat, share_progress
+
     if model is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
@@ -148,25 +149,14 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
         )
 
     @tool
-    async def search_factchecks(reason: str, runtime: ToolRuntime) -> Command:
-        """Search Google Fact Check Tools API for existing reviews of the claim.
+    async def search_factchecks(runtime: ToolRuntime) -> Command:
+        """Search Google Fact Check Tools API for existing reviews of the claim."""
+        from swarm_reasoning.agents.evidence.tools import search_factchecks
 
-        Args:
-            reason: Short rationale for issuing the search; ignored by the tool.
-        """
-        from swarm_reasoning.agents.evidence.tools import (
-            search_factchecks as search_mod,
-        )
-        from swarm_reasoning.agents.messaging import (
-            share_heartbeat,
-            share_progress,
-        )
-
-        del reason
         state = runtime.state
         share_progress("Searching fact-check databases...")
         share_heartbeat(AGENT_NAME)
-        result = await search_mod.search_factchecks(
+        result = await search_factchecks.search_factchecks(
             claim=state.get("claim_text", ""),
             persons=state.get("persons"),
             organizations=state.get("organizations"),
@@ -198,38 +188,26 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
         return Command(update=update)
 
     @tool
-    def lookup_domain_sources(reason: str, runtime: ToolRuntime) -> str:
+    def lookup_domain_sources(runtime: ToolRuntime) -> str:
         """Look up authoritative sources for the claim's domain.
 
         Returns a JSON list of sources with name and pre-formatted URL.
-
-        Args:
-            reason: Short rationale for the lookup; ignored by the tool.
         """
-        from swarm_reasoning.agents.evidence.tools import lookup_domain_sources as lookup_mod
-        from swarm_reasoning.agents.messaging import share_progress
+        from swarm_reasoning.agents.evidence.tools import lookup_domain_sources
 
-        del reason
         state = runtime.state
         share_progress("Looking up domain-authoritative sources...")
-        domain = state.get("domain", "OTHER")
-        sources = lookup_mod.lookup_domain_sources(domain)
-        search_query = lookup_mod.derive_search_query(
+        search_query = lookup_domain_sources.derive_search_query(
             state.get("claim_text", ""),
             state.get("persons"),
             state.get("organizations"),
             state.get("statistics"),
             state.get("dates"),
         )
-        return json.dumps(
-            [
-                {
-                    "name": s.name,
-                    "url": lookup_mod.format_source_url(s.url_template, search_query),
-                }
-                for s in sources
-            ]
+        sources = lookup_domain_sources.lookup_domain_sources(
+            state.get("domain", "OTHER"), search_query
         )
+        return sources.to_json()
 
     @tool
     async def fetch_source_content(url: str) -> str:
@@ -238,17 +216,11 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
         Args:
             url: The full URL to fetch (use URLs from lookup_domain_sources).
         """
-        from swarm_reasoning.agents.evidence.tools import (
-            fetch_source_content as fetch_mod,
-        )
-        from swarm_reasoning.agents.messaging import (
-            share_heartbeat,
-            share_progress,
-        )
+        from swarm_reasoning.agents.evidence.tools import fetch_source_content
 
         share_progress(f"Fetching source: {url}")
         share_heartbeat(AGENT_NAME)
-        result = await fetch_mod.fetch_source_content(url)
+        result = await fetch_source_content.fetch_source_content(url)
         share_heartbeat(AGENT_NAME)
         if result.error:
             return f"Error fetching {url}: {result.error}"
@@ -265,13 +237,12 @@ def build_evidence_agent(model: ChatAnthropic | None = None) -> Any:
             source_name: Name of the source (e.g. CDC, WHO).
             source_url: URL the content was fetched from.
         """
-        from swarm_reasoning.agents.evidence.tools import score_evidence as score_mod
-        from swarm_reasoning.agents.messaging import share_progress
+        from swarm_reasoning.agents.evidence.tools import score_evidence
 
         state = runtime.state
         share_progress(f"Scoring evidence from {source_name}...")
-        alignment_result = score_mod.score_claim_alignment(content, state.get("claim_text", ""))
-        confidence = score_mod.compute_evidence_confidence(alignment_result.alignment)
+        alignment_result = score_evidence.score_claim_alignment(content, state.get("claim_text", ""))
+        confidence = score_evidence.compute_evidence_confidence(alignment_result.alignment)
 
         entry = {
             "name": source_name,

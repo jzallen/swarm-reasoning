@@ -74,8 +74,8 @@ async def _phase_b_analyze(
         config=inner_agent_config(config, agent=AGENT_NAME),
     )
     return {
-        "domain": result.get("domain", "OTHER"),
-        "entities": result.get("entities", {}) or {},
+        "domain": result["domain"],
+        "entities": result["entities"],
     }
 
 
@@ -104,7 +104,7 @@ async def _publish_intake_observations(
     await ctx.publish_observation(
         agent=AGENT_NAME,
         code=ObservationCode.CLAIM_TEXT,
-        value=selected.get("claim_text", ""),
+        value=selected["claim_text"],
         value_type=ValueType.ST,
         method="decompose_claims",
     )

@@ -30,26 +30,48 @@ def _load_routes() -> dict[str, list[dict]]:
 
 @dataclass
 class DomainSource:
-    """A single authoritative source for a claim domain."""
+    """A single authoritative source for a claim domain (formatted, query-bound)."""
 
     name: str
-    url_template: str
+    url: str
 
 
-def lookup_domain_sources(domain: str) -> list[DomainSource]:
-    """Look up authoritative sources for a claim domain.
+@dataclass
+class DomainSources:
+    """Ordered collection of authoritative sources for a claim domain.
+
+    Entries are query-bound: each ``url`` already has the search query
+    interpolated. Use :meth:`to_json` to serialize for tool output.
+    """
+
+    sources: list[DomainSource]
+
+    def to_json(self) -> str:
+        """Serialize the collection as a JSON array of ``{name, url}`` objects."""
+        return json.dumps([{"name": s.name, "url": s.url} for s in self.sources])
+
+
+def lookup_domain_sources(domain: str, query: str) -> DomainSources:
+    """Look up authoritative sources for a claim domain, bound to a search query.
 
     Args:
         domain: The domain category (e.g. HEALTHCARE, ECONOMICS, POLICY,
                 SCIENCE, ELECTION, CRIME, OTHER). Case-insensitive.
+        query:  The search query to interpolate into each source URL template.
 
     Returns:
-        List of DomainSource entries in priority order (prefer earlier entries).
+        A :class:`DomainSources` collection in priority order (prefer
+        earlier entries), with each URL already query-formatted.
     """
     routes = _load_routes()
     key = domain.upper()
     raw_sources = routes.get(key, routes.get("OTHER", []))
-    return [DomainSource(name=s["name"], url_template=s["url_template"]) for s in raw_sources]
+    return DomainSources(
+        sources=[
+            DomainSource(name=s["name"], url=format_source_url(s["url_template"], query))
+            for s in raw_sources
+        ]
+    )
 
 
 def derive_search_query(
