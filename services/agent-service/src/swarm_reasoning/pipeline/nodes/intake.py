@@ -26,7 +26,7 @@ from typing import Any
 
 from langgraph.types import RunnableConfig, interrupt
 
-from swarm_reasoning.agents.intake import build_intake_agent
+from swarm_reasoning.agents.intake import build_intake_agent, intake_output_from_state
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
 from swarm_reasoning.pipeline.nodes._inner_config import inner_agent_config
@@ -48,8 +48,9 @@ _ENTITY_ORDER: list[tuple[str, ObservationCode]] = [
 async def _phase_a_extract(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
     """Pure: URL → IntakeOutput dict (article meta + claims). No observation writes.
 
-    Returns the raw ``structured_response`` dict from the intake agent. The
-    caller inspects ``error`` and ``extracted_claims`` to decide control flow.
+    Returns an :class:`IntakeOutput` projected from the agent's final
+    state. The caller inspects ``error`` and ``extracted_claims`` to
+    decide control flow.
     """
     url = state.get("claim_url") or state.get("claim_text", "")
     agent = build_intake_agent()
@@ -57,7 +58,7 @@ async def _phase_a_extract(state: PipelineState, config: RunnableConfig) -> dict
         {"messages": [("user", f"Process this URL: {url}")]},
         config=inner_agent_config(config, agent=AGENT_NAME),
     )
-    return result.get("structured_response", {}) or {}
+    return intake_output_from_state(result)
 
 
 async def _phase_b_analyze(
@@ -72,7 +73,7 @@ async def _phase_b_analyze(
         {"messages": [("user", f"Classify and extract entities for this claim: {claim_text}")]},
         config=inner_agent_config(config, agent=AGENT_NAME),
     )
-    structured = result.get("structured_response", {}) or {}
+    structured = intake_output_from_state(result)
     return {
         "domain": structured.get("domain", "OTHER"),
         "entities": structured.get("entities", {}) or {},

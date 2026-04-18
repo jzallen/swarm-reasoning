@@ -4,7 +4,7 @@ Owns all PipelineContext interaction for the evidence stage:
 
   1. Project ``PipelineState`` into ``EvidenceInput``
   2. Invoke the evidence agent in an isolated checkpoint namespace
-  3. Read the deterministic ``structured_response`` (an ``EvidenceOutput``)
+  3. Project the agent's final state into an ``EvidenceOutput``
   4. Publish CLAIMREVIEW_* and DOMAIN_* observations
   5. Return a state update dict for LangGraph
 
@@ -23,6 +23,8 @@ from swarm_reasoning.agents.evidence import (
     EvidenceInput,
     EvidenceOutput,
     build_evidence_agent,
+    evidence_output_from_state,
+    initial_state_from_input,
 )
 from swarm_reasoning.models.observation import ObservationCode, ValueType
 from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
@@ -62,8 +64,8 @@ async def evidence_node(state: PipelineState, config: RunnableConfig) -> dict[st
     2. Build EvidenceInput from state and invoke the agent in an isolated
        checkpoint namespace (mirrors intake; cheap insurance against future
        interrupt-driven re-execution)
-    3. Pull EvidenceOutput from ``structured_response`` and publish
-       CLAIMREVIEW_* / DOMAIN_* observations
+    3. Project final state to EvidenceOutput and publish CLAIMREVIEW_* /
+       DOMAIN_* observations
     4. Closing progress event + state update
     """
     ctx = get_pipeline_context(config)
@@ -73,14 +75,10 @@ async def evidence_node(state: PipelineState, config: RunnableConfig) -> dict[st
     evidence_input = _extract_input(state)
     agent = build_evidence_agent()
     result = await agent.ainvoke(
-        evidence_input,
+        initial_state_from_input(evidence_input),
         config=inner_agent_config(config, agent=AGENT_NAME),
     )
-    evidence_output: EvidenceOutput = result.get("structured_response") or EvidenceOutput(
-        claimreview_matches=[],
-        domain_sources=[],
-        evidence_confidence=0.0,
-    )
+    evidence_output: EvidenceOutput = evidence_output_from_state(result)
 
     ctx.heartbeat(AGENT_NAME)
     await _publish_claimreview_observations(evidence_output, ctx)
