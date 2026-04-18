@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TypedDict
-
+from typing_extensions import TypedDict
 
 # ---------------------------------------------------------------------------
 # Typed I/O for the synthesizer agent graph

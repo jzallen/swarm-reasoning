@@ -8,7 +8,7 @@ IntakeOutput carries the full intake result across both phases:
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 
 class IntakeInput(TypedDict):

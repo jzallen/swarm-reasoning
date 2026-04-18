@@ -6,7 +6,7 @@ ValidationOutput carries the full validation result for pipeline state updates.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 
 class ValidationInput(TypedDict):

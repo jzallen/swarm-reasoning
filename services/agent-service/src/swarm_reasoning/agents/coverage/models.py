@@ -7,7 +7,7 @@ sentiment, top source) for pipeline state updates.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 
 class CoverageInput(TypedDict):

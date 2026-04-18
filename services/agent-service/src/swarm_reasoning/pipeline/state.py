@@ -8,7 +8,9 @@ Redis is still used for SSE observation publishing as a side-effect.
 from __future__ import annotations
 
 from operator import add
-from typing import Annotated, TypedDict
+from typing import Annotated
+
+from typing_extensions import TypedDict
 
 
 class PipelineState(TypedDict, total=False):
