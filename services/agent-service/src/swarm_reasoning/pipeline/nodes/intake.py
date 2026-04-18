@@ -1,18 +1,22 @@
-"""Intake pipeline node: two-phase URL-based claim extraction and analysis.
+"""Intake pipeline node: URL-based claim extraction with human-in-the-loop selection.
 
-Implements the intake agent's two-phase interaction within the pipeline:
+The node runs in three internal stages around a LangGraph ``interrupt()``:
 
-  Phase A (URL → claims):
-    User submits URL → fetch_content → decompose_claims → return extracted
-    claims to the user for selection.
+  Phase A (pure, pre-interrupt):
+    fetch_content + decompose_claims on the source URL, producing extracted
+    claims and article metadata.
 
-  Phase B (selection → analysis):
-    User selects a claim → classify_domain → extract_entities → publish
-    final observations.
+  Interrupt:
+    Pause the graph and surface the claim list to the caller. Resume with
+    ``Command(resume=<int>)`` carrying a 1-based claim index.
 
-The pipeline graph routes between phases based on PipelineState: if
-``extracted_claims`` is empty, run Phase A; if ``selected_claim`` is
-present, run Phase B.
+  Phase B (pure, post-interrupt):
+    classify_domain + extract_entities on the selected claim.
+
+All observation writes happen exactly once, post-interrupt, in
+``_publish_intake_observations``. Phase A and Phase B helpers are side-effect
+free with respect to the Redis stream, so the node re-execution that
+LangGraph performs on resume does not double-publish observations (sr-ld49).
 """
 
 from __future__ import annotations
@@ -20,18 +24,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langgraph.types import RunnableConfig
+from langgraph.types import RunnableConfig, interrupt
 
 from swarm_reasoning.agents.intake import build_intake_agent
 from swarm_reasoning.models.observation import ObservationCode, ValueType
-from swarm_reasoning.pipeline.context import get_pipeline_context
+from swarm_reasoning.pipeline.context import PipelineContext, get_pipeline_context
 from swarm_reasoning.pipeline.state import PipelineState
 
 logger = logging.getLogger(__name__)
 
 AGENT_NAME = "intake"
 
-# Deterministic entity publish order
 _ENTITY_ORDER: list[tuple[str, ObservationCode]] = [
     ("persons", ObservationCode.ENTITY_PERSON),
     ("organizations", ObservationCode.ENTITY_ORG),
@@ -41,47 +44,55 @@ _ENTITY_ORDER: list[tuple[str, ObservationCode]] = [
 ]
 
 
-async def intake_phase_a(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
-    """Phase A: URL submission → extracted claims.
+async def _phase_a_extract(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
+    """Pure: URL → IntakeOutput dict (article meta + claims). No observation writes.
 
-    Invokes the intake agent with the source URL. The agent runs
-    fetch_content and decompose_claims, returning up to 5 factual claims
-    for user selection.
-
-    Returns state updates with ``extracted_claims`` and ``article_text``.
-    On failure (bad URL, no claims), returns ``error``.
+    Returns the raw ``structured_response`` dict from the intake agent. The
+    caller inspects ``error`` and ``extracted_claims`` to decide control flow.
     """
-    ctx = get_pipeline_context(config)
-    ctx.heartbeat(AGENT_NAME)
-
     url = state.get("claim_url") or state.get("claim_text", "")
-
-    await ctx.publish_progress(AGENT_NAME, "Starting intake: fetching article...")
-
     agent = build_intake_agent()
     result = await agent.ainvoke(
         {"messages": [("user", f"Process this URL: {url}")]},
         config=config,
     )
+    return result.get("structured_response", {}) or {}
 
-    ctx.heartbeat(AGENT_NAME)
 
-    structured = result.get("structured_response", {})
+async def _phase_b_analyze(
+    selected_claim: dict[str, Any],
+    state: PipelineState,
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """Pure: selected claim → domain + entities. No observation writes."""
+    claim_text = selected_claim.get("claim_text", "")
+    agent = build_intake_agent()
+    result = await agent.ainvoke(
+        {"messages": [("user", f"Classify and extract entities for this claim: {claim_text}")]},
+        config=config,
+    )
+    structured = result.get("structured_response", {}) or {}
+    return {
+        "domain": structured.get("domain", "OTHER"),
+        "entities": structured.get("entities", {}) or {},
+    }
 
-    if structured.get("error"):
-        await ctx.publish_progress(AGENT_NAME, f"Intake rejected: {structured['error']}")
-        return {
-            "errors": [structured["error"]],
-        }
 
-    claims = structured.get("extracted_claims", [])
-    if not claims:
-        await ctx.publish_progress(AGENT_NAME, "No factual claims found in article")
-        return {
-            "errors": ["NO_FACTUAL_CLAIMS"],
-        }
+async def _publish_intake_observations(
+    ctx: PipelineContext,
+    *,
+    url: str,
+    selected: dict[str, Any],
+    domain: str,
+    entities: dict[str, list[str]],
+) -> None:
+    """Publish all intake observations in one shot, post-interrupt.
 
-    # Publish source URL observation
+    Emits CLAIM_SOURCE_URL, CLAIM_TEXT, CLAIM_DOMAIN, and ENTITY_* in a
+    deterministic order. Called exactly once per successful run so the
+    Redis observation log (append-only, ADR-003) stays idempotent across
+    the node re-execution triggered by ``Command(resume=)``.
+    """
     await ctx.publish_observation(
         agent=AGENT_NAME,
         code=ObservationCode.CLAIM_SOURCE_URL,
@@ -89,56 +100,13 @@ async def intake_phase_a(state: PipelineState, config: RunnableConfig) -> dict[s
         value_type=ValueType.ST,
         method="fetch_content",
     )
-
-    await ctx.publish_progress(AGENT_NAME, f"Found {len(claims)} claims for review")
-
-    return {
-        "extracted_claims": claims,
-        "article_text": structured.get("article_text", ""),
-        "article_title": structured.get("article_title", ""),
-    }
-
-
-async def intake_phase_b(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
-    """Phase B: selected claim → domain classification + entity extraction.
-
-    Invokes the intake agent with the user's selected claim. The agent
-    runs classify_domain and extract_entities on that claim.
-
-    Returns state updates with ``claim_domain``, ``entities``, and
-    ``selected_claim``.
-    """
-    ctx = get_pipeline_context(config)
-    ctx.heartbeat(AGENT_NAME)
-
-    selected = state.get("selected_claim", {})
-    claim_text = selected.get("claim_text", "")
-
-    await ctx.publish_progress(AGENT_NAME, "Analyzing selected claim...")
-
-    agent = build_intake_agent()
-    result = await agent.ainvoke(
-        {"messages": [("user", f"Classify and extract entities for this claim: {claim_text}")]},
-        config=config,
-    )
-
-    ctx.heartbeat(AGENT_NAME)
-
-    structured = result.get("structured_response", {})
-
-    domain = structured.get("domain", "OTHER")
-    entities = structured.get("entities", {})
-
-    # Publish CLAIM_TEXT from selected claim (not raw input)
     await ctx.publish_observation(
         agent=AGENT_NAME,
         code=ObservationCode.CLAIM_TEXT,
-        value=claim_text,
+        value=selected.get("claim_text", ""),
         value_type=ValueType.ST,
         method="decompose_claims",
     )
-
-    # Publish domain classification
     await ctx.publish_observation(
         agent=AGENT_NAME,
         code=ObservationCode.CLAIM_DOMAIN,
@@ -146,10 +114,8 @@ async def intake_phase_b(state: PipelineState, config: RunnableConfig) -> dict[s
         value_type=ValueType.ST,
         method="classify_domain",
     )
-
-    # Publish entity observations in deterministic order
     for field_name, obs_code in _ENTITY_ORDER:
-        for entity_value in entities.get(field_name, []):
+        for entity_value in entities.get(field_name, []) or []:
             await ctx.publish_observation(
                 agent=AGENT_NAME,
                 code=obs_code,
@@ -158,27 +124,71 @@ async def intake_phase_b(state: PipelineState, config: RunnableConfig) -> dict[s
                 method="extract_entities",
             )
 
-    await ctx.publish_progress(AGENT_NAME, f"Analysis complete: domain={domain}")
-
-    return {
-        "claim_domain": domain,
-        "entities": entities,
-        "claim_text": claim_text,
-        "is_check_worthy": True,
-    }
-
-
-def should_run_phase_b(state: PipelineState) -> bool:
-    """Routing condition: True if Phase A is done and user selected a claim."""
-    return bool(state.get("selected_claim"))
-
 
 async def intake_node(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
-    """Unified intake node: routes to Phase A or Phase B based on state.
+    """Unified intake node: Phase A → interrupt → Phase B → publish observations.
 
-    - If ``selected_claim`` is present → Phase B (classify + extract)
-    - Otherwise → Phase A (fetch + decompose)
+    Re-executes from the top on ``Command(resume=)``. All LangGraph-facing
+    side effects (observation publishing) are deferred until after the
+    interrupt so they fire exactly once per completed run.
     """
-    if should_run_phase_b(state):
-        return await intake_phase_b(state, config)
-    return await intake_phase_a(state, config)
+    ctx = get_pipeline_context(config)
+    ctx.heartbeat(AGENT_NAME)
+
+    url = state.get("claim_url") or state.get("claim_text", "")
+
+    await ctx.publish_progress(AGENT_NAME, "Starting intake: fetching article...")
+
+    phase_a = await _phase_a_extract(state, config)
+
+    if phase_a.get("error"):
+        await ctx.publish_progress(AGENT_NAME, f"Intake rejected: {phase_a['error']}")
+        return {"errors": [phase_a["error"]]}
+
+    claims = phase_a.get("extracted_claims") or []
+    if not claims:
+        await ctx.publish_progress(AGENT_NAME, "No factual claims found in article")
+        return {"errors": ["NO_FACTUAL_CLAIMS"]}
+
+    await ctx.publish_progress(AGENT_NAME, f"Found {len(claims)} claims for review")
+
+    # Pause the graph. Caller resumes with Command(resume=<1-based index>).
+    # article_text and article_accessed_at are deliberately excluded from the
+    # payload (size + audit-field noise); the UI can re-fetch if needed.
+    selected_index = interrupt(
+        {
+            "claims": claims,
+            "article_title": phase_a.get("article_title", ""),
+            "article_url": url,
+            "article_author": phase_a.get("article_author"),
+            "article_publisher": phase_a.get("article_publisher"),
+            "article_published_at": phase_a.get("article_published_at"),
+        }
+    )
+
+    ctx.heartbeat(AGENT_NAME)
+    selected = claims[int(selected_index) - 1]
+
+    await ctx.publish_progress(AGENT_NAME, "Analyzing selected claim...")
+    phase_b = await _phase_b_analyze(selected, state, config)
+
+    await _publish_intake_observations(
+        ctx,
+        url=url,
+        selected=selected,
+        domain=phase_b["domain"],
+        entities=phase_b["entities"],
+    )
+
+    await ctx.publish_progress(AGENT_NAME, f"Analysis complete: domain={phase_b['domain']}")
+
+    return {
+        "extracted_claims": claims,
+        "article_text": phase_a.get("article_text", ""),
+        "article_title": phase_a.get("article_title", ""),
+        "selected_claim": selected,
+        "claim_text": selected.get("claim_text", ""),
+        "claim_domain": phase_b["domain"],
+        "entities": phase_b["entities"],
+        "is_check_worthy": True,
+    }

@@ -17,8 +17,11 @@ from __future__ import annotations
 import logging
 import os
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
-from langgraph.types import RunnableConfig, Send
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Send
 
 from swarm_reasoning.pipeline.nodes.coverage import coverage_node
 from swarm_reasoning.pipeline.nodes.evidence import evidence_node
@@ -78,10 +81,17 @@ def route_after_intake(state: PipelineState) -> list[Send]:
 # ---------------------------------------------------------------------------
 
 
-def build_pipeline_graph() -> StateGraph:
+def build_pipeline_graph(
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> CompiledStateGraph:
     """Build and compile the claim verification pipeline graph.
 
-    Returns a compiled StateGraph ready for invocation.
+    A checkpointer is required for the intake node's ``interrupt()``-based
+    human-in-the-loop selection (sr-ld49): without it, ``Command(resume=)``
+    has no state to restore. Callers inject the checkpointer appropriate
+    for their runtime (InMemorySaver for one-shot CLI, SqliteSaver for
+    persistent dev, Postgres/Redis savers for multi-host production);
+    ``InMemorySaver`` is the default when left unspecified.
     """
     builder = StateGraph(PipelineState)
 
@@ -107,7 +117,7 @@ def build_pipeline_graph() -> StateGraph:
     builder.add_edge("validation", "synthesizer")
     builder.add_edge("synthesizer", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer or InMemorySaver())
 
 
 # Module-level compiled graph (importable as ``pipeline_graph``)
