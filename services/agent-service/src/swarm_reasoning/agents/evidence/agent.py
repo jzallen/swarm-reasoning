@@ -35,11 +35,11 @@ def initial_state_from_input(evidence_input: EvidenceInput) -> dict[str, Any]:
     return {
         "claim_text": evidence_input.get("claim_text", ""),
         "domain": evidence_input.get("domain", "OTHER"),
-        "persons": list(evidence_input.get("persons", []) or []),
-        "organizations": list(evidence_input.get("organizations", []) or []),
-        "dates": list(evidence_input.get("dates", []) or []),
-        "locations": list(evidence_input.get("locations", []) or []),
-        "statistics": list(evidence_input.get("statistics", []) or []),
+        "persons": evidence_input.get("persons", []),
+        "organizations": evidence_input.get("organizations", []),
+        "dates": evidence_input.get("dates", []),
+        "locations": evidence_input.get("locations", []),
+        "statistics": evidence_input.get("statistics", []),
     }
 
 
@@ -115,10 +115,10 @@ def build_evidence_agent() -> Any:
     async def find_evidence(state: dict[str, Any]) -> dict[str, Any]:
         from swarm_reasoning.agents.evidence.tasks import score_evidence
 
-        cr_future = _task_search_factchecks(state)
-        src_future = _task_lookup_sources(state)
-        claimreview = await cr_future
-        sources = await src_future
+        claim_review_future = _task_search_factchecks(state)
+        sources_future = _task_lookup_sources(state)
+        claimreview = await claim_review_future
+        sources = await sources_future
         scored = await score_evidence(state.get("claim_text", ""), sources)
         return await _task_format(claimreview, scored)
 
