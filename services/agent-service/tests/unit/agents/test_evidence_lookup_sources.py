@@ -10,7 +10,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from swarm_reasoning.agents.evidence.tasks.lookup_sources import lookup_sources
+from swarm_reasoning.agents.evidence.tasks.lookup_sources import (
+    derive_search_query,
+    lookup_domain_sources,
+    lookup_sources,
+)
 from swarm_reasoning.agents.web import FetchErr, FetchOk, WebContentDocument
 
 
@@ -35,16 +39,14 @@ def _ok(text: str) -> FetchOk:
 
 def _expected_urls(domain: str, **kwargs) -> list[str]:
     """Compute the URLs lookup_sources will request for a given input."""
-    from swarm_reasoning.agents.evidence.tools import lookup_domain_sources as lm
-
-    query = lm.derive_search_query(
+    query = derive_search_query(
         kwargs["claim_text"],
         kwargs.get("persons"),
         kwargs.get("organizations"),
         kwargs.get("statistics"),
         kwargs.get("dates"),
     )
-    return [s.url for s in lm.lookup_domain_sources(domain, query).sources]
+    return [s.url for s in lookup_domain_sources(domain, query).sources]
 
 
 @pytest.mark.asyncio
