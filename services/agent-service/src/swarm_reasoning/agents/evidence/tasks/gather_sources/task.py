@@ -18,38 +18,29 @@ candidates / all-fetches-failed) returns ``[]`` so the downstream LLM
 scorer can emit ABSENT honestly. Operators can distinguish the four
 exit sites by the ``share_progress`` line emitted at each one.
 
-The optional ``sonar_cache`` parameter is for local-dev iteration only;
-the agent-service never instantiates :class:`SonarCache`. Production
-passes ``None`` and Sonar is called on every invocation. ``SONAR_CACHE``
-env var ``bypass`` short-circuits the cache even when an instance is
-provided.
+Sonar response caching is owned by :func:`sonar_search` itself; this
+task neither instantiates nor threads a cache. Production sets the
+``SONAR_CACHE=bypass`` env var to disable caching process-wide.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
-import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from swarm_reasoning.agents.evidence.tasks.gather_sources.agent import DISCOVERY_NAME
-from swarm_reasoning.agents.evidence.tasks.gather_sources.cache import (
-    SonarCache,
-    _cache_key,
-)
-from swarm_reasoning.agents.evidence.tasks.gather_sources.models import (
-    DiscoveryResult,
-    SonarResult,
-)
-from swarm_reasoning.agents.evidence.tasks.gather_sources.sonar_client import (
-    SONAR_CONTEXT_SIZE,
-    SONAR_MODEL,
-    _sonar_search,
-)
-from swarm_reasoning.agents.messaging import share_progress
-from swarm_reasoning.agents.web import FetchErr, FetchOk, WebContentExtractor
+from langchain_core.messages import HumanMessage
+
+if TYPE_CHECKING:
+    from swarm_reasoning.agents.evidence.tasks.gather_sources.models import (
+        DiscoveryResult,
+        EmptyDiscoveryResult,
+        SonarResult,
+    )
+    from swarm_reasoning.agents.web import WebContentExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -136,85 +127,99 @@ async def gather_sources(
     dates: list[str] | None,
     extractor: WebContentExtractor,
     subagent: Any,
-    sonar_cache: SonarCache | None = None,
+    config: dict[str, Any],
 ) -> list[dict]:
     """Run the two-pass discovery → Sonar → fetch flow.
 
     Returns ``[{name, url, content}]`` for the first non-empty fetched
     candidate, or ``[]`` at any of four honest-empty exit sites.
+
+    The ``config`` parameter is the LangGraph runtime config for the
+    discovery subagent invocation (thread_id and checkpoint_ns). The
+    orchestrator owns subagent identity; this task just uses what it's
+    given.
     """
-    from langchain_core.messages import HumanMessage
+    from swarm_reasoning.agents.messaging import share_progress
 
-    seeds = _seed_domains_for(domain)
-    prompt = _format_discovery_prompt(
-        claim_text, domain, persons, organizations, dates, statistics, seeds
-    )
-    config = {
-        "configurable": {
-            "thread_id": f"{DISCOVERY_NAME}-{uuid.uuid4()}",
-            "checkpoint_ns": "",
-        }
-    }
+    async def _discover_domains() -> DiscoveryResult | EmptyDiscoveryResult:
+        from swarm_reasoning.agents.evidence.tasks.gather_sources.models import (
+            DiscoveryResult,
+            EmptyDiscoveryResult,
+        )
 
-    try:
-        raw = await subagent.ainvoke({"messages": [HumanMessage(content=prompt)]}, config=config)
-    except Exception as exc:  # pragma: no cover -- defensive (broad: network boundary)
-        logger.warning("discovery subagent raised %s: %s", type(exc).__name__, exc)
-        share_progress("Source discovery failed; no domain evidence.")
-        return []
+        seeds = _seed_domains_for(domain)
+        prompt = _format_discovery_prompt(
+            claim_text, domain, persons, organizations, dates, statistics, seeds
+        )
 
-    discovery = DiscoveryResult.from_state(raw)
-    allow = _filter_denylist(discovery.domains)
-    if not allow:
-        share_progress("Source discovery returned no allowed domains; no domain evidence.")
-        return []
-
-    key = _cache_key(
-        claim_text=claim_text,
-        domains=allow,
-        recency=discovery.recency,
-        context=SONAR_CONTEXT_SIZE,
-        model=SONAR_MODEL,
-    )
-    cached = sonar_cache.get(key) if (sonar_cache and not SonarCache.bypass()) else None
-    if cached is not None:
-        raw_results = cached
-    else:
         try:
-            raw_results = await _sonar_search(
-                claim_text=claim_text,
-                domains=list(allow),
-                recency=discovery.recency,
+            raw = await subagent.ainvoke(
+                {"messages": [HumanMessage(content=prompt)]}, config=config
             )
+        except Exception as exc:  # pragma: no cover -- defensive (broad: network boundary)
+            logger.warning("discovery subagent raised %s: %s", type(exc).__name__, exc)
+            share_progress("Source discovery failed; no domain evidence.")
+            return EmptyDiscoveryResult()
+
+        discovery = DiscoveryResult.from_state(raw)
+        allow = _filter_denylist(discovery.domains)
+        if not allow:
+            share_progress("Source discovery returned no allowed domains; no domain evidence.")
+            return EmptyDiscoveryResult()
+
+        return dataclasses.replace(discovery, domains=allow)
+
+    async def _get_source_candidates(discovery: DiscoveryResult) -> list[SonarResult]:
+        from swarm_reasoning.agents.evidence.tasks.gather_sources.models import SonarResult
+        from swarm_reasoning.agents.evidence.tasks.gather_sources.sonar_client import (
+            SonarQuery,
+            sonar_search,
+        )
+
+        if not discovery.domains:
+            return []
+
+        query = SonarQuery.from_discovery(
+            discovery,
+            claim_text=claim_text,
+            allowed_domains=discovery.domains,
+        )
+
+        try:
+            raw_results = await sonar_search(query)
         except Exception as exc:  # pragma: no cover -- network boundary, broad on purpose
             logger.warning("sonar_search raised %s: %s", type(exc).__name__, exc)
             share_progress("Sonar search failed; no domain evidence.")
             return []
-        if sonar_cache and not SonarCache.bypass():
-            sonar_cache.set(key, raw_results)
 
-    candidates = [SonarResult.from_result(r) for r in raw_results[:_MAX_FETCH_ATTEMPTS]]
-    if not candidates:
-        share_progress("Sonar returned zero candidates; no domain evidence.")
+        return [SonarResult.from_result(r) for r in raw_results[:_MAX_FETCH_ATTEMPTS]]
+
+    async def _extract_source_content(candidates: list[SonarResult]) -> list[dict]:
+        from swarm_reasoning.agents.web import FetchErr, FetchOk
+
+        if not candidates:
+            share_progress("Sonar returned zero candidates; no domain evidence.")
+            return []
+
+        for c in candidates:
+            result = await extractor.fetch(c.url)
+            match result:
+                case FetchOk(document=doc) if doc.text:
+                    return [
+                        {
+                            "name": c.title or c.url,
+                            "url": c.url,
+                            "content": doc.text,
+                        }
+                    ]
+                case FetchOk():
+                    logger.info("fetch for %s returned empty content", c.url)
+                    continue
+                case FetchErr(reason=code):
+                    logger.info("fetch failed for %s: %s", c.url, code)
+                    continue
+
+        share_progress("All Sonar candidates failed to fetch; no domain evidence.")
         return []
 
-    for c in candidates:
-        result = await extractor.fetch(c.url)
-        match result:
-            case FetchOk(document=doc) if doc.text:
-                return [
-                    {
-                        "name": c.title or c.url,
-                        "url": c.url,
-                        "content": doc.text,
-                    }
-                ]
-            case FetchOk():
-                logger.info("fetch for %s returned empty content", c.url)
-                continue
-            case FetchErr(reason=code):
-                logger.info("fetch failed for %s: %s", c.url, code)
-                continue
-
-    share_progress("All Sonar candidates failed to fetch; no domain evidence.")
-    return []
+    return await _extract_source_content(await _get_source_candidates(await _discover_domains()))

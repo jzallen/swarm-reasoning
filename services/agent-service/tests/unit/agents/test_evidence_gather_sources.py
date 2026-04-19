@@ -1,10 +1,11 @@
 """Unit tests for evidence tasks.gather_sources.
 
 Covers the two-pass flow (Haiku discovery -> Sonar -> fetch), each of
-the four honest-empty exit sites, the SonarCache short-circuit, and the
-denylist post-filter. The discovery subagent and the Sonar HTTP call are
-both stubbed; the WebContentExtractor is the same minimal stub used by
-the prior lookup_sources tests.
+the four honest-empty exit sites, and the denylist post-filter. The
+discovery subagent and ``sonar_search`` are both stubbed; the
+WebContentExtractor is the same minimal stub used by the prior
+lookup_sources tests. SonarCache behavior is owned by
+``sonar_search`` and tested at that boundary.
 """
 
 from __future__ import annotations
@@ -15,18 +16,20 @@ from typing import Any
 import pytest
 
 from swarm_reasoning.agents.evidence.tasks.gather_sources import (
-    DiscoveryResult,
     SonarResult,
     gather_sources,
 )
-from swarm_reasoning.agents.evidence.tasks.gather_sources import task as task_module
+from swarm_reasoning.agents.evidence.tasks.gather_sources import (
+    sonar_client as sonar_client_module,
+)
 from swarm_reasoning.agents.web import FetchErr, FetchOk, WebContentDocument
 
 
 @pytest.fixture(autouse=True)
 def _silence_share_progress(monkeypatch):
     """share_progress requires a LangGraph runnable context; stub to no-op."""
-    monkeypatch.setattr(task_module, "share_progress", lambda *_args, **_kw: None)
+    import swarm_reasoning.agents.messaging as _msg_mod
+    monkeypatch.setattr(_msg_mod, "share_progress", lambda *_args, **_kw: None)
 
 
 # ---------------------------------------------------------------------------
@@ -57,27 +60,6 @@ class _StubSubagent:
         return self.state or {}
 
 
-class _StubCache:
-    """In-memory SonarCache stand-in. Tracks gets and sets."""
-
-    def __init__(self, primed: dict | None = None) -> None:
-        self.store: dict[str, list[dict]] = dict(primed or {})
-        self.gets: list[str] = []
-        self.sets: list[tuple[str, list[dict]]] = []
-
-    @staticmethod
-    def bypass() -> bool:
-        return False
-
-    def get(self, key: str) -> list[dict] | None:
-        self.gets.append(key)
-        return self.store.get(key)
-
-    def set(self, key: str, results: list[dict]) -> None:
-        self.sets.append((key, results))
-        self.store[key] = results
-
-
 def _ok(text: str, url: str = "https://example") -> FetchOk:
     return FetchOk(
         document=WebContentDocument(url=url, text=text, accessed_at="2026-04-19T00:00:00Z")
@@ -96,6 +78,7 @@ def _common_kwargs() -> dict[str, Any]:
         organizations=None,
         statistics=None,
         dates=None,
+        config={"configurable": {"thread_id": "test-thread", "checkpoint_ns": ""}},
     )
 
 
@@ -109,8 +92,14 @@ async def test_gather_sources_two_pass_happy_path(monkeypatch):
     """Pass-1 returns domains; Sonar returns one result; first fetch succeeds."""
     sonar_calls: list[dict] = []
 
-    async def fake_sonar(*, claim_text, domains, recency):
-        sonar_calls.append({"claim_text": claim_text, "domains": domains, "recency": recency})
+    async def fake_sonar(query, *, bypass_cache=False):
+        sonar_calls.append(
+            {
+                "claim_text": query.claim_text,
+                "domains": list(query.domains),
+                "recency": query.recency,
+            }
+        )
         return [
             {
                 "title": "CDC: vaccines",
@@ -122,7 +111,7 @@ async def test_gather_sources_two_pass_happy_path(monkeypatch):
             }
         ]
 
-    monkeypatch.setattr(task_module, "_sonar_search", fake_sonar)
+    monkeypatch.setattr(sonar_client_module, "sonar_search", fake_sonar)
 
     subagent = _StubSubagent(state=_state(["cdc.gov", "who.int"]))
     extractor = _StubExtractor(by_url={"https://cdc.gov/vax": _ok("Real CDC content")})
@@ -141,11 +130,11 @@ async def test_gather_sources_passes_recency_hint_to_sonar(monkeypatch):
     """RecencyHint fields surface in the Sonar call."""
     captured: dict = {}
 
-    async def fake_sonar(*, claim_text, domains, recency):
-        captured["recency"] = recency
+    async def fake_sonar(query, *, bypass_cache=False):
+        captured["recency"] = query.recency
         return []
 
-    monkeypatch.setattr(task_module, "_sonar_search", fake_sonar)
+    monkeypatch.setattr(sonar_client_module, "sonar_search", fake_sonar)
 
     subagent = _StubSubagent(
         state={
@@ -187,7 +176,7 @@ async def test_gather_sources_returns_empty_when_all_domains_denylisted(monkeypa
         sonar_called = True
         return []
 
-    monkeypatch.setattr(task_module, "_sonar_search", fake_sonar)
+    monkeypatch.setattr(sonar_client_module, "sonar_search", fake_sonar)
 
     subagent = _StubSubagent(state=_state(["wikipedia.org", "reddit.com", "medium.com"]))
     extractor = _StubExtractor(by_url={})
@@ -204,7 +193,7 @@ async def test_gather_sources_returns_empty_on_sonar_exception(monkeypatch):
     async def fake_sonar(**_):
         raise RuntimeError("sonar down")
 
-    monkeypatch.setattr(task_module, "_sonar_search", fake_sonar)
+    monkeypatch.setattr(sonar_client_module, "sonar_search", fake_sonar)
 
     subagent = _StubSubagent(state=_state(["cdc.gov"]))
     extractor = _StubExtractor(by_url={})
@@ -220,7 +209,7 @@ async def test_gather_sources_returns_empty_when_sonar_yields_no_candidates(monk
     async def fake_sonar(**_):
         return []
 
-    monkeypatch.setattr(task_module, "_sonar_search", fake_sonar)
+    monkeypatch.setattr(sonar_client_module, "sonar_search", fake_sonar)
 
     subagent = _StubSubagent(state=_state(["cdc.gov"]))
     extractor = _StubExtractor(by_url={})
@@ -253,7 +242,7 @@ async def test_gather_sources_returns_empty_when_all_fetches_fail(monkeypatch):
             },
         ]
 
-    monkeypatch.setattr(task_module, "_sonar_search", fake_sonar)
+    monkeypatch.setattr(sonar_client_module, "sonar_search", fake_sonar)
 
     subagent = _StubSubagent(state=_state(["cdc.gov"]))
     extractor = _StubExtractor(
@@ -268,101 +257,6 @@ async def test_gather_sources_returns_empty_when_all_fetches_fail(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Cache short-circuit
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_sonar_cache_hit_skips_sonar_call(monkeypatch):
-    """When the cache holds an entry for the request key, Sonar is not called."""
-    sonar_calls = 0
-
-    async def fake_sonar(**_):
-        nonlocal sonar_calls
-        sonar_calls += 1
-        return []
-
-    monkeypatch.setattr(task_module, "_sonar_search", fake_sonar)
-
-    cached_results = [
-        {
-            "title": "Cached CDC",
-            "url": "https://cdc.gov/cached",
-            "snippet": "",
-            "date": None,
-            "last_updated": None,
-            "source": "web",
-        }
-    ]
-    cache = _StubCache()
-    # Prime cache: compute the same key gather_sources would
-    from swarm_reasoning.agents.evidence.tasks.gather_sources.cache import _cache_key
-    from swarm_reasoning.agents.evidence.tasks.gather_sources.sonar_client import (
-        SONAR_CONTEXT_SIZE,
-        SONAR_MODEL,
-    )
-
-    discovery = DiscoveryResult.from_state(_state(["cdc.gov"]))
-    key = _cache_key(
-        claim_text=_common_kwargs()["claim_text"],
-        domains=discovery.domains,
-        recency=discovery.recency,
-        context=SONAR_CONTEXT_SIZE,
-        model=SONAR_MODEL,
-    )
-    cache.store[key] = cached_results
-
-    subagent = _StubSubagent(state=_state(["cdc.gov"]))
-    extractor = _StubExtractor(by_url={"https://cdc.gov/cached": _ok("from cache")})
-
-    result = await gather_sources(
-        extractor=extractor,
-        subagent=subagent,
-        sonar_cache=cache,
-        **_common_kwargs(),
-    )
-
-    assert sonar_calls == 0
-    assert len(result) == 1
-    assert result[0]["url"] == "https://cdc.gov/cached"
-    assert cache.gets == [key]
-
-
-@pytest.mark.asyncio
-async def test_sonar_cache_miss_populates_on_set(monkeypatch):
-    """Cache miss invokes Sonar, then writes the result back."""
-    raw = [
-        {
-            "title": "fresh",
-            "url": "https://x",
-            "snippet": "",
-            "date": None,
-            "last_updated": None,
-            "source": "web",
-        }
-    ]
-
-    async def fake_sonar(**_):
-        return raw
-
-    monkeypatch.setattr(task_module, "_sonar_search", fake_sonar)
-
-    cache = _StubCache()
-    subagent = _StubSubagent(state=_state(["cdc.gov"]))
-    extractor = _StubExtractor(by_url={"https://x": _ok("body")})
-
-    await gather_sources(
-        extractor=extractor,
-        subagent=subagent,
-        sonar_cache=cache,
-        **_common_kwargs(),
-    )
-
-    assert len(cache.sets) == 1
-    assert cache.sets[0][1] == raw
-
-
-# ---------------------------------------------------------------------------
 # Denylist filter
 # ---------------------------------------------------------------------------
 
@@ -372,11 +266,11 @@ async def test_denylist_filter_drops_flagged_domains_before_sonar(monkeypatch):
     """Domains present in denylist.json are dropped before the Sonar request."""
     captured_domains: list[str] = []
 
-    async def fake_sonar(*, claim_text, domains, recency):
-        captured_domains.extend(domains)
+    async def fake_sonar(query, *, bypass_cache=False):
+        captured_domains.extend(query.domains)
         return []
 
-    monkeypatch.setattr(task_module, "_sonar_search", fake_sonar)
+    monkeypatch.setattr(sonar_client_module, "sonar_search", fake_sonar)
 
     subagent = _StubSubagent(state=_state(["cdc.gov", "wikipedia.org", "nih.gov"]))
     extractor = _StubExtractor(by_url={})

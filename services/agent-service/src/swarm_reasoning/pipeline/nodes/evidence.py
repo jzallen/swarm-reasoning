@@ -72,8 +72,7 @@ async def evidence_node(state: PipelineState, config: RunnableConfig) -> dict[st
     await ctx.publish_progress(AGENT_NAME, "Gathering evidence...")
 
     evidence_input = _extract_input(state)
-    sonar_cache = (config.get("configurable") or {}).get("sonar_cache")
-    agent = build_evidence_agent(sonar_cache=sonar_cache)
+    agent = build_evidence_agent()
     result = await agent.ainvoke(
         initial_state_from_input(evidence_input),
         config=inner_agent_config(config, agent=AGENT_NAME),

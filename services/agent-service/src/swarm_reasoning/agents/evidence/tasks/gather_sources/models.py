@@ -5,6 +5,9 @@
 - :class:`SonarResult` — projection of one entry in Sonar's
   ``search_results`` array.
 
+The Sonar request DTO (:class:`SonarQuery`) lives next to the client that
+consumes it, in :mod:`...sonar_client`.
+
 Mirrors the ``ReviewedClaim`` / ``WebContentDocument`` frozen + classmethod
 pattern: callers construct via ``from_state`` / ``from_result``, never the
 raw constructor.
@@ -50,6 +53,13 @@ class DiscoveryResult:
             rationale=str(state.get("rationale") or ""),
             recency=RecencyHint.from_state(state),
         )
+
+
+class EmptyDiscoveryResult(DiscoveryResult):
+    """Null object: returned when discovery fails or yields no actionable domains."""
+
+    def __init__(self) -> None:
+        super().__init__(domains=(), rationale="", recency=RecencyHint())
 
 
 @dataclass(frozen=True)

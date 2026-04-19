@@ -20,6 +20,7 @@ wrapper, not here.
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -27,7 +28,6 @@ from langgraph.func import entrypoint, task
 
 if TYPE_CHECKING:
     from swarm_reasoning.agents.evidence.models import EvidenceInput
-    from swarm_reasoning.agents.evidence.tasks.gather_sources import SonarCache
 
 AGENT_NAME = "evidence"
 
@@ -45,13 +45,11 @@ def initial_state_from_input(evidence_input: EvidenceInput) -> dict[str, Any]:
     }
 
 
-def build_evidence_agent(*, sonar_cache: SonarCache | None = None) -> Any:
+def build_evidence_agent() -> Any:
     """Build the evidence agent as a compiled LangGraph entrypoint.
 
-    Args:
-        sonar_cache: Optional dev-only Sonar response cache. Constructed
-            and supplied by the CLI; production deployments pass
-            ``None``. When ``None``, every invocation calls Sonar fresh.
+    Sonar response caching is owned by :func:`sonar_search` and gated by
+    the ``SONAR_CACHE`` env var; this builder takes no cache arguments.
 
     Returns:
         A compiled ``@entrypoint``-decorated workflow. Invoke with the
@@ -96,9 +94,16 @@ def build_evidence_agent(*, sonar_cache: SonarCache | None = None) -> Any:
     @task
     async def _task_gather_sources(state: dict[str, Any]) -> list[dict]:
         from swarm_reasoning.agents.evidence.tasks import gather_sources
+        from swarm_reasoning.agents.evidence.tasks.gather_sources import DISCOVERY_NAME
 
         share_progress("Discovering authoritative sources...")
         share_heartbeat(AGENT_NAME)
+        config = {
+            "configurable": {
+                "thread_id": f"{DISCOVERY_NAME}-{uuid.uuid4()}",
+                "checkpoint_ns": "",
+            }
+        }
         sources = await gather_sources(
             claim_text=state.get("claim_text", ""),
             domain=state.get("domain", "OTHER"),
@@ -108,7 +113,7 @@ def build_evidence_agent(*, sonar_cache: SonarCache | None = None) -> Any:
             dates=state.get("dates"),
             extractor=extractor,
             subagent=discovery_subagent,
-            sonar_cache=sonar_cache,
+            config=config,
         )
         share_heartbeat(AGENT_NAME)
         return sources
