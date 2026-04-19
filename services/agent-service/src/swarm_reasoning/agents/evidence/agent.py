@@ -19,26 +19,13 @@ wrapper, not here.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.func import entrypoint, task
 
-from swarm_reasoning.agents.evidence.models import EvidenceInput
-from swarm_reasoning.agents.evidence.tasks import (
-    format_response,
-    lookup_sources,
-    score_evidence,
-    search_factcheck_matches,
-)
-from swarm_reasoning.agents.messaging import share_heartbeat, share_progress
-from swarm_reasoning.agents.web import (
-    BeautifulSoupStrategy,
-    FetchCache,
-    RawTextStrategy,
-    TrafilaturaStrategy,
-    WebContentExtractor,
-)
+if TYPE_CHECKING:
+    from swarm_reasoning.agents.evidence.models import EvidenceInput
 
 AGENT_NAME = "evidence"
 
@@ -65,6 +52,15 @@ def build_evidence_agent() -> Any:
         final return value is a dict with ``claimreview_matches``,
         ``domain_sources``, and ``best_confidence``.
     """
+    from swarm_reasoning.agents.messaging import share_heartbeat, share_progress
+    from swarm_reasoning.agents.web import (
+        BeautifulSoupStrategy,
+        FetchCache,
+        RawTextStrategy,
+        TrafilaturaStrategy,
+        WebContentExtractor,
+    )
+
     extractor = WebContentExtractor(
         strategies=[
             TrafilaturaStrategy(),
@@ -76,6 +72,8 @@ def build_evidence_agent() -> Any:
 
     @task
     async def _task_search_factchecks(state: dict[str, Any]) -> list[dict]:
+        from swarm_reasoning.agents.evidence.tasks import search_factcheck_matches
+
         share_progress("Searching fact-check databases...")
         share_heartbeat(AGENT_NAME)
         matches = await search_factcheck_matches(
@@ -88,6 +86,8 @@ def build_evidence_agent() -> Any:
 
     @task
     async def _task_lookup_sources(state: dict[str, Any]) -> list[dict]:
+        from swarm_reasoning.agents.evidence.tasks import lookup_sources
+
         share_progress("Looking up domain-authoritative sources...")
         share_heartbeat(AGENT_NAME)
         sources = await lookup_sources(
@@ -104,6 +104,8 @@ def build_evidence_agent() -> Any:
 
     @task
     def _task_format(claimreview: list[dict], scored: list[dict]) -> dict[str, Any]:
+        from swarm_reasoning.agents.evidence.tasks import format_response
+
         return format_response(
             claimreview_matches=claimreview,
             scored_sources=scored,
@@ -111,6 +113,8 @@ def build_evidence_agent() -> Any:
 
     @entrypoint(checkpointer=InMemorySaver())
     async def find_evidence(state: dict[str, Any]) -> dict[str, Any]:
+        from swarm_reasoning.agents.evidence.tasks import score_evidence
+
         cr_future = _task_search_factchecks(state)
         src_future = _task_lookup_sources(state)
         claimreview = await cr_future
