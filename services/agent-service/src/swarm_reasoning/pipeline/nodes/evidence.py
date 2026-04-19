@@ -72,7 +72,8 @@ async def evidence_node(state: PipelineState, config: RunnableConfig) -> dict[st
     await ctx.publish_progress(AGENT_NAME, "Gathering evidence...")
 
     evidence_input = _extract_input(state)
-    agent = build_evidence_agent()
+    sonar_cache = (config.get("configurable") or {}).get("sonar_cache")
+    agent = build_evidence_agent(sonar_cache=sonar_cache)
     result = await agent.ainvoke(
         initial_state_from_input(evidence_input),
         config=inner_agent_config(config, agent=AGENT_NAME),
@@ -183,14 +184,14 @@ async def _publish_domain_observations(output: EvidenceOutput, ctx: PipelineCont
             code=ObservationCode.DOMAIN_SOURCE_NAME,
             value=source["name"],
             value_type=ValueType.ST,
-            method="lookup_domain_sources",
+            method="sonar_search",
         )
         await ctx.publish_observation(
             agent=AGENT_NAME,
             code=ObservationCode.DOMAIN_SOURCE_URL,
             value=source["url"],
             value_type=ValueType.ST,
-            method="lookup_domain_sources",
+            method="sonar_search",
         )
         await ctx.publish_observation(
             agent=AGENT_NAME,
@@ -214,14 +215,14 @@ async def _publish_domain_observations(output: EvidenceOutput, ctx: PipelineCont
             code=ObservationCode.DOMAIN_SOURCE_NAME,
             value="N/A",
             value_type=ValueType.ST,
-            method="lookup_domain_sources",
+            method="sonar_search",
         )
         await ctx.publish_observation(
             agent=AGENT_NAME,
             code=ObservationCode.DOMAIN_SOURCE_URL,
             value="N/A",
             value_type=ValueType.ST,
-            method="lookup_domain_sources",
+            method="sonar_search",
         )
         await ctx.publish_observation(
             agent=AGENT_NAME,

@@ -17,6 +17,9 @@ from swarm_reasoning.agents.evidence.models import (
     EvidenceOutput,
     from_intake_output,
 )
+from swarm_reasoning.agents.evidence.tasks.gather_sources import (
+    build_source_discovery_subagent,
+)
 from swarm_reasoning.agents.evidence.tasks.score_evidence import build_scorer_subagent
 
 __all__ = [
@@ -26,6 +29,7 @@ __all__ = [
     "EvidenceOutput",
     "build_evidence_agent",
     "build_scorer_subagent",
+    "build_source_discovery_subagent",
     "from_intake_output",
     "initial_state_from_input",
 ]

@@ -1,16 +1,17 @@
-"""Evidence agent -- ClaimReview lookup + domain-source evidence gathering.
+"""Evidence agent -- ClaimReview lookup + Sonar-driven source gathering.
 
 Built with LangGraph's Functional API (``@entrypoint`` + ``@task``). The
 control flow is a straight-line deterministic pipeline:
 
     search_factchecks ─┐
                        ├─► score_evidence ─► format_response ─► END
-    lookup_sources ────┘   (LLM subagent)
+    gather_sources  ───┘   (LLM scorer subagent)
 
-``search_factchecks`` and ``lookup_sources`` run concurrently; the LLM
-subagent in ``score_evidence`` (colocated under
-``tasks/score_evidence/``) judges alignment on fetched content and
-returns SUPPORTS / CONTRADICTS / PARTIAL / ABSENT.
+``search_factchecks`` and ``gather_sources`` run concurrently;
+``gather_sources`` runs the two-pass Haiku-discovery + Perplexity-Sonar
+flow defined in :mod:`...tasks.gather_sources`. ``score_evidence``
+judges alignment of the fetched content via its own scorer subagent
+(:mod:`...tasks.score_evidence`).
 
 Pipeline integration (PipelineContext, observation publishing,
 PipelineState <-> EvidenceInput translation) lives in the pipeline node
@@ -26,6 +27,7 @@ from langgraph.func import entrypoint, task
 
 if TYPE_CHECKING:
     from swarm_reasoning.agents.evidence.models import EvidenceInput
+    from swarm_reasoning.agents.evidence.tasks.gather_sources import SonarCache
 
 AGENT_NAME = "evidence"
 
@@ -43,8 +45,13 @@ def initial_state_from_input(evidence_input: EvidenceInput) -> dict[str, Any]:
     }
 
 
-def build_evidence_agent() -> Any:
+def build_evidence_agent(*, sonar_cache: SonarCache | None = None) -> Any:
     """Build the evidence agent as a compiled LangGraph entrypoint.
+
+    Args:
+        sonar_cache: Optional dev-only Sonar response cache. Constructed
+            and supplied by the CLI; production deployments pass
+            ``None``. When ``None``, every invocation calls Sonar fresh.
 
     Returns:
         A compiled ``@entrypoint``-decorated workflow. Invoke with the
@@ -52,6 +59,7 @@ def build_evidence_agent() -> Any:
         final return value is a dict with ``claimreview_matches``,
         ``domain_sources``, and ``best_confidence``.
     """
+    from swarm_reasoning.agents.evidence.tasks import build_source_discovery_subagent
     from swarm_reasoning.agents.messaging import share_heartbeat, share_progress
     from swarm_reasoning.agents.web import (
         BeautifulSoupStrategy,
@@ -69,6 +77,7 @@ def build_evidence_agent() -> Any:
         ],
         cache=FetchCache(),
     )
+    discovery_subagent = build_source_discovery_subagent()
 
     @task
     async def _task_search_factchecks(state: dict[str, Any]) -> list[dict]:
@@ -85,12 +94,12 @@ def build_evidence_agent() -> Any:
         return matches
 
     @task
-    async def _task_lookup_sources(state: dict[str, Any]) -> list[dict]:
-        from swarm_reasoning.agents.evidence.tasks import lookup_sources
+    async def _task_gather_sources(state: dict[str, Any]) -> list[dict]:
+        from swarm_reasoning.agents.evidence.tasks import gather_sources
 
-        share_progress("Looking up domain-authoritative sources...")
+        share_progress("Discovering authoritative sources...")
         share_heartbeat(AGENT_NAME)
-        sources = await lookup_sources(
+        sources = await gather_sources(
             claim_text=state.get("claim_text", ""),
             domain=state.get("domain", "OTHER"),
             persons=state.get("persons"),
@@ -98,6 +107,8 @@ def build_evidence_agent() -> Any:
             statistics=state.get("statistics"),
             dates=state.get("dates"),
             extractor=extractor,
+            subagent=discovery_subagent,
+            sonar_cache=sonar_cache,
         )
         share_heartbeat(AGENT_NAME)
         return sources
@@ -116,7 +127,7 @@ def build_evidence_agent() -> Any:
         from swarm_reasoning.agents.evidence.tasks import score_evidence
 
         claim_review_future = _task_search_factchecks(state)
-        sources_future = _task_lookup_sources(state)
+        sources_future = _task_gather_sources(state)
         claimreview = await claim_review_future
         sources = await sources_future
         scored = await score_evidence(state.get("claim_text", ""), sources)

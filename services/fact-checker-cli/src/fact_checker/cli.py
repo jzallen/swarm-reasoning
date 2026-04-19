@@ -18,6 +18,7 @@ import click
 
 CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "fact-checker"
 LLM_CACHE_PATH = CACHE_DIR / "llm.db"
+SONAR_CACHE_PATH = CACHE_DIR / "sonar.db"
 
 
 @click.group()
@@ -60,7 +61,7 @@ def intake(url: str, no_cache: bool) -> None:
     "--no-cache",
     is_flag=True,
     default=False,
-    help="Bypass the LLM cache; always hit upstream.",
+    help="Bypass the LLM and Sonar caches; always hit upstream.",
 )
 def evidence(
     claim: str,
@@ -197,9 +198,20 @@ async def _run_evidence(
     in-memory checkpointer) seeded with the user-supplied claim/domain/
     entities so the agent's full ainvoke path (including observation
     publishing in the pipeline node) runs end-to-end without intake.
+
+    The ``--no-cache`` flag bypasses both the LLM cache (pass-1 Haiku
+    discovery) and the Sonar response cache (pass-2). Default is to
+    construct both so local-dev iteration is fast.
     """
-    if not no_cache:
+    if no_cache:
+        os.environ["SONAR_CACHE"] = "bypass"
+        sonar_cache = None
+    else:
         _enable_llm_cache()
+        from swarm_reasoning.agents.evidence.tasks.gather_sources import SonarCache
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        sonar_cache = SonarCache(path=SONAR_CACHE_PATH)
 
     from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.graph import END, StateGraph
@@ -222,6 +234,7 @@ async def _run_evidence(
             "run_id": thread_id,
             "session_id": ctx.session_id,
             "thread_id": thread_id,
+            "sonar_cache": sonar_cache,
         }
     }
 
