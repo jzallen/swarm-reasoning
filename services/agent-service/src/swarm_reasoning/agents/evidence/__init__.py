@@ -9,7 +9,6 @@ and observation publishing.
 from swarm_reasoning.agents.evidence.agent import (
     AGENT_NAME,
     build_evidence_agent,
-    build_scorer_subagent,
     initial_state_from_input,
 )
 from swarm_reasoning.agents.evidence.models import (
@@ -18,6 +17,7 @@ from swarm_reasoning.agents.evidence.models import (
     EvidenceOutput,
     from_intake_output,
 )
+from swarm_reasoning.agents.evidence.tasks.score_evidence import build_scorer_subagent
 
 __all__ = [
     "AGENT_NAME",
