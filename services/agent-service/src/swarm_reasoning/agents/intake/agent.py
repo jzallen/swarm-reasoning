@@ -67,10 +67,10 @@ Follow this workflow IN ORDER:
 article text, title, author, publisher, publication timestamp, and access \
 timestamp. If fetching fails, stop immediately -- the URL is rejected.
 
-2. **Decompose claims** using the decompose_claims tool. Pass the article text \
-and title from the fetch result. This extracts up to 5 factual claims suitable \
-for fact-checking. If no claims are found, stop -- the article has no verifiable \
-factual content.
+2. **Decompose claims** using the decompose_claims tool. Call it with no \
+arguments; it reads the article from state populated by fetch_content. This \
+extracts up to 5 factual claims suitable for fact-checking. If no claims are \
+found, stop -- the article has no verifiable factual content.
 
 3. **Return claims** to the user for selection. Report the extracted claims with \
 their supporting quotes and any in-text attribution.
@@ -242,22 +242,22 @@ def build_intake_agent(model: ChatAnthropic | None = None) -> Any:
                 )
 
     @tool
-    async def decompose_claims(
-        article_text: str, article_title: str, runtime: ToolRuntime
-    ) -> Command:
-        """Extract up to 5 factual claims from article text.
+    async def decompose_claims(runtime: ToolRuntime) -> Command:
+        """Extract up to 5 factual claims from the fetched article.
 
         Analyzes the article content using LLM-powered claim
         extraction. Returns structured claims with supporting quotes
         and optional in-text attribution (when the article body
         credits a named external source).
 
-        Args:
-            article_text: The extracted article body text.
-            article_title: The article title for context.
+        Takes no arguments: reads ``article_text`` and ``article_title``
+        from the agent state populated by ``fetch_content``. Call this
+        tool immediately after ``fetch_content`` succeeds.
         """
         from swarm_reasoning.agents.intake.tools import decompose_claims as decompose_mod
 
+        article_text = runtime.state.get("article_text", "")
+        article_title = runtime.state.get("article_title", "")
         share_progress("Analyzing article for factual claims...")
         claims = await decompose_mod.decompose_and_parse(
             article_text=article_text,
