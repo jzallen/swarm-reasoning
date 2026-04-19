@@ -13,6 +13,7 @@ import asyncio
 import functools
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
@@ -57,9 +58,12 @@ class ReviewedClaim:
             score=cosine_similarity(normalized_claim, claim),
         )
 
-    def serialize(self, match_threshold: float) -> list[dict]:
-        """Return the output entry, or ``[]`` if score is below *match_threshold*."""
-        if self.score < match_threshold:
+    def serialize(
+        self,
+        skip_if: Callable[[ReviewedClaim], bool] | None = None,
+    ) -> list[dict]:
+        """Return the output entry, or ``[]`` if *skip_if* is true for this claim."""
+        if skip_if is not None and skip_if(self):
             return []
         return [
             {
@@ -77,7 +81,10 @@ class EmptyReviewedClaim(ReviewedClaim):
     def __init__(self) -> None:
         super().__init__(review={}, claim="", score=0.0)
 
-    def serialize(self, match_threshold: float) -> list[dict]:
+    def serialize(
+        self,
+        skip_if: Callable[[ReviewedClaim], bool] | None = None,
+    ) -> list[dict]:
         return []
 
 
@@ -145,4 +152,4 @@ async def search_factcheck_matches(
     return _score_matches(
         await _query_google_factcheck(claim_text, persons, organizations, api_key),
         claim_text,
-    ).serialize(MATCH_THRESHOLD)
+    ).serialize(skip_if=lambda c: c.score < MATCH_THRESHOLD)
