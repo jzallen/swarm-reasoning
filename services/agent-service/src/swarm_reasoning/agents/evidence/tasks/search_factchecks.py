@@ -122,7 +122,7 @@ async def _query_google_factcheck(
 
 
 def _score_matches(results: list[dict], normalized_claim: str) -> ReviewedClaim:
-    """Return the highest-scoring :class:`ReviewedClaim`, or :class:`EmptyReviewedClaim` if empty."""
+    """Return the highest-scoring :class:`ReviewedClaim`, or :class:`EmptyReviewedClaim`."""
     if not results:
         return EmptyReviewedClaim()
     return functools.reduce(
