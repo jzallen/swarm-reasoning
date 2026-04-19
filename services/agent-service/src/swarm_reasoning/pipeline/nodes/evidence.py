@@ -197,14 +197,14 @@ async def _publish_domain_observations(output: EvidenceOutput, ctx: PipelineCont
             code=ObservationCode.DOMAIN_EVIDENCE_ALIGNMENT,
             value=f"{alignment}^{alignment_desc}^FCK",
             value_type=ValueType.CWE,
-            method="score_claim_alignment",
+            method="llm_scorer_subagent",
         )
         await ctx.publish_observation(
             agent=AGENT_NAME,
             code=ObservationCode.DOMAIN_CONFIDENCE,
             value=f"{source['confidence']:.2f}",
             value_type=ValueType.NM,
-            method="compute_evidence_confidence",
+            method="llm_scorer_subagent",
             units="score",
             reference_range="0.0-1.0",
         )
@@ -228,14 +228,14 @@ async def _publish_domain_observations(output: EvidenceOutput, ctx: PipelineCont
             code=ObservationCode.DOMAIN_EVIDENCE_ALIGNMENT,
             value="ABSENT^No Evidence Found^FCK",
             value_type=ValueType.CWE,
-            method="score_claim_alignment",
+            method="llm_scorer_subagent",
         )
         await ctx.publish_observation(
             agent=AGENT_NAME,
             code=ObservationCode.DOMAIN_CONFIDENCE,
             value="0.00",
             value_type=ValueType.NM,
-            method="compute_evidence_confidence",
+            method="llm_scorer_subagent",
             units="score",
             reference_range="0.0-1.0",
         )

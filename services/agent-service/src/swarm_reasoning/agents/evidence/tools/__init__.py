@@ -1,13 +1,11 @@
-"""Evidence agent tools -- pure functions for evidence gathering.
+"""Evidence agent tools -- pure functions supporting the evidence tasks.
 
 Each module exposes one aspect of evidence collection:
 
 - ``search_factchecks`` -- Google Fact Check Tools API search and scoring
 - ``lookup_domain_sources`` -- domain routing, query derivation, URL formatting
-- ``score_evidence`` -- claim alignment scoring and confidence computation
 
-URL fetching is shared via ``swarm_reasoning.agents.web``.
-
-Callers import the submodules directly; the StateGraph nodes in
-``agents/evidence/agent.py`` wrap these pure functions without an LLM.
+URL fetching is shared via ``swarm_reasoning.agents.web``. Alignment
+judgment is performed by the LLM scorer subagent in ``agent.py``; no
+deterministic keyword-overlap scorer remains here.
 """
